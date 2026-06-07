@@ -28,7 +28,8 @@ Before the details, here is how these six concepts form a chain:
 flowchart LR
     A[Client] -->|types github.com| B[DNS]
     B -->|returns IP address| A
-    A -->|sends HTTP request\nto that IP| C[Reverse Proxy]
+    A -->|sends HTTP request
+to that IP| C[Reverse Proxy]
     C -->|forwards to| D[Server]
     D -->|sends HTTP response| C
     C -->|delivers response| A
@@ -39,43 +40,13 @@ Every web request follows this exact path. Each box is one of the six concepts i
 
 ---
 
-## How All Six Connect
-
-Here is the complete flow of a single browser request, mapped to all six concepts:
-
-```mermaid
-sequenceDiagram
-    participant U as You (Client)
-    participant DNS as DNS
-    participant RP as Reverse Proxy
-    participant S as Server
-
-    U->>DNS: What IP is github.com?
-    Note over U,DNS: 1. Client-Server Model<br/>2. DNS at work
-    DNS-->>U: 140.82.121.4
-
-    U->>RP: HTTP GET github.com/home
-    Note over U,RP: 4. HTTPS encrypts this<br/>3. IP address routes it
-    RP->>S: Forward to application server
-    Note over RP,S: 5. Reverse proxy at work
-
-    S-->>RP: HTTP 200 OK + HTML
-    RP-->>U: Response delivered
-
-    Note over U,S: 6. Total elapsed time = Latency
-```
-
-Nothing in this diagram is separate. The **client-server model** defines who asks and who answers. The **IP address** is how the request is routed to the right machine. **DNS** is how the IP is discovered from a human name. **HTTP/HTTPS** is the language the request and response are written in. The **reverse proxy** is the first thing the request actually hits before the application server. **Latency** is the measure of how long the entire chain takes.
-
----
-
 ## 1. Client–Server Model
 
 ### The Problem It Solved
 
 In the early days of networked computing, there were no rules about how machines should communicate. Any machine could reach out to any other machine in any format it wanted. The result was chaos — no standard way to share data, no separation of who does what, no way to scale anything independently.
 
-Engineers needed one foundational answer:
+Engineers needed one foundational answer to the question:
 
 > How should two machines on a network divide responsibility?
 
@@ -87,12 +58,6 @@ The client-server model answered this by assigning two clear, asymmetric roles:
 - The **server** listens and responds — it owns the logic, the data, and the processing
 
 This asymmetry is the key insight. The client does not need to know how the server works internally. The server does not need to know anything about the client's device or setup. They communicate through a defined contract — a request and a response.
-
-💡 **Key Insight**
-
-The asymmetry is the entire point.
-
-The client doesn't know how the server works. The server doesn't know about the client's device. This separation enables scaling, security, and independent development.
 
 ### The Restaurant Analogy
 
@@ -109,7 +74,7 @@ Think of a restaurant. You are the customer — you look at the menu, place an o
 
 ### What "Client" and "Server" Actually Mean
 
-This is where most beginners get confused.
+This is where most beginners get it wrong.
 
 A **server is not a machine**. It is a role. Any process that listens for requests and sends back responses is a server — whether it runs on a physical rack, a cloud instance, a container, or a laptop. The same machine can run five servers at once on different ports.
 
@@ -133,9 +98,7 @@ sequenceDiagram
 
 The client sees none of what happens inside the server. It sends a request and receives a response. That separation of concerns is the entire point.
 
-### What Can Break (Preview)
-
-Understanding what breaks now will help you appreciate every solution later:
+### What Breaks
 
 - **Server overload** — too many clients requesting at once causes queuing and slow responses
 - **Network failure** — if the path between client and server breaks, communication stops
@@ -143,32 +106,9 @@ Understanding what breaks now will help you appreciate every solution later:
 
 These problems drive every major system design decision that comes later: load balancers, redundancy, caching, and scaling.
 
-⚠️ **We will explore how to prevent and handle these in future chapters:**
-- Scaling & Load Balancers
-- Reliability & Redundancy
-- Distributed Systems
-
-### Quick Recap: Client-Server Model
-
-- Clients request. Servers respond.
-- Role, not hardware. A machine can run many servers.
-- The separation of concerns is the power.
-
 ---
 
-**This raises a natural question:**
-
-If every device has a role, how does a client find a server across billions of devices?
-
-You can't just type `"140.82.121.4"` into a browser. You type `"github.com"`.
-
-Something must translate names into machine addresses.
-
-→ **Next: IP Addresses**
-
----
-
-## 2. IP Address — How Machines Find Each Other
+## 2. IP Address
 
 ### The Problem It Solved
 
@@ -180,13 +120,7 @@ An IP address is a unique numerical label assigned to every device on a network.
 
 Think of it like a postal address. The internet is a city. Every device is a building. An IP address is the building's street address. Without it, no data can be delivered.
 
-💡 **Key Insight**
-
-Humans remember names. Machines route addresses. DNS bridges the gap.
-
-### IPv4 — The Standard (For Now)
-
-**IPv4** is the dominant protocol today:
+**IPv4** is the original standard, still dominant today:
 
 ```
 140.82.121.4       ← GitHub's IP
@@ -194,61 +128,52 @@ Humans remember names. Machines route addresses. DNS bridges the gap.
 192.168.1.1        ← A typical home router
 ```
 
-Four numbers (0–255), separated by dots. 32 bits total — about 4.3 billion possible addresses.
+Four numbers, each between 0 and 255, separated by dots. 32 bits total — giving about 4.3 billion possible addresses. That sounds like a lot until you account for every phone, laptop, server, smart TV, and IoT device on earth. IPv4 addresses ran out.
 
-That sounds like a lot until you account for every phone, laptop, server, smart TV, and IoT device on earth. IPv4 addresses are nearly exhausted.
+**IPv6** was created to solve this. It uses 128 bits, giving a virtually unlimited address space:
 
-**IPv6** was created as the long-term solution (128 bits, virtually unlimited addresses), but adoption is still slow. For most early system design work, understand IPv4 — IPv6 is the future that's still arriving.
+```
+2001:0db8:85a3:0000:0000:8a2e:0370:7334
+```
+
+Both coexist on the internet today. Most systems you build early in your career will use IPv4.
 
 ### Public vs Private IPs
 
 Not all IP addresses are visible on the internet.
 
-A **public IP** is globally routable. Any device on the internet can try to send traffic to it. Your cloud server, your home router, and Google's DNS all have public IPs.
+A **public IP** is globally unique and routable — any device on the internet can send traffic to it. Your cloud server, your home router, and Google's DNS all have public IPs.
 
-A **private IP** only works within a local network. Your laptop right now has a private IP like `192.168.1.5`. That address means nothing outside your home network — routers actively block it.
+A **private IP** only works within a local network. Your laptop right now has a private IP like `192.168.1.5`. That address means nothing outside your home network.
 
 ```mermaid
 flowchart LR
-    Internet -->|public IP\n203.0.113.42| Router
+    Internet -->|public IP
+203.0.113.42| Router
 
     subgraph Home Network
-        Router --> Laptop[Laptop\n192.168.1.2]
-        Router --> Phone[Phone\n192.168.1.3]
+        Router --> Laptop[Laptop
+192.168.1.2]
+        Router --> Phone[Phone
+192.168.1.3]
     end
 
     subgraph Data Centre
-        LB[Load Balancer\npublic IP: 54.240.10.1] --> S1[Server\n10.0.0.1]
-        LB --> S2[Server\n10.0.0.2]
+        LB[Load Balancer
+public IP: 54.240.10.1] --> S1[Server
+10.0.0.1]
+        LB --> S2[Server
+10.0.0.2]
     end
 ```
 
-In production, servers live on private IPs inside a data centre. Only the entry point — a load balancer or gateway — has a public IP. This keeps internal infrastructure off the public internet for both security and operational reasons.
+In production, servers live on private IPs inside a data centre. Only the entry point — a load balancer or gateway — has a public IP. This keeps internal infrastructure off the public internet, which is both a security and an organisational practice.
 
-### Static vs Dynamic IPs
+### Static vs Dynamic
 
-A **static IP** never changes. Servers use static IPs — if a server's address changed suddenly, nothing could find it.
+A **static IP** never changes. Servers use static IPs — if a server's address changed, nothing could find it reliably.
 
-A **dynamic IP** is assigned temporarily and can change. Your home devices use dynamic IPs, assigned automatically by DHCP (a protocol we won't detail here) when they join a network.
-
-You don't need to understand the cloud-specific details yet (elastic IPs, reserved addresses, etc.). Just understand: servers need permanent addresses, clients can use temporary ones.
-
-### Quick Recap: IP Address
-
-- IP = unique address for every device
-- Public IPs route on the internet
-- Private IPs only work within a network
-- Servers use static IPs; clients use dynamic IPs
-
----
-
-**But here's the catch:**
-
-Humans don't remember IP addresses. Nobody types `140.82.121.4`. We remember names: `github.com`, `google.com`, `example.com`.
-
-Something must translate those names into addresses.
-
-→ **Next: DNS**
+A **dynamic IP** is assigned temporarily and can change. Your home devices use dynamic IPs, assigned automatically by a protocol called DHCP when they join a network. Cloud servers also get dynamic public IPs by default — which is why engineers use reserved static IPs (like AWS Elastic IPs) for anything that needs to be consistently reachable.
 
 ---
 
@@ -267,47 +192,31 @@ When you type `github.com`:
 ```
 Your browser asks: what is the IP address for github.com?
 DNS answers:       140.82.121.4
-Your browser uses: 140.82.121.4 to open a connection
+Your browser uses: 140.82.121.4 to open a TCP connection
 ```
 
 This lookup happens before any request reaches the server. It is invisible, takes under 50ms in most cases, and happens billions of times per second across the internet.
 
 The analogy is a phone book — you search by name, it gives you the number.
 
-💡 **Key Insight**
+### How DNS Resolution Works
 
-DNS is the phone book of the internet.
-
-But unlike a phone book, it's:
-- Distributed (no single point of failure)
-- Cached (results remembered at every step)
-- Programmable (engineers can redirect traffic by changing DNS)
-
-This is why DNS is powerful for system design.
-
-### How DNS Resolution Works (Conceptually)
-
-DNS is not a single server. It is a system of servers working together in a hierarchy:
+DNS is not a single server. It is a hierarchy of servers that work together:
 
 ```mermaid
 flowchart TD
-    A[Your Browser] -->|github.com?| B[Resolver<br/>usually your ISP or 8.8.8.8]
-    B -->|asks hierarchical system| C["Nameservers<br/>(Root → TLD → Authoritative)"]
-    C -->|returns| B
+    A[Your Browser] -->|github.com?| B[Recursive Resolver
+your ISP or 8.8.8.8]
+    B -->|github.com?| C[Root Nameserver]
+    C -->|ask .com nameserver| B
+    B -->|github.com?| D[.com TLD Nameserver]
+    D -->|ask GitHub's nameserver| B
+    B -->|github.com?| E[GitHub's Authoritative Nameserver]
+    E -->|140.82.121.4| B
     B -->|140.82.121.4| A
 ```
 
-In practice, results are **cached** at multiple levels:
-- Your browser caches DNS results
-- Your operating system caches them
-- The resolver caches them
-- ISP caches them
-
-This means most lookups skip most of these steps and return in single-digit milliseconds.
-
-**You don't need to understand the full nameserver hierarchy yet.** Just know: you ask for a name, DNS gives back an IP. The distributed system handles the complexity behind the scenes.
-
-⚠️ **Deeper dive into DNS internals comes in the dedicated DNS chapter.**
+In practice, results are **cached** at multiple levels. Your browser caches DNS results. Your operating system caches them. The recursive resolver caches them. This means most lookups skip most of these steps and return in single-digit milliseconds.
 
 ### Why DNS Matters for System Design
 
@@ -317,26 +226,130 @@ DNS is also where engineers control traffic routing at a global level. By changi
 
 This is why understanding DNS is essential before studying load balancers, failover, and multi-region architecture.
 
-### Quick Recap: DNS
+---
 
-- Translates domain names (github.com) to IP addresses (140.82.121.4)
-- Works through a distributed hierarchy of nameservers
-- Results are cached at multiple levels
-- Critical for availability — DNS failure = total outage
+## 4. Proxy vs Reverse Proxy
+
+### The Problem They Solved
+
+As systems grew, engineers needed intermediary layers — servers that sit between clients and servers to add capabilities neither side should own directly: security, caching, traffic control, anonymity, and routing.
+
+Two patterns emerged, depending on which side the intermediary serves.
+
+### Forward Proxy — On the Client Side
+
+A **forward proxy** sits in front of clients. It intercepts outbound requests from clients and forwards them to the internet on the clients' behalf.
+
+```mermaid
+flowchart LR
+    C1[Client 1] --> FP[Forward Proxy]
+    C2[Client 2] --> FP
+    FP -->|hides client IPs| Internet
+```
+
+The server on the internet sees the proxy's IP — not the original client's. Common uses:
+
+- Corporate networks routing all employee traffic through a proxy for monitoring and filtering
+- Privacy tools that hide a user's real IP
+- Caching frequently accessed content so multiple clients benefit from one fetch
+
+### Reverse Proxy — On the Server Side
+
+A **reverse proxy** sits in front of servers. It intercepts incoming requests from clients and forwards them to internal servers on the servers' behalf.
+
+```mermaid
+flowchart LR
+    Internet -->|client sees only
+the proxy| RP[Reverse Proxy]
+    RP --> S1[Server 1]
+    RP --> S2[Server 2]
+    RP --> S3[Server 3]
+```
+
+The client sees only the reverse proxy's IP — never the internal servers. Common uses:
+
+- **Load balancing** — distributing requests across multiple servers
+- **SSL termination** — handling HTTPS encryption so application servers do not have to
+- **Caching** — serving cached responses without touching the application server
+- **Security** — hiding internal infrastructure from the public internet
+
+**Nginx**, **HAProxy**, and **Cloudflare** are all reverse proxies used in production at massive scale.
+
+### The Key Distinction
+
+| | Forward Proxy | Reverse Proxy |
+|---|---|---|
+| Sits in front of | Clients | Servers |
+| Hides | Client identity from servers | Server identity from clients |
+| Serves | Clients | Servers |
+| Common use | Corporate filtering, privacy | Load balancing, security, caching |
+
+When engineers say "proxy" in a system design conversation without qualification, they almost always mean a **reverse proxy**. It is the far more common pattern in production infrastructure.
 
 ---
 
-**Now we know how clients find servers. But what language do they speak?**
+## 5. Latency
 
-When a client reaches a server's IP address, how does it structure a request? How does the server know what the client wants? How are responses formatted?
+### The Problem It Names
 
-There must be a shared protocol.
+Every request takes time. Time to travel across a network. Time for the server to process. Time for the response to travel back. This total elapsed time — from the moment a client sends a request to the moment it receives the response — is **latency**.
 
-→ **Next: HTTP & HTTPS**
+Latency is not a bug. It is a physical property of networked systems. But how much latency exists, and where it comes from, is something engineers can measure, analyse, and reduce.
+
+### Where Latency Comes From
+
+Latency has multiple components:
+
+| Source | What it is |
+|---|---|
+| **Network latency** | Time for data to physically travel between client and server — limited by the speed of light and the distance between them |
+| **Processing latency** | Time the server spends computing a response — database queries, business logic, external calls |
+| **Queue latency** | Time a request spends waiting before any processing begins — caused by the server being busy with other requests |
+| **Transmission latency** | Time to push the data onto the network — affected by packet size and bandwidth |
+
+In most web applications, **network latency** and **database query time** dominate.
+
+### How Engineers Measure Latency
+
+Average latency is almost useless as a metric. If 99% of requests complete in 20ms but 1% take 10 seconds, the average looks fine while thousands of users per minute are experiencing severe degradation.
+
+Engineers use **percentile latency**:
+
+- **P50** — the median response time. Half of requests are faster, half are slower.
+- **P95** — 95% of requests complete within this time. Shows near-worst-case.
+- **P99** — 99% of requests complete within this time. Shows tail latency — the experience of your slowest users.
+
+> **P99 is the number that matters most for user experience.** Optimising average latency while ignoring P99 means you are ignoring the users most likely to churn.
+
+### Latency in System Design Decisions
+
+Latency is the reason engineers make specific architectural choices:
+
+- **Caching** reduces latency by serving data from memory instead of querying a database
+- **CDNs** reduce latency by serving static content from a server geographically close to the user
+- **Connection pooling** reduces latency by reusing established database connections rather than opening new ones for every request
+- **Load balancers** reduce latency by routing requests to servers with available capacity rather than overloaded ones
+
+Every major performance optimisation in system design is ultimately about reducing one or more components of latency.
+
+### A Latency Reference
+
+These are rough numbers to build intuition:
+
+| Operation | Approximate Latency |
+|---|---|
+| L1 cache reference | ~1 nanosecond |
+| RAM access | ~100 nanoseconds |
+| SSD read | ~100 microseconds |
+| Network round trip (same data centre) | ~1 millisecond |
+| Network round trip (cross-continent) | ~100 milliseconds |
+| HDD seek | ~10 milliseconds |
+
+The gap between in-memory access and network access is enormous. This is why caching works — it replaces a slow network or disk operation with a fast memory operation.
 
 ---
 
-## 4. HTTP & HTTPS — The Language of the Web
+## 6. HTTP & HTTPS
 
 ### The Problem They Solved
 
@@ -364,8 +377,8 @@ Authorization: Bearer abc123
 |---|---|
 | **Method** | The action being requested — GET (read), POST (create), PUT (update), DELETE (remove) |
 | **URL** | The specific resource being targeted |
-| **Headers** | Metadata — authentication, content type, encoding |
-| **Body** | Optional data payload — used for POST and PUT |
+| **Headers** | Metadata — who is asking, what format they expect, authentication tokens |
+| **Body** | Optional data payload — used for POST and PUT requests |
 
 **An HTTP response has three parts:**
 
@@ -378,255 +391,78 @@ Content-Type: application/json
 
 | Part | What it carries |
 |---|---|
-| **Status code** | The outcome — 200 (success), 404 (not found), 500 (error) |
+| **Status code** | The outcome — 200 (success), 404 (not found), 500 (server error) |
 | **Headers** | Metadata — content type, caching rules, encoding |
 | **Body** | The actual returned data — HTML, JSON, binary, etc. |
 
 ### Common Status Codes
 
-| Code | Meaning | When it happens |
-|---|---|---|
-| 200 | OK | Request succeeded |
-| 301 | Moved Permanently | Resource moved to new location |
-| 400 | Bad Request | Client sent invalid data |
-| 401 | Unauthorized | Authentication required |
-| 404 | Not Found | Resource doesn't exist |
-| 500 | Server Error | Something broke server-side |
-
-There are many more status codes, but these cover 95% of what you'll encounter. You don't need to memorise them — just develop intuition: 2xx = success, 4xx = client error, 5xx = server error.
+| Code | Meaning |
+|---|---|
+| 200 | OK — success |
+| 201 | Created — resource was created |
+| 301 | Moved Permanently — redirect |
+| 400 | Bad Request — client sent invalid data |
+| 401 | Unauthorised — authentication required |
+| 403 | Forbidden — authenticated but not allowed |
+| 404 | Not Found — resource does not exist |
+| 429 | Too Many Requests — rate limited |
+| 500 | Internal Server Error — server-side failure |
+| 503 | Service Unavailable — server overloaded or down |
 
 ### HTTPS — HTTP with Encryption
 
-HTTPS is HTTP wrapped in a TLS (Transport Layer Security) encryption layer. Every message is encrypted before it leaves the client and decrypted only when it reaches the server.
+HTTPS is HTTP with a TLS (Transport Layer Security) layer added. Every message is encrypted before it leaves the client and decrypted only when it reaches the server.
 
-Without HTTPS:
-- Anyone on the network path (router, ISP, bad actor on the same Wi-Fi) can read passwords, personal data, payment info
-- Messages can be tampered with undetectably
+Without HTTPS, anyone on the network path between client and server — a router, an ISP, a bad actor on the same Wi-Fi — can read the raw HTTP messages, including passwords and personal data.
 
 With HTTPS:
 - Data is encrypted end-to-end
-- The server's identity is verified
-- Tampering is detectable
+- The server's identity is verified via a certificate
+- Tampering with messages in transit is detectable
 
-All modern websites use HTTPS. Browsers show a lock icon for HTTPS and warn users about HTTP-only sites. For any system handling user data, HTTPS is non-negotiable.
+All modern websites use HTTPS. Browsers show a lock icon for HTTPS sites and actively warn users about HTTP-only sites. For any system that handles user data, HTTPS is non-negotiable.
 
-You don't need to understand TLS internals yet. Just understand: HTTPS = encrypted HTTP. It's essential for security.
+### HTTP Versions
 
-⚠️ **Deep dive into TLS encryption comes in the Security chapter.**
+| Version | Key Characteristic |
+|---|---|
+| HTTP/1.1 | One request per connection at a time — still widely used |
+| HTTP/2 | Multiple requests over one connection simultaneously — faster |
+| HTTP/3 | Built on UDP instead of TCP — lower latency, especially on mobile |
 
-### Quick Recap: HTTP & HTTPS
-
-- HTTP = request-response protocol
-- Requests contain: method, URL, headers, body
-- Responses contain: status code, headers, body
-- HTTPS = HTTP + encryption (required for security)
-
----
-
-**Now requests can travel from client to server. But in production systems, something sits between them.**
-
-The reverse proxy.
-
-→ **Next: Proxies & Reverse Proxies**
+For most early system design discussions, HTTP/1.1 and HTTP/2 are what you need to understand. The version affects performance but not the fundamental request-response model.
 
 ---
 
-## 5. Proxy vs Reverse Proxy
+## How All Six Connect
 
-### The Problem They Solved
-
-As systems grew, engineers needed intermediary layers — servers that sit between clients and servers to add capabilities neither side should own directly: security, caching, traffic control, anonymity, and routing.
-
-Two patterns emerged, depending on which side the intermediary serves.
-
-### Forward Proxy — On the Client Side
-
-A **forward proxy** sits in front of clients. It intercepts outbound requests from clients and forwards them to the internet on the clients' behalf.
+Here is the complete flow of a single browser request, mapped to all six concepts:
 
 ```mermaid
-flowchart LR
-    C1[Client 1] --> FP[Forward Proxy]
-    C2[Client 2] --> FP
-    FP -->|hides client IPs| Internet
+sequenceDiagram
+    participant U as You (Client)
+    participant DNS as DNS
+    participant RP as Reverse Proxy
+    participant S as Server
+
+    U->>DNS: What IP is github.com?
+    Note over U,DNS: DNS at work
+    DNS-->>U: 140.82.121.4
+
+    U->>RP: HTTP GET github.com/home
+    Note over U,RP: HTTPS encrypts this
+    Note over U,RP: IP address routes it here
+    RP->>S: Forward to application server
+    Note over RP,S: Reverse proxy at work
+
+    S-->>RP: HTTP 200 OK + HTML
+    RP-->>U: Response delivered
+
+    Note over U,S: Total elapsed time = Latency
 ```
 
-The server on the internet sees the proxy's IP — not the original client's.
-
-**Real-world example:**
-
-You connect to an airport Wi-Fi. The airport runs a forward proxy that:
-- Scans for malware
-- Blocks certain sites
-- Logs which clients connected
-- Throttles bandwidth per user
-
-From your perspective, you're making requests normally. The proxy is transparent — but it's observing everything. This is why some workplaces use forward proxies for monitoring and security.
-
-### Reverse Proxy — On the Server Side
-
-A **reverse proxy** sits in front of servers. It intercepts incoming requests from clients and forwards them to internal servers on the servers' behalf.
-
-```mermaid
-flowchart LR
-    Internet -->|client sees only\nthe proxy| RP[Reverse Proxy]
-    RP --> S1[Server 1]
-    RP --> S2[Server 2]
-    RP --> S3[Server 3]
-```
-
-The client sees only the reverse proxy's IP — never the internal servers' IPs.
-
-**Common uses:**
-
-- **Load balancing** — distributing requests across multiple servers to prevent overload
-- **SSL termination** — handling HTTPS encryption so application servers don't have to
-- **Caching** — serving cached responses without touching the application server
-- **Security** — hiding internal infrastructure from the public internet
-
-**Real-world examples:**
-
-**Nginx**, **HAProxy**, and **Cloudflare** are all reverse proxies used in production at massive scale. Every major website uses a reverse proxy.
-
-### The Key Distinction
-
-| | Forward Proxy | Reverse Proxy |
-|---|---|---|
-| Sits in front of | Clients | Servers |
-| Hides | Client identity | Server identity |
-| Serves | Clients | Servers |
-| Common use | Filtering, privacy | Load balancing, security, caching |
-
-**Important:** When engineers say "proxy" without qualification in a system design conversation, they almost always mean a **reverse proxy**. It's far more common in production infrastructure.
-
-### Quick Recap: Proxy vs Reverse Proxy
-
-- Forward proxy: in front of clients, hides client identity
-- Reverse proxy: in front of servers, hides server identity
-- Reverse proxies are far more common in production
-- Usually used for load balancing and security
-
----
-
-**Now requests flow through the whole system. But how fast do they flow?**
-
-How long does each step take? What's a good response time? What causes slowness?
-
-→ **Next: Latency**
-
----
-
-## 6. Latency — Why Speed Matters
-
-### The Problem It Names
-
-Every request takes time. Time to travel across a network. Time for the server to process. Time for the response to travel back. This total elapsed time — from the moment a client sends a request to the moment it receives the response — is **latency**.
-
-Latency is not a bug. It is a physical property of networked systems. But how much latency exists, and where it comes from, is something engineers can measure, analyse, and reduce.
-
-💡 **Key Insight**
-
-Latency isn't a bug. It's a physical constraint.
-
-Light travels ~300,000 km/second.
-
-A request from New York to London is ~5,500 km = ~18ms minimum,
-just for the speed of light. There's no way around it.
-
-Good system design accepts this and works within it.
-
-### Where Latency Comes From
-
-Latency has multiple components:
-
-| Source | What it is |
-|---|---|
-| **Network latency** | Time for data to physically travel between client and server — limited by the speed of light and distance |
-| **Processing latency** | Time the server spends computing a response — database queries, business logic |
-| **Queue latency** | Time a request waits before processing begins — caused by the server being busy |
-| **Transmission latency** | Time to push data onto the network — affected by packet size and bandwidth |
-
-In most web applications, **network latency** and **database query time** dominate.
-
-### How Engineers Measure Latency
-
-Average latency is almost useless as a metric.
-
-**Scenario:** 99% of requests complete in 20ms, but 1% take 10 seconds.
-
-Average = 110ms. Looks acceptable. But 1% of requests are degraded — thousands per minute.
-
-Engineers use **percentile latency**:
-
-- **P50** — the median. Half of requests are faster, half slower.
-- **P95** — 95% of requests complete within this time.
-- **P99** — 99% of requests complete within this time. The slowest users.
-
-**Why P99 matters:** It shows the experience of your slowest users — the ones most likely to churn. Optimising average latency while ignoring P99 means ignoring the users most likely to leave.
-
-You don't need to master percentile metrics yet. Just understand: we care about worst-case experience, not just average.
-
-⚠️ **Deeper dive into latency metrics and monitoring comes in the Performance Engineering chapter.**
-
-### Latency in System Design Decisions
-
-Latency is the reason engineers make specific architectural choices:
-
-- **Caching** reduces latency by serving data from memory instead of querying a database
-- **CDNs** reduce latency by serving static content from a server geographically close to the user
-- **Connection pooling** reduces latency by reusing established database connections
-- **Load balancers** reduce latency by routing requests to available capacity
-
-Every major performance optimisation in system design is ultimately about reducing one or more components of latency.
-
-### A Latency Reference
-
-These are rough orders of magnitude to build intuition:
-
-| Operation | Latency |
-|---|---|
-| RAM access | ~100 nanoseconds |
-| SSD read | ~100 microseconds |
-| Network round trip (same data centre) | ~1 millisecond |
-| Network round trip (cross-continent) | ~100 milliseconds |
-
-**The key insight:** In-memory access is ~1,000,000x faster than network access. This is why caching is so powerful — it replaces slow network/disk operations with fast memory operations.
-
-### Quick Recap: Latency
-
-- Latency = total time from request to response
-- Network + processing + queue latency all contribute
-- P99 (worst case) matters more than average
-- In-memory is vastly faster than network — why caching works
-
----
-
-## Complete Request Flow
-
-Now let's see how all six concepts work together in a single request:
-
-```
-1. You type github.com into your browser (Client initiates)
-
-2. Browser asks DNS: "What IP is github.com?"
-   DNS answers: 140.82.121.4
-   
-3. Browser opens connection to 140.82.121.4 using IP address routing
-   
-4. Browser sends HTTP GET request encrypted with HTTPS
-   
-5. Request hits a reverse proxy (load balancer)
-   Proxy forwards to one of many backend servers
-   
-6. Server processes the request, queries database, builds response
-   
-7. Response travels back through proxy to browser
-   
-8. Browser renders the HTML
-   
-Total time = Latency (usually 100ms–500ms)
-```
-
-Everything depends on everything else. Client-server architecture requires IP addressing. IP addressing requires DNS. HTTP structures the messages. The reverse proxy distributes load. Latency measures it all.
+Nothing in this diagram is separate. The **client-server model** defines who asks and who answers. The **IP address** is how the request is routed to the right machine. **DNS** is how the IP is discovered from a human name. **HTTP/HTTPS** is the language the request and response are written in. The **reverse proxy** is the first thing the request actually hits before the application server. **Latency** is the measure of how long the entire chain takes.
 
 ---
 
@@ -634,30 +470,27 @@ Everything depends on everything else. Client-server architecture requires IP ad
 
 | Concept | What it is | Why it matters |
 |---|---|---|
-| **Client–Server Model** | Client requests, server responds | The foundational pattern of every networked system |
-| **IP Address** | Unique numerical address for every device | How routers know where to send data |
-| **DNS** | Translates domain names to IP addresses | What makes human-readable URLs work |
-| **Forward Proxy** | Sits in front of clients | Hides client identity, filters outbound traffic |
-| **Reverse Proxy** | Sits in front of servers | Load balancing, security, caching for servers |
-| **Latency** | Time from request to response | The key performance metric for user experience |
-| **HTTP** | Protocol defining request/response structure | The universal language of web communication |
-| **HTTPS** | HTTP with TLS encryption | Protects data in transit — required for security |
+| Client–Server Model | Client requests, server responds — clear divided roles | The foundational pattern of every networked system |
+| IP Address | Unique numerical address for every device on a network | How routers know where to send data |
+| DNS | Translates domain names to IP addresses | What makes human-readable URLs work |
+| Forward Proxy | Intermediary in front of clients | Hides client identity, filters outbound traffic |
+| Reverse Proxy | Intermediary in front of servers | Load balancing, security, caching for servers |
+| Latency | Time from request to response | The key performance metric for user experience |
+| P99 Latency | 99th percentile response time | Shows the worst user experiences, not just the average |
+| HTTP | Protocol defining web request/response structure | The universal language of client-server communication |
+| HTTPS | HTTP with TLS encryption | Protects data in transit — required for all modern systems |
 
 ---
 
 ## What Comes Next
 
-These six concepts are the wire-level foundation. Every topic from here assumes you understand them deeply.
+These six concepts are the wire-level foundation. Every topic from here assumes you understand them.
 
-The natural next questions are:
+The next group builds directly on top:
 
-- **"How do services talk to each other?"** → Group 2: APIs & Communication (REST, GraphQL, WebSockets)
-- **"How do we handle failures?"** → Group 3: Reliability & Fault Tolerance
-- **"How do we scale systems?"** → Group 4: Scaling & Load Balancers
-- **"How do we secure systems?"** → Group 5: Security & Encryption
-- **"How do we measure performance?"** → Group 6: Performance & Observability
+→ **Group 2: APIs & Communication** — now that you know how requests travel, learn how services structure and design the data they exchange: REST, GraphQL, WebSockets, Webhooks
 
-Each group builds directly on the foundation you've just built. The client-server model is the frame — everything else fits inside it.
+After all six groups, the full curriculum begins. Core system properties — scalability, availability, reliability — are where the real system design thinking starts.
 
 ---
 
