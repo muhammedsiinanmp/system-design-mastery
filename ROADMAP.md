@@ -60,8 +60,8 @@ Follow these every time you add a topic:
 |---|---|---|---|
 | 01 | Networking Foundations | ✅ Done | `01-introduction/02-top-30-concepts/01-networking-foundations/README.md` |
 | 02 | APIs & Communication | ✅ Done | `01-introduction/02-top-30-concepts/02-apis-and-communication/README.md` |
-| 03 | Data Storage | 📋 Planned | `01-introduction/02-top-30-concepts/03-data-storage/README.md` |
-| 04 | Scaling | 📋 Planned | `01-introduction/02-top-30-concepts/04-scaling/README.md` |
+| 03 | Data Storage | ✅ Done | `01-introduction/02-top-30-concepts/03-data-storage/README.md` |
+| 04 | Scaling | ✅ Done | `01-introduction/02-top-30-concepts/04-scaling/README.md` |
 | 05 | Distributed Systems | 📋 Planned | `01-introduction/02-top-30-concepts/05-distributed-systems/README.md` |
 | 06 | Architecture Patterns | 📋 Planned | `01-introduction/02-top-30-concepts/06-architecture-patterns/README.md` |
 
@@ -353,7 +353,7 @@ Follow these every time you add a topic:
 
 | Phase | Name | Total | ✅ Done | 🚧 In Progress | 📋 Planned | 💡 Idea |
 |---|---|---|---|---|---|---|
-| 01 | Introduction | 7 | 2 | 0 | 5 | 0 |
+| 01 | Introduction | 7 | 4 | 0 | 3 | 0 |
 | 02 | Core System Properties | 5 | 0 | 0 | 5 | 0 |
 | 03 | Networking | 7 | 0 | 0 | 6 | 1 |
 | 04 | APIs & Communication | 15 | 0 | 0 | 14 | 1 |
@@ -364,8 +364,8 @@ Follow these every time you add a topic:
 | 09 | Architecture & Microservices | 13 | 0 | 0 | 7 | 6 |
 | 10 | Observability & Security | 13 | 0 | 0 | 11 | 2 |
 | 11 | Interview Preparation | 21 | 0 | 0 | 4 | 17 |
-| **Total** | | **150** | **2** | **0** | **108** | **40** |
+| **Total** | | **150** | **4** | **0** | **106** | **40** |
 
 ---
 
-*Last updated: 2026-06-07*
+*Last updated: 2026-07-03*

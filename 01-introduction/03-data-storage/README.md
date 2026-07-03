@@ -1189,17 +1189,17 @@ This is how engineers think. Not "what database should I use?" but "what does ea
 
 ## What's Next
 
-> **Group 4 — Scaling and Replication Deep Dive**
+> **Group 4 — Scaling Foundations**
 
-Now that you understand the *what* and *why* of storage, Group 4 digs into the *how* of making it survive at scale:
+Now that you understand the *what* and *why* of storage, Group 4 builds the intuition for making a whole system survive under load:
 
-- Replication strategies and consistency tradeoffs
-- Sharding algorithms and shard key selection
-- The CAP theorem — why distributed systems must make hard choices
-- Read replicas, failover, and leader election
-- Database migration strategies for live systems
+- Vertical vs horizontal scaling — bigger machines vs more machines
+- Statelessness — the property that unlocks horizontal scaling
+- Load balancing — spreading traffic across many servers
+- Scaling the database — read replicas, sharding, and partitioning in more depth
+- Caching and CDNs — the highest-leverage ways to shed load
 
-You've built the foundation. Group 4 is where it gets interesting.
+You've built the storage foundation. Group 4 is where you learn to make it handle real traffic. *(The consistency tradeoffs those techniques create — CAP, leader election, failover — get their own treatment in Group 5, Distributed Systems.)*
 
 ---
 
