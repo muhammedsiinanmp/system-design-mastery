@@ -142,3 +142,161 @@ The code looks identical. The reality is worlds apart. Distributed systems are h
 - Assume the network will fail, from the very first line.
 
 ---
+
+## 3. Consistency Models — What "Consistent" Even Means
+
+The moment you keep **more than one copy** of data — a database and its replicas, a cache in front of a database, shards syncing state — a question appears that never existed on a single machine:
+
+> **If two copies can disagree, what does the user actually see?**
+
+The answer is a choice, not an accident. A **consistency model** is the contract a system makes about *when* a write becomes visible and *which* value a reader gets. It sits on a spectrum, and the two ends anchor everything in between.
+
+### Strong Consistency
+
+**The guarantee:** the instant a write succeeds, *every* subsequent read — from any replica — returns that new value. The system behaves as if there were only one copy.
+
+```mermaid
+flowchart LR
+    Write["✍️ Write: balance = 100"] --> System["🗄️ System"]
+    System --> R1["📖 Read → 100 ✅"]
+    System --> R2["📖 Read → 100 ✅"]
+    System --> R3["📖 Read → 100 ✅"]
+```
+
+- **Feels like:** a single, always-correct machine. Intuitive and safe.
+- **Cost:** the system must coordinate across replicas *before* confirming the write — which means more latency, and if replicas can't be reached, the write may have to **block or fail**.
+- **Use when:** correctness is non-negotiable — bank balances, inventory counts, "did my payment go through?"
+
+### Eventual Consistency
+
+**The guarantee:** if writes stop, all copies will *eventually* converge to the same value. But for a short window, different readers may see different (stale) values.
+
+```mermaid
+flowchart LR
+    Write["✍️ Write: likes = 101"] --> System["🗄️ System"]
+    System --> R1["📖 Read → 101 ✅ (updated)"]
+    System --> R2["📖 Read → 100 ⏳ (not yet)"]
+    System --> R3["📖 Read → 100 ⏳ (not yet)"]
+```
+
+- **Feels like:** occasionally out-of-date, but fast and always available.
+- **Cost:** the application must tolerate temporarily stale reads.
+- **Use when:** availability and speed matter more than instant accuracy — like counts, view counters, social feeds, DNS.
+
+### The Real-World Spectrum
+
+Strong and eventual are the endpoints; production systems live all along the line, often with useful middle grounds:
+
+| Model | Guarantee | Classic example |
+|---|---|---|
+| **Strong** | Every read sees the latest write | Bank account balance |
+| **Read-your-writes** | *You* always see your own writes (others may lag) | Editing your own profile |
+| **Causal** | Related events are seen in order (cause before effect) | Comment appears after the post it replies to |
+| **Eventual** | All copies converge... eventually | Like counts, view counts |
+
+> 💡 **Key Insight**
+>
+> "Consistent" is not one thing — it's a **dial**, and turning it is a business decision, not just a technical one. A like counter that's stale for two seconds is fine; a bank balance that's stale for two seconds is a lawsuit. Engineers pick the *weakest* model the use case can tolerate, because weaker consistency buys speed and availability.
+
+### Quick Recap — Consistency Models
+
+- With multiple copies of data, you must choose **when** a write becomes visible.
+- **Strong consistency** = every read sees the latest write; safe but slower and less available.
+- **Eventual consistency** = copies converge over time; fast and available but temporarily stale.
+- Real systems use a **spectrum** (read-your-writes, causal, …) between the two.
+- Pick the **weakest** model the use case can safely tolerate.
+
+---
+
+## 4. The CAP Theorem — The Central Tradeoff
+
+Why can't a distributed system just be strongly consistent *and* always available? The **CAP theorem** explains why — and it's the single most important idea in this group.
+
+It says that a distributed system can offer at most **two** of these three properties at the same time:
+
+- **C — Consistency:** every read sees the most recent write (the strong consistency from Section 3).
+- **A — Availability:** every request gets a (non-error) response, even if some machines are down.
+- **P — Partition tolerance:** the system keeps working even when the network between machines is broken (a **partition**).
+
+```mermaid
+flowchart TD
+    CAP["CAP: pick 2 of 3"]
+    CAP --> C["🎯 Consistency"]
+    CAP --> A["🟢 Availability"]
+    CAP --> P["🔌 Partition Tolerance"]
+```
+
+### The Catch — P Is Not Optional
+
+Here's what makes CAP a *real* decision rather than an academic one: **in a distributed system, network partitions are a fact of life.** Cables get cut, switches fail, data centers lose connectivity. You *cannot* choose to not have partitions — so you *must* tolerate them.
+
+That collapses "pick 2 of 3" into a much sharper choice. **When a partition happens, you get exactly one decision:**
+
+> **Do you sacrifice Consistency, or sacrifice Availability?**
+
+```mermaid
+flowchart TD
+    Start["🔌 Network partition happens<br/>(replicas can't talk)"]
+    Start --> Q{"A write arrives.<br/>What do you do?"}
+    Q -->|"Accept it anyway"| AP["🟢 AP — stay Available<br/>Risk: replicas now disagree<br/>(sacrifice Consistency)"]
+    Q -->|"Refuse until healed"| CP["🎯 CP — stay Consistent<br/>Cost: some requests fail<br/>(sacrifice Availability)"]
+```
+
+- **CP (Consistency + Partition tolerance):** during a partition, refuse requests you can't safely serve. The system may return errors, but it **never gives a wrong answer.** → *banking, inventory, anything where wrong ≫ unavailable.*
+- **AP (Availability + Partition tolerance):** during a partition, keep answering with whatever data you have. The system **stays up** but may return **stale or conflicting** data (reconciled later). → *social feeds, shopping carts, DNS — anything where "up" ≫ "perfectly correct."*
+
+### It's Not All-or-Nothing
+
+CAP describes behavior **during a partition** — which is rare. The rest of the time (the vast majority), a well-built system can be both consistent *and* available. CAP isn't a permanent label on your system; it's the answer to *"when the network splits, which way do you fall?"*
+
+> 💡 **Key Insight**
+>
+> CAP is not about picking a database brand — it's about a promise you make to your users for the worst moment. "When I can't guarantee correctness, do I go *down* (CP) or go *wrong* (AP)?" Amazon famously chose **AP** for shopping carts: better to let you keep adding items (and reconcile later) than to show an error and lose the sale.
+
+### Quick Recap — CAP Theorem
+
+- A distributed system can guarantee at most **two** of **C**onsistency, **A**vailability, **P**artition tolerance.
+- Partitions are unavoidable, so **P is mandatory** — the real choice is **C vs A during a partition**.
+- **CP** systems stay correct but may reject requests (banking, inventory).
+- **AP** systems stay up but may serve stale/conflicting data (feeds, carts, DNS).
+- The tradeoff only bites *during* a partition; otherwise you can have both.
+
+---
+
+## 5. PACELC — Beyond CAP
+
+CAP has a blind spot: it only describes what happens **during a partition.** But partitions are rare. What governs your system the other 99.9% of the time?
+
+**PACELC** extends CAP to answer that. Read it as a sentence:
+
+> **If** there is a **P**artition, choose between **A**vailability and **C**onsistency —
+> **E**lse (normal operation), choose between **L**atency and **C**onsistency.
+
+```mermaid
+flowchart LR
+    P{"Partition?"}
+    P -->|"Yes"| AC["Availability vs Consistency<br/>(the CAP choice)"]
+    P -->|"No (normal)"| LC["Latency vs Consistency<br/>(the everyday choice)"]
+```
+
+The second half is the insight most people miss: **even when the network is perfectly healthy, strong consistency still costs latency.** To guarantee every read sees the latest write, replicas must coordinate on every operation — and coordination takes time. So a system that insists on strong consistency pays a *latency tax on every single request*, partition or not.
+
+That's why many high-scale systems relax consistency **even in normal operation** — not because they fear partitions, but because they refuse to pay that latency tax billions of times a day.
+
+| System style | During partition | Normal operation |
+|---|---|---|
+| **PA/EL** (e.g. Dynamo-style, Cassandra) | Availability | Low latency (relax consistency) |
+| **PC/EC** (e.g. traditional RDBMS) | Consistency | Consistency (accept the latency) |
+
+> 💡 **Key Insight**
+>
+> CAP asks "what about the disaster?" PACELC adds "...and what about *every ordinary Tuesday*?" The everyday **latency vs consistency** tradeoff shapes far more of a system's design than the rare partition ever will.
+
+### Quick Recap — PACELC
+
+- CAP only covers the (rare) partition case; **PACELC** adds the normal case.
+- **If Partition:** Availability vs Consistency. **Else:** Latency vs Consistency.
+- Strong consistency costs latency **even when the network is healthy** — coordination isn't free.
+- Many systems relax consistency in normal operation to avoid paying that tax constantly.
+
+---
