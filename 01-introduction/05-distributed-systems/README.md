@@ -300,3 +300,209 @@ That's why many high-scale systems relax consistency **even in normal operation*
 - Many systems relax consistency in normal operation to avoid paying that tax constantly.
 
 ---
+
+## 6. How Machines Coordinate
+
+If there's no shared clock and the network can fail, how does a group of machines ever *agree* on anything — which one is in charge, which value is correct, who's even still alive? This is the **coordination** problem, and a handful of core patterns solve it. Here's the intuition for each.
+
+### Heartbeats — "Are You Still Alive?"
+
+Machines can't tell a crashed peer from a slow one (Section 1). So they don't try to — instead, every machine periodically sends a small **heartbeat** message: *"I'm still here."* Miss a few in a row, and the others declare that machine dead and route around it.
+
+```mermaid
+flowchart LR
+    A["🖥️ Node A"] -->|"💓 every 1s"| Monitor["👁️ Monitor"]
+    B["🖥️ Node B"] -->|"💓 every 1s"| Monitor
+    C["🖥️ Node C"] -->|"💓 ...silence"| Monitor
+    Monitor -->|"3 missed → mark C dead"| Action["Remove C from pool"]
+```
+
+The catch: set the timeout too short and you'll declare healthy-but-slow machines dead (false alarms); too long and you're slow to react to real failures. That tension never fully goes away.
+
+### Leader Election — "Who's in Charge?"
+
+Many problems get dramatically simpler if *one* machine is the designated decision-maker (the **leader**), and the rest are **followers**. A single leader means one place where writes are ordered — no disagreement about what happened first.
+
+But what if the leader dies? The remaining machines run a **leader election** to promote a new one, so the system heals itself without a human.
+
+```mermaid
+flowchart TD
+    subgraph Before["Leader dies"]
+        L1["👑 Leader ❌"]
+        F1["Follower"]
+        F2["Follower"]
+    end
+    Before -->|"election"| After
+    subgraph After["Followers elect a new leader"]
+        F3["Follower"]
+        L2["👑 New Leader"]
+        F4["Follower"]
+    end
+```
+
+### Consensus — "Let's All Agree, Even If Some Fail"
+
+Sometimes a group must **agree on a single value** — the next leader, the order of writes, whether a transaction committed — and the agreement must survive machines crashing and messages getting lost. This is **consensus**, the hardest and most fundamental coordination problem.
+
+The key idea most consensus systems use is a **quorum**: don't wait for *everyone* to agree (one dead machine would freeze you forever) — wait for a **majority**. With 5 machines, get 3 to agree and you can proceed. Because any two majorities overlap, no two conflicting decisions can ever both win.
+
+```mermaid
+flowchart TD
+    Proposal["📩 Proposal: X = 7"]
+    Proposal --> N1["✅ Node 1"]
+    Proposal --> N2["✅ Node 2"]
+    Proposal --> N3["✅ Node 3"]
+    Proposal --> N4["❌ Node 4 (down)"]
+    Proposal --> N5["❌ Node 5 (slow)"]
+    N1 --> Q["3 of 5 = majority<br/>✅ Decision committed"]
+    N2 --> Q
+    N3 --> Q
+```
+
+Algorithms like **Raft** and **Paxos** make this reliable. You don't need their internals yet — just the mental model: **majority agreement, so the system decides even when a minority fails.** (Full deep-dive comes later.)
+
+### Replication, Revisited
+
+Group 4 introduced replication for *scale* (read replicas) and *fault tolerance* (copies survive a crash). Now you can see its hidden cost clearly: **every replica is another copy that can disagree.** Replication and consistency are two sides of one coin — the more you replicate for safety and speed, the harder you must work to keep the copies in agreement. That's the tension the whole rest of this group is about.
+
+> 💡 **Key Insight**
+>
+> Coordination is expensive — every heartbeat, election, and quorum vote is network traffic and waiting. So the golden rule is: **coordinate as little as possible.** The best distributed designs find ways for machines to act independently and only synchronize when they truly must. Cheap coordination is fast; unavoidable coordination is where the latency lives.
+
+### Quick Recap — Coordination
+
+- **Heartbeats** detect failure by periodic "I'm alive" messages (with false-alarm vs slow-detection tension).
+- **Leader election** designates one decision-maker and auto-promotes a new one when it dies.
+- **Consensus** gets machines to agree on one value despite crashes, using a **majority quorum**.
+- **Replication** buys scale and safety but multiplies the copies that can disagree.
+- Coordination is costly — the best designs minimize it.
+
+---
+
+## 7. Handling Failure Gracefully
+
+In a distributed system, failure isn't an exception — it's the *normal operating condition*. At any moment, *something* is slow, restarting, or unreachable. A well-designed system doesn't try to prevent failure (impossible); it's built to **absorb** it. A few foundational patterns do most of that work.
+
+### Timeouts — Never Wait Forever
+
+Because a dead machine and a slow one look identical, you must never wait indefinitely for a response. A **timeout** puts a ceiling on the wait: *"if I don't hear back in 2 seconds, I'll stop waiting and handle it."* Without timeouts, one stuck dependency can freeze every thread and take down the whole system.
+
+### Retries + Backoff — Try Again, But Politely
+
+Many failures are *transient* — a blip, a moment of overload. A **retry** simply attempts the request again. But naïve retries are dangerous: if a service is struggling and *everyone* retries immediately, the flood of retries finishes the job and kills it (a **retry storm**).
+
+The fix is **exponential backoff with jitter**: wait a little before the first retry, then double the wait each time (1s, 2s, 4s…), plus a small random offset so clients don't all retry in sync.
+
+```mermaid
+flowchart LR
+    Try["Request fails"] --> W1["wait ~1s"] --> R1["retry"]
+    R1 -->|fails| W2["wait ~2s"] --> R2["retry"]
+    R2 -->|fails| W3["wait ~4s"] --> R3["retry"]
+```
+
+### Idempotency — Make Retries Safe
+
+Retries create a subtle danger. Remember Section 1: a request might *succeed* but its reply gets lost. You retry — and now the operation runs **twice.** If that operation is "charge the customer $50," you've charged them $100.
+
+The answer is **idempotency**: design operations so that doing them multiple times has the same effect as doing them once (often via a unique request ID the server remembers). Idempotency is what makes retries *safe* — and retries are what make a system *resilient*. You can't have one without the other.
+
+### Circuit Breakers — Stop Kicking a Dead Machine
+
+If a downstream service is clearly failing, hammering it with requests (and retries) only makes things worse and ties up your own resources waiting for timeouts. A **circuit breaker** watches the failure rate and, once it crosses a threshold, "trips" — it stops sending requests and **fails fast** for a while, giving the struggling service room to recover before cautiously trying again.
+
+```mermaid
+flowchart LR
+    Closed["🟢 CLOSED<br/>requests flow"] -->|"failures exceed threshold"| Open["🔴 OPEN<br/>fail fast, no requests"]
+    Open -->|"after cooldown"| Half["🟡 HALF-OPEN<br/>test with a few"]
+    Half -->|"success"| Closed
+    Half -->|"still failing"| Open
+```
+
+### Graceful Degradation — Bend, Don't Break
+
+When something fails, a good system **degrades** instead of collapsing: show cached (slightly stale) data if the database is down; hide the recommendations panel if that service is unavailable, but still let people check out. The user gets a *diminished* experience instead of an *error page*. A shopping site that can't show "you may also like" but still takes orders has failed *gracefully*.
+
+> 💡 **Key Insight**
+>
+> These patterns share one philosophy: **isolate failure so it can't spread.** The nightmare of distributed systems is the **cascading failure** — one slow service fills up its callers' threads, which stall *their* callers, and the whole system topples like dominoes. Timeouts, circuit breakers, and graceful degradation are all firewalls that stop one failure from becoming an outage.
+
+### Quick Recap — Handling Failure
+
+- **Timeouts** stop you waiting forever on a dead-or-slow machine.
+- **Retries with exponential backoff + jitter** recover from transient failures without causing a retry storm.
+- **Idempotency** makes retries safe by ensuring repeats have no extra effect.
+- **Circuit breakers** fail fast when a dependency is down, giving it room to recover.
+- **Graceful degradation** offers a reduced experience instead of a total failure.
+- The goal of all of them: **contain failure and prevent cascades.**
+
+---
+
+## 8. Putting It All Together
+
+Let's watch every idea in this group work together in one story. **A user posts a comment** on a globally distributed social app, and someone across the world reads it.
+
+```mermaid
+flowchart TD
+    User["👤 User posts comment"] --> LB["⚖️ Load Balancer"]
+    LB --> App["🖥️ App Server (stateless)"]
+    App -->|"write"| Leader["👑 Leader DB"]
+    Leader -->|"replicate (quorum)"| R1[("🗄️ Replica")]
+    Leader -->|"replicate (quorum)"| R2[("🗄️ Replica")]
+    Reader["👤 Reader (other continent)"] --> CDN["📦 Edge / Replica"]
+```
+
+Follow the decisions an engineer makes at each step — every one is a concept from this group:
+
+1. **The write goes to the leader.** There's a single **leader** (Section 6) so all writes are ordered in one place — no disagreement about what came first.
+
+2. **The leader replicates to a quorum.** It waits for a **majority** of replicas to acknowledge (Section 6) before confirming success — so the comment survives even if one replica dies moments later.
+
+3. **A consistency choice is made.** Should the leader wait for *all* replicas (strong, slower) or confirm after a quorum and sync the rest lazily (eventual, faster)? For a comment, **eventual consistency** (Section 3) is the right call — a half-second of lag is invisible to users, and speed matters more.
+
+4. **A partition strikes.** Mid-write, the network splits and the leader can't reach some replicas. Now the **CAP** choice (Section 4) is forced: this is a social feed, so the system chooses **AP** — accept the comment and reconcile later, rather than show the user an error.
+
+5. **The reader, far away, gets a fast answer.** Their read is served from a nearby **replica/edge** (Section 6, and Group 4's CDN). It might be a few hundred milliseconds behind — **eventual consistency** in action — but it's fast and always available. This is the **PACELC** "else" branch (Section 5): in normal operation, the system trades consistency for latency.
+
+6. **Something fails — and the system bends, not breaks.** A replica is briefly unreachable, so the app **times out** and **retries with backoff** (Section 7). The write is **idempotent** (Section 7), so the retry can't double-post the comment. If the whole comment service is down, the page **degrades gracefully** (Section 7) — it still shows the post, just without the latest comments.
+
+**The takeaway:** not one of these decisions existed on a single machine. Every step is a conscious trade between **consistency, availability, latency, and resilience** — and making those trades *deliberately*, with eyes open, is exactly what distributed systems design *is*.
+
+---
+
+## 9. Final Recap
+
+| Concept | Core Insight | Biggest Tradeoff |
+|---|---|---|
+| **Distributed System** | Many machines cooperating to look like one; built for scale, fault tolerance, and low latency | Enormous complexity; partial failure is unavoidable |
+| **The Two Truths** | The network is unreliable and there's no shared clock — a crashed node looks like a slow one | You must design for ambiguity you can't resolve |
+| **The Fallacies** | Guarantees you get free within a process vanish across a network | The hardest bugs are invisible in the code |
+| **Consistency Models** | "Consistent" is a dial from strong to eventual, not a yes/no | Stronger = safer but slower and less available |
+| **CAP Theorem** | During a partition, you must choose Consistency *or* Availability | CP goes *down*; AP goes *(temporarily) wrong* |
+| **PACELC** | Even without partitions, strong consistency costs latency | Coordination is never free |
+| **Coordination** | Heartbeats, leader election, and majority-quorum consensus let machines agree | Coordination is expensive — minimize it |
+| **Replication** | Copies give scale and safety but can disagree | More copies = harder consistency |
+| **Failure Handling** | Timeouts, retries+backoff, idempotency, circuit breakers, graceful degradation | Every safeguard adds complexity |
+| **Failure-First Design** | Contain failure so it can't cascade across services | You optimize for the bad day, not the good one |
+
+### The One Thing to Remember
+
+> **In a distributed system, failure is not an edge case — it's the default. You don't design to prevent it; you design so that when parts fail (and they will), the system stays correct, available, or fast — knowing you often can't have all three at once.**
+
+---
+
+## What's Next
+
+> **Group 6 — Architecture Patterns**
+
+You've now built the full foundation: networking (G1), APIs (G2), storage (G3), scaling (G4), and the distributed-systems reality that ties them together (G5). You understand the *building blocks* and the *hard truths*.
+
+Group 6 — the final foundational group — assembles them into the **architectural patterns** real systems are built from:
+
+- **Monolith vs microservices** — one big app vs many small services, and the real tradeoffs
+- **Event-driven architecture** — services communicating through events instead of direct calls
+- **Serverless** — running code without managing servers
+- **How to choose** — matching an architecture to the problem, not the hype
+
+You've learned how the pieces work and how they fail. Group 6 is where you learn how to *arrange* them into a whole system — and it completes the Top 30 foundations.
+
+---
