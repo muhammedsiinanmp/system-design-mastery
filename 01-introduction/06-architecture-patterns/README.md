@@ -396,3 +396,275 @@ In a monolith, modules find each other by function name. Across a fleet of servi
 - **Service discovery** lets services find each other by name as instances come and go (DNS for internal services).
 
 ---
+
+## 6. Event-Driven Architecture — Communicating Through Events
+
+Section 5 showed asynchronous messaging as *one option* for how services talk. **Event-driven architecture (EDA)** makes it the *organizing principle* of the whole system. Instead of services *commanding* each other, they simply **announce that something happened** — and any interested service reacts.
+
+The shift is subtle but profound:
+
+- **Command style (coupled):** *"Payment service, charge this card. Notification service, send an email."* The caller must know who to call and wait for them.
+- **Event style (decoupled):** *"An order was placed."* The Order service announces this fact to the world and moves on. It has **no idea** who — if anyone — is listening.
+
+```mermaid
+flowchart TD
+    OS["📦 Order Service"] -->|"emits 'OrderPlaced'"| Broker["📨 Event Broker"]
+    Broker --> PS["💳 Payment Service<br/>(charges card)"]
+    Broker --> NS["🔔 Notification Service<br/>(sends email)"]
+    Broker --> AS["📊 Analytics Service<br/>(updates dashboard)"]
+    Broker --> IS["📦 Inventory Service<br/>(reserves stock)"]
+```
+
+### The Killer Feature: Add Without Touching
+
+Look at that diagram and imagine the business wants a **loyalty-points** feature. In a command-style system, you'd edit the Order service to *also* call a new Points service — changing and redeploying working code. In an event-driven system, the new Points service just **subscribes to `OrderPlaced`** and starts reacting. **The Order service is never touched, never redeployed, never even aware.**
+
+This is **extreme loose coupling**: producers and consumers know nothing about each other — only the *shape of the event* between them. It's what lets large systems grow new capabilities without a web of tangled dependencies.
+
+### The Building Blocks
+
+- **Event** — an immutable record that something happened, in the past tense: `OrderPlaced`, `PaymentFailed`, `UserSignedUp`.
+- **Producer** — emits events; doesn't know or care who consumes them.
+- **Consumer** — subscribes to event types it cares about and reacts.
+- **Broker** — the backbone (e.g. Kafka, RabbitMQ) that carries events from producers to consumers, and often *stores* them.
+
+### Where Event-Driven Shines — and Where It Bites
+
+| Strength | |
+|---|---|
+| **Loose coupling** | Add/remove consumers without touching producers |
+| **Scalability** | Producers and consumers scale independently; the broker buffers spikes |
+| **Resilience** | A down consumer just processes events later — nothing is lost |
+| **Real-time flow** | Naturally suited to streams: activity feeds, fraud detection, live analytics |
+
+But EDA inherits — and sharpens — the hard parts of Group 5:
+
+- **Eventual consistency is the default.** After `OrderPlaced` fires, the order exists but inventory isn't reserved *yet* — for a moment the system is in an in-between state. You must design for that window.
+- **Debugging is harder.** There's no single call stack to follow. A business action ripples through events across many services; understanding "what happened" requires **distributed tracing** and good event logging.
+- **Duplicate & out-of-order events.** Brokers may deliver an event more than once or out of sequence. Consumers must be **idempotent** (Group 5) — processing `OrderPlaced` twice must not charge the customer twice.
+
+> 💡 **Key Insight**
+>
+> Event-driven architecture inverts the direction of dependency. In command style, the *caller* depends on the *callee*. In event style, neither depends on the other — they both depend only on the **event's shape.** That inversion is the source of both its greatest strength (independent evolution) and its greatest difficulty (no single place shows you the whole flow).
+
+### Quick Recap — Event-Driven Architecture
+
+- Services **announce facts** (events) instead of **commanding** each other.
+- **Producers, consumers, and a broker**, connected only by the **event's shape** — extreme loose coupling.
+- Killer feature: **add new consumers without touching producers.**
+- Great for **scalability, resilience, and real-time** stream processing.
+- Costs: **eventual consistency, harder debugging, and duplicate/out-of-order events** — so consumers must be **idempotent.**
+
+---
+
+## 7. Serverless — Code Without Servers
+
+Every architecture so far assumed *you* run servers — you provision them, scale them, patch them, and pay for them 24/7 even when they sit idle. **Serverless** flips that assumption: you write the code, and the cloud provider handles *everything* about running it.
+
+The name is a (useful) lie — there are still servers. You just never see, provision, or manage them. Two ideas make up serverless:
+
+1. **Functions as a Service (FaaS)** — you deploy individual functions (e.g. AWS Lambda). The provider runs a function *only when it's triggered* — by an HTTP request, a new file, a message on a queue, a timer — and charges you only for the milliseconds it actually runs.
+2. **Managed backend services (BaaS)** — you lean on fully-managed building blocks (managed databases, auth, object storage, queues) instead of running your own.
+
+```mermaid
+flowchart LR
+    Trigger["⚡ Trigger<br/>(HTTP / file upload /<br/>queue msg / timer)"] --> Fn["λ Function<br/>(spins up, runs, stops)"]
+    Fn --> Svc["☁️ Managed services<br/>(DB, storage, queue)"]
+```
+
+### The Two Headline Wins
+
+- **Scale to zero.** No traffic? Zero functions running, **zero cost.** Then a spike arrives and the platform spins up thousands of parallel instances automatically. You never configure autoscaling — it's inherent.
+- **No operations.** No servers to provision, patch, or monitor for health. No capacity planning. You ship code; the platform runs it. For a small team, this eliminates an enormous amount of undifferentiated work.
+
+This makes serverless a superb fit for **spiky, event-driven, or unpredictable workloads**: image thumbnailing on upload, webhook handlers, scheduled jobs, glue between services, and lightweight APIs.
+
+### The Catches Are Real
+
+| Tradeoff | What it means |
+|---|---|
+| **Cold starts** | An idle function must "wake up" on the first request — adding tens to hundreds of ms of latency. Rough for latency-critical paths. |
+| **Stateless & short-lived** | Functions keep no memory between runs and have execution-time limits (e.g. a few minutes). All state must live in an external store (recall **statelessness**, Group 4). |
+| **Vendor lock-in** | Your code weds itself to one provider's triggers, limits, and ecosystem. Moving to another cloud is real work. |
+| **Cost inversion at scale** | Cheap when idle or spiky; at *constant high volume*, paying per-invocation can cost **more** than a always-on server you keep busy. |
+| **Harder local dev & debugging** | Reproducing the cloud event environment on your laptop, and tracing across many tiny functions, is genuinely fiddly. |
+
+> ⚠️ **Serverless is not a universal upgrade.** It's phenomenal for spiky, event-driven, low-to-medium constant-load workloads — and often the *wrong* tool for steady high-throughput services (where an always-on box is cheaper and cold starts hurt) or long-running/stateful jobs. Like every pattern in this group, it's "best for," not "best."
+
+> 💡 **Key Insight**
+>
+> Serverless is the ultimate expression of the whole group's theme — **trading control for simplicity.** You give up control over the runtime, scaling, and even *where* your code runs, and in exchange you delete almost all operational work. Whether that trade is brilliant or foolish depends entirely on the workload. Match the tool to the shape of the traffic.
+
+### Quick Recap — Serverless
+
+- **Serverless** = you write code; the provider runs it, scales it, and manages the servers you never see (**FaaS** + managed backend services).
+- Headline wins: **scale to zero** (pay only for what runs) and **no operations.**
+- Ideal for **spiky, event-driven, unpredictable** workloads and glue code.
+- Watch out for **cold starts, statelessness/time limits, vendor lock-in, and cost inversion at steady high scale.**
+- It trades **control for simplicity** — great for the right workload, wrong for others.
+
+---
+
+## 8. Choosing the Right Architecture
+
+You now have four patterns in your toolbox. The engineering skill isn't knowing what they are — it's knowing **which one fits the situation in front of you.** There's no formula, but there is a set of questions good engineers ask.
+
+### The Questions That Actually Decide It
+
+```mermaid
+flowchart TD
+    Start["What architecture?"] --> Team{"How big is<br/>the team?"}
+    Team -->|"Small (1–2 teams)"| Mono["🟢 Monolith<br/>(or modular monolith)"]
+    Team -->|"Many teams"| Scale{"Do parts need to<br/>scale/evolve<br/>independently?"}
+    Scale -->|"No"| Mono
+    Scale -->|"Yes"| Micro["🔵 Microservices<br/>(+ events between them)"]
+    Start -.->|"spiky / event-driven<br/>/ glue work"| Server["⚡ Serverless<br/>(for those pieces)"]
+```
+
+Run your problem through these lenses:
+
+1. **Team size & structure.** One small team? A **monolith** almost always wins — the coordination cost of microservices buys you nothing. Many teams tripping over one codebase? That's the classic signal to split.
+2. **Scale & load shape.** Uniform, predictable load fits a monolith or steady services. Wildly *spiky* or event-triggered work is where **serverless** and **event-driven** shine.
+3. **Domain complexity.** A simple, well-understood domain doesn't need service boundaries. A large domain with clearly separable capabilities (payments, search, messaging) invites them.
+4. **Operational maturity.** Do you have CI/CD, monitoring, tracing, and on-call in place? Microservices *require* this. Without it, they'll bury you — stay monolithic until you build that muscle.
+5. **Speed of change vs. stability.** Need to move fast and change your mind constantly (early startup)? A monolith is faster to evolve. Have stable, well-defined boundaries? Services can codify them.
+
+### It's Not All-or-Nothing
+
+The biggest mistake is treating this as a single, permanent, system-wide choice. Real systems are **hybrids that evolve**:
+
+- A **modular monolith** at the core, with a few **serverless functions** for spiky background jobs.
+- A mostly-monolithic system that has **extracted** two or three services where the pain was real, connected by **events**.
+- Microservices for the mature parts of the business, a monolith for the new area still finding its shape.
+
+And the choice is **not forever.** The right architecture for 5 engineers and 1,000 users is the wrong one for 500 engineers and 50 million users — and *that's fine.* Architectures are meant to **evolve** as the team and the problem grow.
+
+> 💡 **Key Insight**
+>
+> Almost every architecture disaster comes from **solving a problem you don't have yet.** Teams adopt microservices for a scale they haven't reached, and drown in complexity that buys them nothing. The disciplined move is to build the **simplest architecture that solves today's problem well**, while keeping clean boundaries so you *can* split later. Earn your complexity; don't pre-pay for it.
+
+### Quick Recap — Choosing
+
+- There's no "best" — decide with **team size, load shape, domain complexity, operational maturity, and rate of change.**
+- Small team / simple domain / immature ops → **monolith.** Many teams / independent scaling / mature ops → **microservices.**
+- **Spiky, event-driven** slices → reach for **serverless** and **event-driven**, even inside a mostly-monolithic system.
+- Real systems are **evolving hybrids**, not one permanent choice.
+- The cardinal sin is **solving problems you don't have yet** — build the simplest thing that works today, keep boundaries clean.
+
+---
+
+## 9. Putting It All Together
+
+Let's watch every pattern in this group appear naturally as one product grows. Meet **Shophub**, an online store — and follow the architecture as the business scales, exactly the way real systems evolve.
+
+### Stage 0 — Launch: A Modular Monolith
+
+Two founders, one small team. They build **one application** — users, catalog, cart, orders, payments — as cleanly separated modules in a single codebase, one database.
+
+```mermaid
+flowchart LR
+    Users["👥 Users"] --> Mono["🖥️ Monolith<br/>(users · catalog · cart · orders · payments)"]
+    Mono --> DB[("🗄️ One Database")]
+```
+
+**Why it's right:** they ship fast, debug easily, and get atomic transactions for free. Microservices here would be pure self-sabotage. *(§2, §4)*
+
+### Stage 1 — First Serverless Job
+
+Users upload product photos, which need thumbnails in many sizes — CPU-heavy and *bursty*. Instead of bloating the monolith, they add a **serverless function** triggered on each upload.
+
+```mermaid
+flowchart LR
+    Upload["📤 Photo uploaded"] --> Fn["λ Thumbnail function<br/>(scales to zero when idle)"]
+    Fn --> S3["📦 Object storage"]
+```
+
+**Why it's right:** spiky, stateless, event-triggered work — the textbook serverless fit. They pay only when photos are uploaded. *(§7)*
+
+### Stage 2 — The Team Grows, Extract a Service
+
+Success brings 60 engineers and a problem: everyone fights over the same codebase, and the **payments** logic needs stricter security, separate scaling, and its own release cadence. That's a *real* trigger — so they **extract a Payment service** with its own database, behind an **API gateway.**
+
+```mermaid
+flowchart TD
+    Client["📱 Client"] --> GW["🚪 API Gateway"]
+    GW --> Mono["🖥️ Core Monolith"]
+    GW --> Pay["💳 Payment Service"]
+    Mono --> MDB[("🗄️ Core DB")]
+    Pay --> PDB[("🗄️ Payments DB")]
+```
+
+**Why it's right:** they extracted for a *concrete* pain (team friction + independent scaling/security), not for fashion — and only one service, where the boundary was obvious. *(§3, §4, §5)*
+
+### Stage 3 — Go Event-Driven
+
+Placing an order now must trigger many reactions: charge payment, reserve inventory, send a receipt, update analytics, award loyalty points. Wiring all those as synchronous calls from the order flow would be fragile and slow. Instead, the order flow emits **one event — `OrderPlaced`** — and each concern subscribes.
+
+```mermaid
+flowchart TD
+    Order["📦 Order placed"] -->|"emits 'OrderPlaced'"| Broker["📨 Event Broker"]
+    Broker --> Pay["💳 Charge payment"]
+    Broker --> Inv["📦 Reserve inventory"]
+    Broker --> Notif["🔔 Send receipt"]
+    Broker --> Analytics["📊 Update analytics"]
+    Broker --> Loyalty["⭐ Award points<br/>(added later, nobody else touched)"]
+```
+
+**Why it's right:** loose coupling means new reactions (loyalty points) are added *without touching the order flow*, and a momentary lag before inventory updates is acceptable — **eventual consistency** by design. *(§6)*
+
+### The Pattern Behind the Story
+
+Trace Shophub's journey and notice what *didn't* happen: they never sat down on day one and designed a 40-service architecture. At each stage:
+
+> **A concrete new pressure appeared → they applied the *simplest* pattern that relieved it → the architecture evolved one deliberate step.**
+
+Monolith for simplicity → serverless for a spiky job → one extracted service for real team pain → events for fan-out reactions. Every step was **just-in-time**, matched to a problem they *actually had* — the exact discipline from Section 8. That evolution *is* good architecture.
+
+---
+
+## 10. Final Recap
+
+| Concept | Core Insight | Biggest Tradeoff |
+|---|---|---|
+| **Architecture = Arrangement** | How you divide code/data into units and how they talk; a toolbox, not a ladder | No "best" — only "best for this team, scale, and problem" |
+| **Monolith** | One codebase, one deploy — simple, fast, not a distributed system | Everything scales/deploys together; strains large teams |
+| **Microservices** | Many independent services, each owning a capability and its data | Full distributed-systems complexity; needs mature ops |
+| **Monolith vs Micro** | Opposite ends of simplicity-vs-independence; start monolith, extract on real pain | The **distributed monolith** is the worst of both worlds |
+| **Service Communication** | Sync = simple but temporally coupled; async = resilient but eventually consistent | Communication style *is* the coupling you choose |
+| **API Gateway** | One front door for routing, auth, rate limiting, TLS | Another component to run and keep highly available |
+| **Event-Driven** | Announce facts, don't command; add consumers without touching producers | Eventual consistency + no single view of the whole flow |
+| **Serverless** | Write code; the cloud runs and scales it, to zero when idle | Cold starts, statelessness, lock-in, cost inversion at scale |
+| **Choosing** | Decide by team, scale, domain, ops maturity; hybrids that evolve | Solving problems you don't have yet is the cardinal sin |
+
+### The One Thing to Remember
+
+> **There is no "best" architecture — only the simplest one that solves the problem you actually have today, arranged so you can evolve it tomorrow. Start simple, keep your boundaries clean, and earn your complexity one real problem at a time.**
+
+---
+
+## What's Next
+
+> **🎉 You've completed the Top 30 Foundations.**
+
+Take a moment — this is a real milestone. You began Group 1 not knowing how a client reaches a server. You now understand:
+
+- **Networking** (G1) — how machines talk
+- **APIs** (G2) — how that talk is structured
+- **Storage** (G3) — where data lives and why it's hard
+- **Scaling** (G4) — how systems grow past one machine
+- **Distributed systems** (G5) — the hard truths of many machines
+- **Architecture** (G6) — how to arrange it all into a whole system
+
+You have the complete **mental model.** You can look at any system and see its pieces, how they communicate, how they scale, how they fail, and how they're arranged — and reason about *why*.
+
+### Where the curriculum goes from here
+
+The Foundation phase built **intuition**. Everything ahead builds **depth** on top of it:
+
+- **Phase 02 — Core System Properties:** the precise vocabulary every design conversation uses — **latency vs throughput, availability, reliability, scalability, and single points of failure.** These are the yardsticks you'll measure every future design against.
+- **Then the deep-dive phases** revisit each foundation at full depth — DNS and load balancers, database internals and indexing, caching strategies, message queues and Kafka, consensus and leader election, and the architecture patterns above in production detail.
+- **Finally, interview preparation** — applying all of it to real system design problems.
+
+You've built the foundation. Now we go deep.
+
+---
