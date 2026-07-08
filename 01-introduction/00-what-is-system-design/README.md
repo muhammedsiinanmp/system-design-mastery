@@ -141,3 +141,164 @@ None of this means coding skills are irrelevant — they're the *foundation.* Yo
 - System design **builds on** coding fundamentals; it doesn't discard them.
 
 ---
+
+## 3. Requirements — The Foundation of Every Design
+
+Here's a rule that separates people who *look* good at system design from people who *are* good at it:
+
+> **You cannot design a system until you know what it must do. Every good design starts with requirements, not with technology.**
+
+The weakest instinct — in interviews and in real projects alike — is to jump straight to solutions: "we'll use Kafka and a NoSQL database and microservices." Design *anything* before you understand the requirements and you're just guessing with buzzwords. Requirements are the target; architecture is how you hit it.
+
+Requirements come in two flavors, and the second one matters far more than beginners expect.
+
+### Functional Requirements — *What the System Does*
+
+These are the features — the behaviors a user can see:
+
+- A URL shortener must **turn a long URL into a short one** and **redirect** when someone visits it.
+- A chat app must **send a message** and **deliver it** to the recipient.
+- An e-commerce site must let users **browse products**, **add to cart**, and **check out**.
+
+Functional requirements are usually the easy part — they're the obvious "what does it do?" list.
+
+### Non-Functional Requirements — *How Well It Does It*
+
+These describe the *qualities* the system must have while doing its job:
+
+- **How many** users and requests? (scale)
+- **How fast** must it respond? (latency)
+- **How often** can it be down? (availability)
+- **Can it ever lose data?** (durability)
+- Must everyone see the **same data instantly**, or is a slight delay OK? (consistency)
+
+```mermaid
+flowchart TD
+    Req["📋 Requirements"]
+    Req --> F["✅ Functional<br/>WHAT it does<br/>(features: post, redirect, checkout)"]
+    Req --> NF["⚙️ Non-Functional<br/>HOW WELL it does it<br/>(scale, latency, availability, durability)"]
+    NF --> Arch["🏗️ These drive the architecture"]
+```
+
+> 💡 **Key Insight**
+>
+> **Non-functional requirements are what actually shape the architecture.** "Shorten a URL" (functional) is trivial — you could do it on a laptop. "Shorten a URL for **100 million users** with **<50ms redirects** and **99.99% uptime**" (non-functional) is what forces caching, replication, and global distribution. The *features* tell you what to build; the *numbers and qualities* tell you *how* to build it. Two systems with identical features and different NFRs are completely different designs.
+
+### Ask Before You Answer
+
+Because requirements drive everything, the *first* move in any design problem — especially an interview — is not to design. It's to **ask clarifying questions** until the problem is concrete:
+
+- "How many users? How many requests per second?"
+- "Read-heavy or write-heavy?"
+- "How important is consistency vs availability here?"
+- "What's the acceptable latency? Is downtime ever OK?"
+
+An engineer who starts drawing before asking these is showing they don't understand what drives a design. An engineer who *asks first* has already demonstrated the most important system-design instinct.
+
+### Quick Recap — Requirements
+
+- **Requirements come before technology** — always. Never design before you know the target.
+- **Functional** = what the system does (features). Usually the easy part.
+- **Non-functional** = how well it does it (scale, latency, availability, durability, consistency).
+- **Non-functional requirements drive the architecture** — the numbers decide the design.
+- The first move on any problem is to **ask clarifying questions**, not to draw boxes.
+
+---
+
+## 4. Thinking in Scale — Back-of-the-Envelope Intuition
+
+Non-functional requirements are mostly *numbers*, and numbers change designs. So a core system-design skill is being able to do rough math — **back-of-the-envelope estimation** — to turn "a lot of users" into concrete pressure on the system.
+
+You're not looking for precision. You're looking for the **order of magnitude**, because that's what decides architecture. Ten requests per second and ten million requests per second are not the same system — and a quick estimate tells you which one you're building.
+
+### A Simple Example
+
+Say we're designing a service with **100 million** users, and each makes **10 requests per day** on average.
+
+```text
+100,000,000 users × 10 requests = 1,000,000,000 requests/day
+
+1,000,000,000 / 86,400 seconds ≈ ~11,500 requests/second (average)
+```
+
+And traffic is never flat — there are peaks. A common rule of thumb is that peak load is a few times the average:
+
+```text
+Peak ≈ 2–3× average ≈ ~30,000 requests/second
+```
+
+Suddenly "100 million users" has become a concrete engineering target: **the system must handle ~30k requests/second at peak.** That single number immediately tells you a single server won't do — you'll need horizontal scaling, load balancing, and caching (all covered in Group 4).
+
+### The Numbers That Matter
+
+You'll estimate a handful of quantities again and again:
+
+| Estimate | Why it matters |
+|---|---|
+| **Requests/second (QPS)** | Decides how many servers and how much caching you need |
+| **Read : Write ratio** | Read-heavy → replicas & caches; write-heavy → sharding |
+| **Storage growth** | "1M new records/day × 1KB × 365" → do we need one DB or many? |
+| **Bandwidth** | Serving video vs text is a wildly different network bill |
+
+> 💡 **Key Insight**
+>
+> The point of estimation isn't the exact figure — it's to reveal **where the pressure is.** A read-heavy system pushes you toward caches and replicas; a write-heavy one toward sharding; a storage-heavy one toward partitioning and cheaper storage tiers. The rough numbers tell you *which problem you're actually solving* before you pick a single technology. (Group 4 turns each of these pressures into a specific technique.)
+
+> ⚠️ Don't over-index on perfect math. Interviewers and real designs care that you *can* reason about scale and that your numbers are in the right ballpark — not that you divided by 86,400 flawlessly. Round aggressively; think in powers of ten.
+
+### Quick Recap — Thinking in Scale
+
+- **Back-of-the-envelope estimation** turns vague scale ("lots of users") into concrete targets (QPS, storage, bandwidth).
+- Aim for the **order of magnitude**, not precision — powers of ten decide architecture.
+- Key estimates: **QPS**, **read:write ratio**, **storage growth**, **bandwidth**.
+- Account for **peaks**, not just averages (peak ≈ 2–3× average is a common rule of thumb).
+- The numbers reveal **where the pressure is** — and therefore which techniques you'll need.
+
+---
+
+## 5. The Golden Truth — It's All Tradeoffs
+
+If you remember one idea from this entire curriculum, make it this one:
+
+> **There is no perfect design. Every decision in system design is a tradeoff — you gain something and you pay for it somewhere else.**
+
+This is *the* defining truth of the discipline. The reason there's no single correct answer (Section 1) is that every choice sits on a set of scales: push one down and another pops up. The expert isn't the person who avoids tradeoffs — that's impossible. The expert is the person who makes them **consciously**, in favor of what the requirements actually value.
+
+### The "It Depends" That Isn't a Cop-Out
+
+Ask a senior engineer almost any system design question — "SQL or NoSQL?", "cache or not?", "microservices or monolith?" — and the honest answer usually starts with **"it depends."** That's not indecision. It means: *the right choice depends on the requirements, and I need to know them before I can choose.* Learning system design is largely learning **what it depends on** for each decision.
+
+### The Tradeoffs You'll Meet Everywhere
+
+A few tensions show up again and again across the whole curriculum:
+
+| You want more… | …you usually pay in |
+|---|---|
+| **Consistency** (everyone sees the latest data) | **Availability / latency** (coordination is slow) |
+| **Low latency** (fast responses) | **Cost** (more caching, more servers, more regions) |
+| **Scalability** (handle huge load) | **Complexity** (distributed systems are hard) |
+| **Reliability** (never lose data / never go down) | **Cost & complexity** (replication, redundancy) |
+| **Speed of development** (ship fast) | **Long-term maintainability** (shortcuts become debt) |
+
+```mermaid
+flowchart LR
+    Choice["🎯 Any design decision"]
+    Choice --> Gain["✅ You gain something<br/>(speed / scale / safety)"]
+    Choice --> Cost["💸 You pay somewhere<br/>(cost / complexity / consistency)"]
+```
+
+You'll see these exact scales again with full depth: **consistency vs availability** in the CAP theorem (Group 5), **latency vs cost** in caching and CDNs (Group 4), **simplicity vs independence** in monolith vs microservices (Group 6). This section is just naming the pattern *before* you meet its instances.
+
+> 💡 **Key Insight**
+>
+> A good system designer doesn't ask *"what's the best option?"* — they ask *"what does this specific system value most, and what can it afford to give up?"* A banking system will sacrifice availability to never show a wrong balance. A social feed will sacrifice consistency to always stay up and fast. **Same question, opposite answers — because their requirements value different things.** Naming your tradeoff out loud, and tying it to a requirement, is the single most senior-sounding thing you can do in a design discussion.
+
+### Quick Recap — It's All Tradeoffs
+
+- **There is no perfect design** — every decision gains something and costs something.
+- **"It depends"** is the correct starting answer; learning system design = learning *what* it depends on.
+- Recurring tensions: **consistency vs availability, latency vs cost, scalability vs complexity, speed vs maintainability.**
+- Experts make tradeoffs **consciously**, aligned to what the requirements value most.
+- Always tie a decision back to a requirement — that's what makes it defensible.
+
+---
