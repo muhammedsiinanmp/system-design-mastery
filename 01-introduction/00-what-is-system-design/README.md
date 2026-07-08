@@ -302,3 +302,262 @@ You'll see these exact scales again with full depth: **consistency vs availabili
 - Always tie a decision back to a requirement — that's what makes it defensible.
 
 ---
+
+## 6. The Qualities of a Good System
+
+If every design is a set of tradeoffs, then you need to know *what you're trading between.* These are the **qualities** — sometimes called the "-ilities" — that engineers evaluate every system against. They're the yardsticks. When you make a tradeoff, you're almost always trading one of these for another.
+
+You don't need to master them now — the entire next phase of the curriculum (Phase 02) is dedicated to them. Here's the map so the vocabulary feels familiar when you meet each in depth.
+
+```mermaid
+flowchart TD
+    Good["🏆 A Good System"]
+    Good --> Scale["📈 Scalability"]
+    Good --> Rel["🛡️ Reliability"]
+    Good --> Avail["🟢 Availability"]
+    Good --> Perf["⚡ Performance"]
+    Good --> Maint["🔧 Maintainability"]
+    Good --> Cost["💰 Cost"]
+    Good --> Sec["🔒 Security"]
+```
+
+| Quality | The question it answers | Plain-English meaning |
+|---|---|---|
+| **Scalability** | Can it grow? | Handle 10× the load by adding resources, without falling over |
+| **Reliability** | Can I trust it? | It does the right thing, and doesn't lose or corrupt data |
+| **Availability** | Is it up? | It responds when users need it (measured in "nines" — 99.9%, 99.99%) |
+| **Performance** | Is it fast? | Low **latency** (quick responses) and high **throughput** (lots of work/sec) |
+| **Maintainability** | Can we keep changing it? | Engineers can understand, fix, and extend it without dread |
+| **Cost** | Can we afford it? | Efficient use of servers, storage, bandwidth, and engineering time |
+| **Security** | Is it safe? | Data is protected; only the right people can do the right things |
+
+### A Few Distinctions Worth Locking In Early
+
+- **Reliability vs Availability** — easy to confuse. *Availability* = the system is *up and responding*. *Reliability* = when it responds, it's *correct and doesn't lose your data*. A system can be available but unreliable (it answers, but with wrong data) — that's often *worse* than being down.
+- **Latency vs Throughput** — *latency* is how long **one** request takes; *throughput* is how many requests you handle **per second**. You can improve one and hurt the other. (Full deep-dive in Phase 02.)
+
+> 💡 **Key Insight**
+>
+> No system maxes out every quality — that's the tradeoff principle again. A good design **deliberately prioritizes** the two or three qualities its requirements care about most and consciously accepts less of the others. A stock-trading system obsesses over latency and reliability; an internal analytics dashboard happily trades both for lower cost. "Good" is always *relative to the requirements* — there is no universal "good system," only "good for this purpose."
+
+### Quick Recap — Qualities of a Good System
+
+- Systems are judged on **scalability, reliability, availability, performance, maintainability, cost, and security.**
+- These "-ilities" are **what you trade between** when you make design decisions.
+- **Availability** = "is it up?"; **reliability** = "is it correct and does it keep my data?" — not the same thing.
+- **Latency** = time for one request; **throughput** = requests handled per second.
+- A good design **prioritizes the few qualities the requirements value** and accepts less of the rest. (Phase 02 covers all of these in depth.)
+
+---
+
+## 7. The Building Blocks — A Map of the Toolkit
+
+System design might feel like it has infinite concepts, but almost every system is assembled from a **small, reusable set of building blocks.** Once you know the blocks and what each one is *for*, real architectures stop looking like magic and start looking like combinations of familiar pieces.
+
+Here's the toolkit — and, crucially, where each block gets its full treatment in this curriculum. **This section is your map of the road ahead.**
+
+```mermaid
+flowchart TD
+    Client["📱 Client"] --> DNS["🌐 DNS"]
+    DNS --> LB["⚖️ Load Balancer"]
+    LB --> App["🖥️ App Servers"]
+    App --> Cache["⚡ Cache"]
+    App --> DB[("🗄️ Database")]
+    App --> Queue["📨 Message Queue"]
+    Queue --> Worker["⚙️ Workers"]
+    App --> Blob["📦 Object Storage"]
+    App --> CDN["🚀 CDN (edge)"]
+```
+
+| Building block | What it's for | Where you'll learn it |
+|---|---|---|
+| **Network, DNS, protocols** | How clients and servers find and talk to each other | **Group 1 — Networking** |
+| **APIs (REST, gRPC, WebSockets)** | The structured contract for that communication | **Group 2 — APIs & Communication** |
+| **Databases & storage** | Where data lives durably; SQL vs NoSQL, indexing | **Group 3 — Data Storage** |
+| **Load balancers & app tier** | Spreading traffic across many servers | **Group 4 — Scaling** |
+| **Caches & CDNs** | Serving frequent/nearby data fast to shield the database | **Group 4 — Scaling** |
+| **Replication & sharding** | Copying and splitting data to scale reads, writes, and size | **Group 4 — Scaling** |
+| **Queues & async messaging** | Decoupling services so they don't wait on each other | Async phase (previewed in G5/G6) |
+| **Coordination & consensus** | Making many machines agree and survive failure | **Group 5 — Distributed Systems** |
+| **Architecture patterns** | Arranging it all: monolith, microservices, event-driven, serverless | **Group 6 — Architecture Patterns** |
+
+### The Pattern Behind the Blocks
+
+Notice a theme: most blocks exist to solve one of just a few recurring problems —
+
+- **"It's too slow / too far"** → caches, CDNs (bring data closer/faster).
+- **"There's too much load"** → load balancers + more servers (spread the work).
+- **"There's too much data / too many writes"** → replication, sharding (split it up).
+- **"Things fail"** → redundancy, queues, coordination (survive it).
+
+> 💡 **Key Insight**
+>
+> You will *never* design a system from a blank page. You assemble it from these blocks, choosing which ones you need based on the requirements and where the pressure is (Section 4). Master what each block does, what it costs, and when to reach for it, and you can design almost anything by composition. **The rest of this curriculum is a deep tour of this exact toolkit** — this table is the itinerary.
+
+### Quick Recap — The Building Blocks
+
+- Nearly every system is built from a **small, reusable set of blocks** — not invented from scratch.
+- Core blocks: **network/DNS, APIs, databases, load balancers, caches/CDNs, replication/sharding, queues, coordination, architecture patterns.**
+- Each block exists to solve a recurring problem: **too slow, too much load, too much data, or things fail.**
+- Designing = **composing** the right blocks for the requirements — and this curriculum is a guided tour of every one.
+
+---
+
+## 8. How to Approach Any System Design Problem
+
+Everything so far comes together into a **repeatable method.** Whether you're designing a real system at work or standing at a whiteboard in an interview, following a structured approach keeps you calm, thorough, and focused — instead of randomly drawing boxes and hoping.
+
+Here is a framework that works for almost any problem. Follow it in order.
+
+```mermaid
+flowchart TD
+    S1["1️⃣ Clarify requirements<br/>(functional + non-functional)"]
+    S2["2️⃣ Estimate scale<br/>(QPS, storage, read:write)"]
+    S3["3️⃣ Define the API & data model<br/>(the contract + the shapes)"]
+    S4["4️⃣ Sketch the high-level design<br/>(the main boxes & flow)"]
+    S5["5️⃣ Deep-dive & find bottlenecks<br/>(where does it break?)"]
+    S6["6️⃣ Address failure & tradeoffs<br/>(what happens when X dies?)"]
+    S1 --> S2 --> S3 --> S4 --> S5 --> S6
+```
+
+### The Six Steps
+
+1. **Clarify the requirements.** Ask questions until the problem is concrete (Section 3). Nail down the features *and* the numbers — scale, latency, consistency needs. **Never skip this.** Everything downstream depends on it.
+
+2. **Estimate the scale.** Do quick back-of-the-envelope math (Section 4) — QPS, read:write ratio, storage. This tells you whether you're building a one-server app or a globally distributed system, and where the pressure lies.
+
+3. **Define the API and data model.** What are the core operations (e.g. `shorten(url)`, `redirect(code)`)? What does the data look like (the main entities and fields)? This grounds the design in concrete inputs and outputs before you draw architecture.
+
+4. **Sketch the high-level design.** Now draw the main components and how a request flows through them — client → load balancer → app → cache/database. Keep it simple first; get an end-to-end path working on the whiteboard.
+
+5. **Deep-dive and find the bottlenecks.** Walk through your design under the scale from step 2. *Where does it break?* The database can't handle the writes? The read path is too slow? This is where you apply the toolkit — caching, replication, sharding, queues — each to a *specific* bottleneck.
+
+6. **Address failure and articulate tradeoffs.** Ask "what happens when this component dies?" and add redundancy where it matters. Then say out loud what you optimized for and what you gave up (Section 5). This step is what makes your design *senior*.
+
+### Why the Order Matters
+
+The sequence is deliberate: **requirements → scale → design → refine.** Each step feeds the next. People who struggle usually **jump to step 4** (drawing the architecture) without doing 1–3 — so their design isn't anchored to anything, and they can't defend their choices. Do the boring early steps and the impressive later ones almost write themselves.
+
+> 💡 **Key Insight**
+>
+> A structured approach isn't just for passing interviews — it's how experienced engineers actually think. It turns an overwhelming, open-ended problem ("design YouTube") into a sequence of small, answerable questions. **The method is the skill.** Memorized architectures fade; the process works on any problem, including ones you've never seen.
+
+### Quick Recap — How to Approach a Problem
+
+- Use a **repeatable, ordered framework** instead of drawing boxes at random.
+- The six steps: **clarify requirements → estimate scale → define API & data model → high-level design → deep-dive/bottlenecks → failure & tradeoffs.**
+- **Requirements first, architecture later** — most failures come from skipping straight to step 4.
+- Each step **feeds the next**; the boring early steps make the impressive later ones easy.
+- The **method is the transferable skill** — it works on any problem, memorized or not.
+
+---
+
+## 9. A Walkthrough — Designing a URL Shortener
+
+Let's make the framework concrete by lightly walking through a classic: **design a URL shortener** (like TinyURL or bit.ly). We'll stay high-level — the goal is to see the *method* in action, not to master the system. (It gets a full deep-dive in the interview phase.)
+
+### Step 1 — Clarify Requirements
+
+**Functional:** given a long URL, return a short one; when someone visits the short URL, redirect them to the original.
+**Non-functional (the ones that shape the design):** huge scale, very **read-heavy** (people click links far more than they create them), redirects must be **fast** (<100ms), and the service must be **highly available** (a dead link is embarrassing).
+
+### Step 2 — Estimate Scale
+
+Say 100M new URLs/month and a **100:1 read:write ratio.**
+
+```text
+Writes: 100M / month ≈ ~40 writes/second
+Reads:  100× that     ≈ ~4,000 reads/second
+```
+
+The signal is loud and clear: this is a **read-heavy** system. That one fact will dominate the design — we must make *reads* extremely fast and cheap.
+
+### Step 3 — Define the API and Data Model
+
+```text
+POST /shorten   { long_url }          → { short_code }
+GET  /{short_code}                     → 301 redirect to long_url
+
+Data:  short_code (PK)  →  long_url
+```
+
+Dead simple: essentially a **key → value** lookup (short code → long URL).
+
+### Step 4 — High-Level Design
+
+```mermaid
+flowchart LR
+    User["👤 User"] --> LB["⚖️ Load Balancer"]
+    LB --> App["🖥️ App Servers"]
+    App --> Cache["⚡ Cache<br/>(hot short_codes)"]
+    App --> DB[("🗄️ Database<br/>code → url")]
+```
+
+A user hits a load balancer → app servers → they look up the short code. To generate codes, we might use a counter or hash and Base62-encode it into a short string. Straightforward.
+
+### Step 5 — Deep-Dive & Bottlenecks
+
+Now stress it with the numbers from step 2. 4,000 reads/second all hitting the database is wasteful — and it's the same popular links over and over. **Bottleneck: read load on the database.** The fix is exactly the highest-leverage tool from the toolkit: **a cache.** Since the mapping never changes once created, it caches *perfectly* — a huge fraction of redirects can be served from memory, never touching the database. For scale and availability, we also **replicate** the database and can push popular links to a **CDN/edge.**
+
+### Step 6 — Failure & Tradeoffs
+
+*What if a cache node dies?* Reads fall back to the database (slower, but correct) — no data lost. *What if the database is briefly unreachable for writes?* We might reject *new* shortenings for a moment but keep *serving* existing redirects — an availability choice that fits the requirements. **The tradeoff we made:** we optimized hard for **fast, always-available reads** (caching, replication, edge) and accepted a bit more complexity and the rare stale/failed *write* — because the requirements told us reads dominate.
+
+> 💡 **Key Insight**
+>
+> Notice we never guessed at technology first. The **read-heavy** discovery in step 2 drove *every* later decision — cache aggressively, replicate, serve from the edge. That's the whole discipline in miniature: **let the requirements and the numbers lead, and the architecture follows.** Change the requirements (say, write-heavy analytics instead) and the *same framework* produces a completely different design.
+
+### Quick Recap — The Walkthrough
+
+- The **same six-step framework** took us from a vague prompt to a defensible design.
+- Step 2's **read-heavy** finding drove the whole architecture — caching, replication, edge.
+- We reached for toolkit blocks (**cache, replica, CDN**) to fix **specific** bottlenecks, not at random.
+- We named our **tradeoff** (optimize reads/availability, accept rare write hiccups) and tied it to the requirements.
+- Method over memorization: the framework works on any problem.
+
+---
+
+## 10. Final Recap
+
+| Idea | Core Insight | Why It Matters |
+|---|---|---|
+| **What system design is** | Defining architecture, components & data flow to meet requirements | It's about the whole system and its tradeoffs, not one function |
+| **Coding vs system design** | Many machines, real failure, no single correct answer | Requires a new kind of thinking on top of coding skills |
+| **Requirements first** | Functional (what) vs non-functional (how well) | Non-functional requirements are what actually shape the design |
+| **Thinking in scale** | Back-of-the-envelope math reveals the real pressure | Numbers, not opinions, decide the architecture |
+| **It's all tradeoffs** | Every decision gains something and costs something | "It depends" — align every choice to what the requirements value |
+| **Qualities of a good system** | Scalability, reliability, availability, performance, cost, security | These are the yardsticks you trade between |
+| **Building blocks** | A small reusable toolkit solves recurring problems | You compose systems from blocks, never from scratch |
+| **A repeatable approach** | Clarify → estimate → API/data → design → deep-dive → failure/tradeoffs | The method is the transferable skill |
+
+### The One Thing to Remember
+
+> **System design is not about knowing every technology — it's about making deliberate tradeoffs to meet real requirements. Start with what the system must do and how well, let the numbers reveal the pressure, compose the right building blocks to relieve it, and always be able to say what you optimized for and what you gave up.**
+
+---
+
+## What's Next
+
+> **Group 1 — Networking Foundations**
+
+You now understand the *game*: what system design is, why it's all tradeoffs, what "good" means, the toolkit you'll compose from, and a method to approach any problem. That's the mental model. Everything from here builds the **depth** to fill it in.
+
+The natural place to start is at the very bottom of the stack — **how machines actually talk to each other.** Before you can reason about load balancers, APIs, or distributed databases, you need to understand the network they all run on: clients and servers, IP and DNS, TCP vs UDP, HTTP, and the round trips that quietly set the speed limit on everything above them.
+
+The journey from here:
+
+```text
+You are here → What Is System Design?
+      ↓
+Group 1 — Networking Foundations   (how machines talk)
+Group 2 — APIs & Communication     (how that talk is structured)
+Group 3 — Data Storage             (where data lives)
+Group 4 — Scaling                  (growing past one machine)
+Group 5 — Distributed Systems      (the hard truths of many machines)
+Group 6 — Architecture Patterns    (arranging it all into a whole)
+```
+
+You've built the foundation for the foundation. Now let's go learn how the pieces actually work — starting with the network.
+
+---
+
