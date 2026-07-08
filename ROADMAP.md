@@ -49,7 +49,7 @@ Follow these every time you add a topic:
 
 | # | Topic | Status | File |
 |---|---|---|---|
-| 01 | What is System Design? | 📋 Planned | `01-introduction/01-what-is-system-design/README.md` |
+| 01 | What is System Design? | ✅ Done | `01-introduction/00-what-is-system-design/README.md` |
 
 ### Top 30 Must-Know Concepts — 6 Group Documents
 
@@ -353,7 +353,7 @@ Follow these every time you add a topic:
 
 | Phase | Name | Total | ✅ Done | 🚧 In Progress | 📋 Planned | 💡 Idea |
 |---|---|---|---|---|---|---|
-| 01 | Introduction | 7 | 6 | 0 | 1 | 0 |
+| 01 | Introduction | 7 | 7 | 0 | 0 | 0 |
 | 02 | Core System Properties | 5 | 0 | 0 | 5 | 0 |
 | 03 | Networking | 7 | 0 | 0 | 6 | 1 |
 | 04 | APIs & Communication | 15 | 0 | 0 | 14 | 1 |
@@ -364,8 +364,8 @@ Follow these every time you add a topic:
 | 09 | Architecture & Microservices | 13 | 0 | 0 | 7 | 6 |
 | 10 | Observability & Security | 13 | 0 | 0 | 11 | 2 |
 | 11 | Interview Preparation | 21 | 0 | 0 | 4 | 17 |
-| **Total** | | **150** | **6** | **0** | **104** | **40** |
+| **Total** | | **150** | **7** | **0** | **103** | **40** |
 
 ---
 
-*Last updated: 2026-07-07*
+*Last updated: 2026-07-08*
