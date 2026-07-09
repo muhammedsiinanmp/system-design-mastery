@@ -63,6 +63,13 @@ A well-designed API is a stable foundation other teams build on. A poorly design
 >
 > An API is a **promise**: "send me a request in this format, and I'll always respond in that format." Everything internal is the caller's non-concern. This is the same *hide-the-internals-behind-a-contract* idea you met with the reverse proxy in Group 1 — and it's why APIs are the seams along which large systems are split into independently-owned services. The contract is the product; the implementation is replaceable.
 
+### Quick Recap — APIs
+
+- An API is a **contract/boundary**: it exposes a defined set of operations and hides all internals.
+- Its value is **stability** — implementations can change freely as long as the contract holds.
+- APIs are the **seams** that let large systems split into independently-owned services.
+- Good API design compounds into a stable foundation; bad design compounds into years of migration pain.
+
 ---
 
 ## 2. REST — The Default Standard
@@ -98,6 +105,13 @@ These were exactly the problems Facebook hit building their mobile app — which
 > 💡 **Key Insight**
 >
 > REST's statelessness isn't a limitation — it's a deliberate choice that makes horizontal scaling almost free: no server needs to remember you, so a load balancer can send your next request to any instance. That's the direct payoff of HTTP being stateless (Group 1). Remember this the moment you meet **stateless services** in the Scaling group — REST is where the principle first earns its keep.
+
+### Quick Recap — REST
+
+- REST models everything as **resources** with URLs, acted on by **HTTP methods** (GET/POST/PUT/DELETE).
+- It's **stateless** — each request self-contains everything needed, which is what makes it scale horizontally.
+- It's the right **default** for simple, stable, public APIs.
+- Its weaknesses are **over-fetching and under-fetching**, which bite hardest on complex, bandwidth-sensitive frontends.
 
 ---
 
@@ -136,6 +150,13 @@ The trade: GraphQL adds a schema to maintain, a resolver layer, and more sophist
 | Multiple clients needing different shapes | GraphQL |
 | Mobile apps where bandwidth matters | GraphQL |
 
+### Quick Recap — GraphQL
+
+- GraphQL is a **query language** where the **client declares the exact shape** of the response.
+- It eliminates **over- and under-fetching** — one request returns precisely what's needed.
+- It shines for **complex, many-screen frontends** and multiple clients with different data needs.
+- The cost is **server-side complexity** (schema, resolvers) and the loss of simple per-URL edge caching.
+
 ---
 
 ## 4. WebSockets — Beyond Request–Response
@@ -165,6 +186,13 @@ HTTP is like sending letters; WebSockets are a phone call — the line stays ope
 > ⚠️ **Real-time capability isn't free — it costs statefulness.** A REST server holds nothing between requests, so any instance serves any call. A WebSocket server must keep an *open connection per client* in memory, so a user is now tied to a specific server — which complicates load balancing, deploys (you can't just restart a box), and horizontal scaling. This is why chat and live-location systems need the dedicated fan-out and connection-management patterns you'll meet in the Scaling and Distributed Systems groups.
 
 The tradeoff in one line: **REST asks, WebSockets listen** — reach for REST when the client needs data on demand, and WebSockets when data arrives continuously and the client must react immediately.
+
+### Quick Recap — WebSockets
+
+- A WebSocket is a **persistent, bidirectional** channel opened by upgrading an HTTP connection.
+- Either side can **push messages at any time** — ideal for chat, live location, tickers, collaboration.
+- It replaces wasteful **polling** with a single always-open connection.
+- The cost is **statefulness**: one open connection per client, which makes scaling and deploys harder.
 
 ---
 
@@ -200,6 +228,13 @@ The key shift: **you stop asking; they start telling.**
 >
 > Line the three up by *who initiates*: **REST** — you ask, they answer. **WebSocket** — you both talk on an open line. **Webhook** — they call you when something happens. Webhooks invert control, which is exactly why they're the backbone of integrations between systems you don't own — but it also means you must treat incoming calls defensively: verify the sender's signature, and expect the same event to arrive more than once (deliveries retry). "Who speaks first" quietly decides your whole design.
 
+### Quick Recap — Webhooks
+
+- A Webhook is an **event-driven HTTP callback** — you register a URL and the other service POSTs events to it.
+- It **inverts control**: you stop polling, and the external system notifies you when something happens.
+- It's the standard for **third-party integrations** (Stripe, GitHub, Shopify) you don't control.
+- Because delivery **retries**, receivers must be **idempotent** and **verify signatures** — the same event may arrive twice.
+
 ---
 
 ## 6. Other Styles: gRPC & SOAP
@@ -210,20 +245,58 @@ Two more styles show up in real systems; you'll meet them, but don't need to mas
 
 **SOAP** — an older, XML-based protocol that predates REST. Verbose and complex, still found in banking, government, and legacy enterprise systems. For any new system, REST or GraphQL is the right choice.
 
+### Quick Recap — Other Styles
+
+- **gRPC** uses compact binary (Protocol Buffers) over HTTP/2 — fast **internal** service-to-service calls, weak browser support.
+- **SOAP** is a verbose, legacy XML protocol you'll mostly meet in old enterprise systems.
+- Default to **REST or GraphQL** for anything new and public-facing; reach for gRPC inside the data centre when performance matters.
+
 ---
 
 ## Putting It All Together
 
-_A real system (Uber) using all the patterns at once — filled in the complete pass._
+No real system picks *one* communication style — a serious product uses several at once, each where it fits. Trace a single ride through **Uber** and every pattern in this group shows up, each answering a different version of "who talks to whom, how often, and who initiates?"
+
+```mermaid
+flowchart TD
+    App["📱 Uber App"]
+    App -->|"REST: book a ride, view history"| Backend["Backend Services"]
+    App <-->|"WebSocket: live driver location"| Backend
+    Pay["💳 Payment Provider"] -->|"Webhook: charge confirmed"| Backend
+    Backend <-->|"gRPC: internal service calls"| Backend
+```
+
+- **REST** — you tap *Book*: a plain request/response operation. The client asks, the server answers, done. Stateless, cacheable, simple.
+- **WebSocket** — the car crawls across your map in real time. The server *pushes* location continuously over an open connection; polling every second would be wasteful and laggy.
+- **Webhook** — the payment clears in a provider you don't control (Stripe/Adyen). *They* call Uber's backend when the charge settles. Uber stops asking; the provider tells.
+- **gRPC** — behind the scenes, dozens of internal services (pricing, matching, ETA) call each other thousands of times per ride. Compact binary over HTTP/2 keeps those internal hops fast.
+
+The lesson isn't "Uber is complex." It's that **each pattern is the correct answer to a specific communication need** — on-demand data (REST), continuous push (WebSocket), external notification (Webhook), fast internal calls (gRPC). Recognizing which need you're facing, and reaching for the matching pattern, is the whole skill this group is teaching.
 
 ---
 
 ## Final Recap
 
-_Concept · Core Insight · Biggest Tradeoff table + The One Thing to Remember — filled in the complete pass._
+| Concept | Core Insight | Biggest Tradeoff |
+|---|---|---|
+| **API** | A contract that exposes operations and hides internals | Stability of the contract vs the discipline required to design and evolve it well |
+| **REST** | Stateless, resource-based operations over HTTP | Simplicity and easy scaling vs over-/under-fetching on complex frontends |
+| **GraphQL** | The client declares the exact response shape | No wasted data vs added server complexity and loss of simple edge caching |
+| **WebSockets** | A persistent, bidirectional, real-time channel | Instant push vs statefulness — one open connection per client complicates scaling |
+| **Webhooks** | An event-driven callback that inverts control | Zero polling vs receivers must handle retries/duplicates and verify senders |
+| **gRPC** | Fast binary RPC for internal service calls | Speed inside the data centre vs poor browser support and less human-readable payloads |
+
+### The One Thing to Remember
+
+> **There is no "best" API style — only the right one for a specific communication need. Ask *who initiates, how often, and who's on each end*: on-demand data is REST, flexible client-driven queries are GraphQL, continuous push is WebSockets, external notifications are Webhooks, and fast internal calls are gRPC. Matching the pattern to the need is the skill.**
 
 ---
 
 ## What's Next
 
-_Hook into Group 3 — Data Storage — filled in the complete pass._
+> **Group 3 — Data Storage**
+
+You now understand how services *communicate* — the contracts they expose and the patterns they use to talk. But communication is only useful if there's something to talk *about*: data that must be stored, retrieved, and kept correct and fast as the system grows.
+
+The next group goes to where that data lives: SQL vs NoSQL, data modeling, transactions and ACID, indexing, and how storage begins to strain under scale. You've learned how the conversation happens; now let's learn what the conversation is about.
+
