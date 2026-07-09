@@ -86,6 +86,13 @@ These three failure modes drive every major decision later in the curriculum: lo
 >
 > Because "client" and "server" are *roles*, not machines, the same program can play both at once. This is the seed of the entire distributed-systems mindset: a large system is just a graph of processes, each one a server to its callers and a client to its dependencies. Get comfortable seeing every arrow in an architecture diagram as one process *requesting* and another *responding* — that single lens explains load balancers, API gateways, and service meshes alike.
 
+### Quick Recap — Client–Server Model
+
+- The model splits work into two **roles**: a **client** that initiates and a **server** that responds.
+- "Server" and "client" are **roles, not machines** — one process can be both, and one machine can host many servers.
+- They communicate only through a **request/response contract**; internals stay hidden.
+- Its failure modes — **overload, network failure, single point of failure** — motivate nearly every scaling technique to come.
+
 ---
 
 ## 2. IP Addressing
@@ -135,6 +142,13 @@ A **static IP** never changes — servers need this, because if a server's addre
 >
 > The public/private split is the first security boundary you'll design. In a real deployment almost nothing has a public IP — a single load balancer or gateway faces the internet, and everything behind it (app servers, databases, caches) lives on private addresses unreachable from outside. "Reduce your public surface area" is a phrase you'll hear for the rest of your career, and it starts right here, at the IP layer.
 
+### Quick Recap — IP Addressing
+
+- An IP address is a device's **unique, routable location** on a network — how packets find their destination.
+- **IPv4** (~4.3B addresses) is running out; **IPv6** provides a practically unlimited space.
+- **Public** IPs are internet-reachable; **private** IPs work only inside a local network — the basis of keeping infrastructure off the public internet.
+- Servers need **static** IPs (stable addresses); transient devices use **dynamic** (DHCP-assigned) ones.
+
 ---
 
 ## 3. DNS — The Domain Name System
@@ -182,6 +196,13 @@ Two mechanics are worth locking in early. First, every cached DNS answer carries
 > 💡 **Key Insight**
 >
 > DNS is both a *lookup* system and a *control plane*. The same indirection that turns `github.com` into a number also lets engineers move where that name points — to a new region during an outage, or across providers during a migration — without changing a line of application code. That's the recurring superpower of a naming layer: change the mapping, not the callers. But it's gated by TTL, which is why "just update DNS" is never instant.
+
+### Quick Recap — DNS
+
+- DNS **translates human names into IP addresses** — the lookup that precedes almost every request.
+- It's a **cached hierarchy** (resolver → root → TLD → authoritative), so most lookups resolve in single-digit milliseconds.
+- **TTL** governs how long answers are reused — the knob that trades propagation speed against lookup cost and failover latency.
+- Beyond lookups, DNS is a **traffic-steering control plane**: change what a name resolves to and you redirect users globally, no code change.
 
 ---
 
@@ -231,6 +252,13 @@ When engineers say "proxy" in a design discussion without qualification, they al
 >
 > The reverse proxy is the system's *front door*, and putting one there is one of the highest-leverage moves in architecture: it's a single, controlled place to terminate TLS, balance load, cache, rate-limit, and hide your fleet — all without touching application code. When you meet **load balancers** and **API gateways** in later groups, notice they're specialized reverse proxies. The pattern is the same; the job description changes.
 
+### Quick Recap — Proxy vs Reverse Proxy
+
+- A **forward proxy** fronts *clients* and hides them from servers (filtering, privacy, shared caching).
+- A **reverse proxy** fronts *servers* and hides them from clients (load balancing, TLS termination, caching, security).
+- The distinguishing question is simply **which side it serves** — client or server.
+- Unqualified "proxy" in a design discussion means **reverse proxy**; it's the system's front door and the parent pattern of load balancers and gateways.
+
 ---
 
 ## 5. Latency
@@ -274,6 +302,13 @@ P99 is the number that matters most for user experience; optimizing the average 
 The gap between memory and network access is enormous — which is exactly *why caching works:* it replaces a slow network or disk hop with a fast memory read. Every major performance optimization later (caching, CDNs, connection pooling, load balancing) is ultimately about reducing one of these latency components.
 
 > ⚠️ **Tail latency compounds in distributed systems.** If one page makes 10 parallel backend calls and each has a 1% chance of being slow (a P99 hit), the *page* is slow whenever *any* call is slow — roughly a 1 − 0.99¹⁰ ≈ **10%** chance. This "tail amplification" is why large systems obsess over P99, not averages: as you fan out across more services, the rare slow call stops being rare at the level the user actually experiences.
+
+### Quick Recap — Latency
+
+- **Latency** is the total time from request to response — a physical property, not a bug.
+- It's the sum of **network, processing, queue, and transmission** time; network and DB time usually dominate web apps.
+- Measure it with **percentiles (P50/P95/P99)**, not averages — P99 is the experience of your slowest users.
+- Most performance work (caching, CDNs, pooling, load balancing) is really about **shrinking one latency component**, usually by replacing a network/disk hop with a memory read.
 
 ---
 
@@ -341,20 +376,71 @@ The version affects performance, not the fundamental request–response model.
 >
 > HTTP is **stateless by design** — each request stands alone and the server remembers nothing between them. That constraint feels limiting, but it's the property that makes web tiers scale: because no request depends on server memory of a previous one, *any* server can handle *any* request, so you can add servers behind a load balancer freely. You'll see this exact idea again as "stateless services" in the Scaling group — it starts here, in the protocol.
 
+### Quick Recap — HTTP & HTTPS
+
+- **HTTP** is the shared request/response language of the web — method, URL, headers, body in; status code, headers, body out.
+- **Status codes** communicate outcome by class: `2xx` success, `3xx` redirect, `4xx` client error, `5xx` server error.
+- **HTTPS = HTTP + TLS** — it encrypts data in transit, verifies server identity, and detects tampering; mandatory for user data.
+- HTTP is **stateless**, which is precisely what lets you scale a web tier horizontally behind a load balancer.
+
 ---
 
 ## Putting It All Together
 
-_A single browser request, traced through all six concepts — filled in the complete pass._
+None of these six concepts lives alone. Watch them cooperate in the single most ordinary event on the internet — **you open `github.com` in your browser** — and the whole group snaps into one picture.
+
+**Step 1 — Find the address (DNS).** You type `github.com`. Before anything else, your browser needs an IP. It checks its cache, then the OS cache, then asks a recursive resolver, which (if nothing is cached) walks the root → `.com` → GitHub's authoritative nameserver and returns `140.82.121.4`. That answer is cached everywhere along the way, honoring its TTL.
+
+**Step 2 — Reach the address (IP + client–server).** Your browser (the **client**) now has a routable **public IP** to aim at. It opens a connection to that address — but it isn't hitting an application server directly.
+
+**Step 3 — Arrive at the front door (reverse proxy + HTTPS).** The connection lands on GitHub's **reverse proxy**. Here TLS is terminated, so everything you send is **encrypted in transit** (**HTTPS**) and GitHub's identity is proven by its certificate. The proxy is the only thing with a public IP; the real servers hide on private addresses behind it.
+
+**Step 4 — Speak the language (HTTP).** Over that secure channel your browser sends an **HTTP** request: `GET /` with headers. The reverse proxy forwards it to one of many interchangeable, **stateless** application **servers** — any of them can handle it.
+
+**Step 5 — The response returns, and the clock stops (latency).** The server builds a response, hands back `200 OK` with HTML, the proxy relays it, and your browser renders the page. The **total elapsed time** across every hop above — the DNS lookup, the round trips, the TLS handshake, the server's work — is the request's **latency**.
+
+```mermaid
+sequenceDiagram
+    participant U as You (Client)
+    participant DNS as DNS
+    participant RP as Reverse Proxy
+    participant S as App Server (stateless)
+    U->>DNS: What IP is github.com?
+    DNS-->>U: 140.82.121.4  (cached, honoring TTL)
+    U->>RP: HTTPS GET / (encrypted, routed by IP)
+    Note over U,RP: TLS terminated here · only the proxy is public
+    RP->>S: forward HTTP request
+    S-->>RP: 200 OK + HTML
+    RP-->>U: response delivered
+    Note over U,S: Total elapsed time = Latency
+```
+
+Every arrow is one of the six concepts. The **client–server model** defines who asks and who answers. The **IP address** is where the request is routed. **DNS** is how that address was discovered from a human name. The **reverse proxy** is the first thing the request actually hits. **HTTP/HTTPS** is the language it's written in and the encryption that protects it. **Latency** is the measure of how long the whole chain took. Change any one — a closer server (less latency), a stale DNS TTL (slow failover), a missing HTTPS (insecure) — and the behavior of the whole system shifts.
 
 ---
 
 ## Final Recap
 
-_Concept · Core Insight · Biggest Tradeoff table + The One Thing to Remember — filled in the complete pass._
+| Concept | Core Insight | Biggest Tradeoff |
+|---|---|---|
+| **Client–Server Model** | Roles, not machines — one asks, one answers, through a fixed contract | Simplicity of the contract vs the server becoming a bottleneck / single point of failure |
+| **IP Addressing** | Every device needs a unique, routable location for packets to find it | Public reachability vs security surface — hence the public/private split |
+| **DNS** | Turns human names into IPs, and doubles as a global traffic-steering layer | Caching (TTL) makes lookups fast but makes changes/failover slow to propagate |
+| **Proxy vs Reverse Proxy** | An intermediary that adds capabilities by which side it serves | An extra hop and a new component to run vs the leverage of one controlled front door |
+| **Latency** | The end-to-end time of a request; judge it by tail percentiles, not averages | Lower latency (caching, CDNs, more regions) almost always costs more money/complexity |
+| **HTTP & HTTPS** | The stateless, universal request/response language, encrypted by TLS | Statelessness enables scale but pushes state (sessions, auth) elsewhere; TLS adds handshake cost |
+
+### The One Thing to Remember
+
+> **Every request is a chain — name → address → front door → language → response — and each link is something an engineer can measure, move, or protect on purpose. Networking isn't magic underneath your system; it's the first set of tradeoffs your system is made of.**
 
 ---
 
 ## What's Next
 
-_Hook into Group 2 — APIs & Communication — filled in the complete pass._
+> **Group 2 — APIs & Communication**
+
+You now know how two machines *find each other and exchange messages* — the wire, the address, the name, the front door, the protocol, and the cost of distance. But reaching a server is only half the story. Once a connection exists, the two sides still have to agree on something deeper: **what can be asked, how data is shaped, and who is allowed to speak first.**
+
+That agreement is the **API** — and the next group is all about it: REST, GraphQL, WebSockets, and Webhooks, and why engineers reach for each. You've built the foundation for the foundation; now let's structure the conversation that runs on top of it.
+
