@@ -58,11 +58,11 @@ Follow these every time you add a topic:
 
 | Group | Topic | Status | File |
 |---|---|---|---|
-| 01 | Networking Foundations | ✅ Done | `01-introduction/02-top-30-concepts/01-networking-foundations/README.md` |
-| 02 | APIs & Communication | ✅ Done | `01-introduction/02-top-30-concepts/02-apis-and-communication/README.md` |
-| 03 | Data Storage | ✅ Done | `01-introduction/02-top-30-concepts/03-data-storage/README.md` |
-| 04 | Scaling | ✅ Done | `01-introduction/02-top-30-concepts/04-scaling/README.md` |
-| 05 | Distributed Systems | ✅ Done | `01-introduction/02-top-30-concepts/05-distributed-systems/README.md` |
+| 01 | Networking Foundations | ✅ Done | `01-introduction/01-networking-foundations/README.md` |
+| 02 | APIs & Communication | ✅ Done | `01-introduction/02-apis-and-communication/README.md` |
+| 03 | Data Storage | ✅ Done | `01-introduction/03-data-storage/README.md` |
+| 04 | Scaling | ✅ Done | `01-introduction/04-scaling/README.md` |
+| 05 | Distributed Systems | ✅ Done | `01-introduction/05-distributed-systems/README.md` |
 | 06 | Architecture Patterns | ✅ Done | `01-introduction/06-architecture-patterns/README.md` |
 
 ---
@@ -368,4 +368,4 @@ Follow these every time you add a topic:
 
 ---
 
-*Last updated: 2026-07-08*
+*Last updated: 2026-07-09*
