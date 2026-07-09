@@ -82,6 +82,10 @@ sequenceDiagram
 
 These three failure modes drive every major decision later in the curriculum: load balancers, redundancy, caching, and horizontal scaling.
 
+> 💡 **Key Insight**
+>
+> Because "client" and "server" are *roles*, not machines, the same program can play both at once. This is the seed of the entire distributed-systems mindset: a large system is just a graph of processes, each one a server to its callers and a client to its dependencies. Get comfortable seeing every arrow in an architecture diagram as one process *requesting* and another *responding* — that single lens explains load balancers, API gateways, and service meshes alike.
+
 ---
 
 ## 2. IP Addressing
@@ -127,6 +131,10 @@ In production, servers live on private IPs inside a data centre; only the entry 
 
 A **static IP** never changes — servers need this, because if a server's address moved, nothing could find it reliably. A **dynamic IP** is assigned temporarily (via DHCP) and can change; home devices use these, and cloud servers get dynamic public IPs by default — which is why engineers reserve static IPs (e.g. AWS Elastic IPs) for anything that must stay reachable.
 
+> 💡 **Key Insight**
+>
+> The public/private split is the first security boundary you'll design. In a real deployment almost nothing has a public IP — a single load balancer or gateway faces the internet, and everything behind it (app servers, databases, caches) lives on private addresses unreachable from outside. "Reduce your public surface area" is a phrase you'll hear for the rest of your career, and it starts right here, at the IP layer.
+
 ---
 
 ## 3. DNS — The Domain Name System
@@ -168,6 +176,12 @@ Results are **cached** at every level — browser, OS, resolver — so most look
 ### Why It Matters for System Design
 
 DNS failures are invisible to users but catastrophic: if DNS is down, even healthy servers become unreachable. DNS is also where engineers steer traffic globally — changing what IP a domain resolves to redirects millions of users to a different region, a backup, or a CDN without touching the application. That's why DNS underpins load balancing, failover, and multi-region design.
+
+Two mechanics are worth locking in early. First, every cached DNS answer carries a **TTL** (time to live) that says how long it may be reused — a low TTL means changes propagate fast but costs more lookups; a high TTL is cheap but makes failover slow, because resolvers keep handing out the old IP until the TTL expires. Second, a domain has several **record types** — `A`/`AAAA` map a name to an IPv4/IPv6 address, and `CNAME` aliases one name to another (which is how you point your domain at a CDN or load balancer).
+
+> 💡 **Key Insight**
+>
+> DNS is both a *lookup* system and a *control plane*. The same indirection that turns `github.com` into a number also lets engineers move where that name points — to a new region during an outage, or across providers during a migration — without changing a line of application code. That's the recurring superpower of a naming layer: change the mapping, not the callers. But it's gated by TTL, which is why "just update DNS" is never instant.
 
 ---
 
@@ -213,6 +227,10 @@ Common uses: **load balancing**, **SSL/TLS termination**, **caching**, **securit
 
 When engineers say "proxy" in a design discussion without qualification, they almost always mean a **reverse proxy** — it's the far more common production pattern.
 
+> 💡 **Key Insight**
+>
+> The reverse proxy is the system's *front door*, and putting one there is one of the highest-leverage moves in architecture: it's a single, controlled place to terminate TLS, balance load, cache, rate-limit, and hide your fleet — all without touching application code. When you meet **load balancers** and **API gateways** in later groups, notice they're specialized reverse proxies. The pattern is the same; the job description changes.
+
 ---
 
 ## 5. Latency
@@ -254,6 +272,8 @@ P99 is the number that matters most for user experience; optimizing the average 
 | Network round trip (cross-continent) | ~100 ms |
 
 The gap between memory and network access is enormous — which is exactly *why caching works:* it replaces a slow network or disk hop with a fast memory read. Every major performance optimization later (caching, CDNs, connection pooling, load balancing) is ultimately about reducing one of these latency components.
+
+> ⚠️ **Tail latency compounds in distributed systems.** If one page makes 10 parallel backend calls and each has a 1% chance of being slow (a P99 hit), the *page* is slow whenever *any* call is slow — roughly a 1 − 0.99¹⁰ ≈ **10%** chance. This "tail amplification" is why large systems obsess over P99, not averages: as you fan out across more services, the rare slow call stops being rare at the level the user actually experiences.
 
 ---
 
@@ -316,6 +336,10 @@ HTTPS is HTTP with a TLS layer: every message is encrypted before it leaves the 
 | HTTP/3 | Runs on UDP (QUIC) — lower latency, especially on mobile |
 
 The version affects performance, not the fundamental request–response model.
+
+> 💡 **Key Insight**
+>
+> HTTP is **stateless by design** — each request stands alone and the server remembers nothing between them. That constraint feels limiting, but it's the property that makes web tiers scale: because no request depends on server memory of a previous one, *any* server can handle *any* request, so you can add servers behind a load balancer freely. You'll see this exact idea again as "stateless services" in the Scaling group — it starts here, in the protocol.
 
 ---
 
