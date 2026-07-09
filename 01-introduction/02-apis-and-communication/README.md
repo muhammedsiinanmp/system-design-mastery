@@ -59,6 +59,10 @@ The kitchen can change its recipes entirely — new chef, new equipment — and 
 
 A well-designed API is a stable foundation other teams build on. A poorly designed one causes breaking changes, integration bugs, and maintenance debt that compounds — in large organizations, a bad API decision today can cost months of work years later.
 
+> 💡 **Key Insight**
+>
+> An API is a **promise**: "send me a request in this format, and I'll always respond in that format." Everything internal is the caller's non-concern. This is the same *hide-the-internals-behind-a-contract* idea you met with the reverse proxy in Group 1 — and it's why APIs are the seams along which large systems are split into independently-owned services. The contract is the product; the implementation is replaceable.
+
 ---
 
 ## 2. REST — The Default Standard
@@ -91,6 +95,10 @@ REST works beautifully for simple, stable operations, but has two friction point
 
 These were exactly the problems Facebook hit building their mobile app — which is why they built what comes next.
 
+> 💡 **Key Insight**
+>
+> REST's statelessness isn't a limitation — it's a deliberate choice that makes horizontal scaling almost free: no server needs to remember you, so a load balancer can send your next request to any instance. That's the direct payoff of HTTP being stateless (Group 1). Remember this the moment you meet **stateless services** in the Scaling group — REST is where the principle first earns its keep.
+
 ---
 
 ## 3. GraphQL — Let the Client Decide
@@ -112,7 +120,13 @@ query {
 }
 ```
 
-One request, exactly the right data, no extra fields, no extra round trips. The trade: GraphQL adds a schema to maintain, a resolver layer, and more sophisticated caching. For most straightforward APIs, REST is still the right default.
+One request, exactly the right data, no extra fields, no extra round trips.
+
+> 💡 **Key Insight**
+>
+> The whole shift is about **who decides the shape of the response**. In REST, the *server* decides what each endpoint returns; in GraphQL, the *client* declares exactly what it needs. That flexibility is powerful for many-screen frontends — but it moves complexity onto the server (resolvers, query cost analysis) and breaks the simple per-URL HTTP caching that makes REST cheap at the edge. Flexibility for the client is paid for in complexity on the server.
+
+The trade: GraphQL adds a schema to maintain, a resolver layer, and more sophisticated caching. For most straightforward APIs, REST is still the right default.
 
 | Situation | Better choice |
 |---|---|
@@ -146,7 +160,11 @@ sequenceDiagram
     S-->>C: new message
 ```
 
-HTTP is like sending letters; WebSockets are a phone call — the line stays open and either side can talk. The tradeoff: WebSockets introduce **statefulness** — the server maintains an open connection per client, which makes scaling harder than the stateless REST model.
+HTTP is like sending letters; WebSockets are a phone call — the line stays open and either side can talk.
+
+> ⚠️ **Real-time capability isn't free — it costs statefulness.** A REST server holds nothing between requests, so any instance serves any call. A WebSocket server must keep an *open connection per client* in memory, so a user is now tied to a specific server — which complicates load balancing, deploys (you can't just restart a box), and horizontal scaling. This is why chat and live-location systems need the dedicated fan-out and connection-management patterns you'll meet in the Scaling and Distributed Systems groups.
+
+The tradeoff in one line: **REST asks, WebSockets listen** — reach for REST when the client needs data on demand, and WebSockets when data arrives continuously and the client must react immediately.
 
 ---
 
@@ -177,6 +195,10 @@ The key shift: **you stop asking; they start telling.**
 | GitHub | Push, PR opened, build triggered |
 | Shopify | Order placed, inventory updated |
 | Twilio | SMS delivered, call ended |
+
+> 💡 **Key Insight**
+>
+> Line the three up by *who initiates*: **REST** — you ask, they answer. **WebSocket** — you both talk on an open line. **Webhook** — they call you when something happens. Webhooks invert control, which is exactly why they're the backbone of integrations between systems you don't own — but it also means you must treat incoming calls defensively: verify the sender's signature, and expect the same event to arrive more than once (deliveries retry). "Who speaks first" quietly decides your whole design.
 
 ---
 
