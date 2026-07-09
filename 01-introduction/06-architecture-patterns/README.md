@@ -1,4 +1,4 @@
-# Group 6 — Architecture Patterns
+# Group 6 — Architecture Patterns Foundations
 
 > **Phase:** Foundation → **Group:** 6 of 6 → **Read time:** ~50 minutes
 
