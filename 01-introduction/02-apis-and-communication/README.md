@@ -59,6 +59,17 @@ The kitchen can change its recipes entirely — new chef, new equipment — and 
 
 A well-designed API is a stable foundation other teams build on. A poorly designed one causes breaking changes, integration bugs, and maintenance debt that compounds — in large organizations, a bad API decision today can cost months of work years later.
 
+### Concerns Every API Shares
+
+Whatever style you pick, a production API carries the same cross-cutting responsibilities — worth naming now because they recur across the whole curriculum:
+
+- **Authentication & authorization** — *who* is calling, and *what* are they allowed to do?
+- **Rate limiting** — protecting the server from abuse or a runaway client hammering it.
+- **Versioning** — evolving the contract (`/v1` → `/v2`) without breaking existing callers.
+- **Error handling** — returning meaningful, consistent failures (the `4xx`/`5xx` codes from Group 1).
+
+Each of these gets a full treatment later; for now, just know that "designing an API" is never only about the happy path.
+
 > 💡 **Key Insight**
 >
 > An API is a **promise**: "send me a request in this format, and I'll always respond in that format." Everything internal is the caller's non-concern. This is the same *hide-the-internals-behind-a-contract* idea you met with the reverse proxy in Group 1 — and it's why APIs are the seams along which large systems are split into independently-owned services. The contract is the product; the implementation is replaceable.
@@ -87,7 +98,25 @@ PUT    /users/42     → update user 42
 DELETE /users/42     → delete user 42
 ```
 
-The URL says **what**; the method says **what to do with it**; the response carries the data, almost always as JSON.
+The URL says **what**; the method says **what to do with it**; the response carries the data, almost always as JSON. A real exchange looks like this:
+
+```
+POST /users            HTTP/1.1        →   HTTP/1.1 201 Created
+Content-Type: application/json             Content-Type: application/json
+
+{ "name": "Ada", "plan": "pro" }          { "id": 42, "name": "Ada", "plan": "pro" }
+```
+
+Notice REST reuses everything from Group 1 — the HTTP methods, the status codes (`201 Created`, `404 Not Found`), the headers. REST isn't a new protocol; it's a *discipline* for using HTTP the way it was meant to be used.
+
+### Methods Carry Meaning — Safety & Idempotency
+
+Two properties of HTTP methods matter enormously in practice:
+
+- **Safe** methods don't change server state — `GET` should only ever *read*. A crawler hitting your `GET` endpoints must never create or delete anything.
+- **Idempotent** methods produce the same result whether called once or ten times. `GET`, `PUT`, and `DELETE` are idempotent; **`POST` is not** — retrying a `POST` can create duplicate records.
+
+> ⚠️ This is why network retries are dangerous for `POST`. If a payment `POST` times out and the client retries, you can charge someone twice. The fix — **idempotency keys** — is a recurring pattern you'll meet again; it starts from this simple property of HTTP methods.
 
 ### The Stateless Principle
 
@@ -134,7 +163,15 @@ query {
 }
 ```
 
-One request, exactly the right data, no extra fields, no extra round trips.
+One request, exactly the right data, no extra fields, no extra round trips. Note the structural difference from REST: GraphQL exposes a **single endpoint** (`POST /graphql`) and the *query body* — not the URL — describes what you want. Reads are `query`; writes are `mutation`:
+
+```graphql
+mutation {
+  likePost(id: "99") { id likes }
+}
+```
+
+> ⚠️ **The N+1 problem.** GraphQL's flexibility has a classic failure mode: a query for "10 posts and each author's name" can naïvely trigger 1 query for the posts + 10 more for the authors — 11 database hits. Solving it (with batching/`DataLoader`-style techniques) is real work the server team owns. Flexibility for the client is, again, complexity for the server.
 
 > 💡 **Key Insight**
 >
@@ -163,7 +200,16 @@ The trade: GraphQL adds a schema to maintain, a resolver layer, and more sophist
 
 REST and GraphQL share one pattern: the client asks, the server answers, the exchange ends. But what if the **server** needs to push updates continuously — a chat message, a stock tick, a driver moving on a map — without the client asking each time?
 
-With plain HTTP the only option is polling ("any updates?" every second) — wasteful, laggy, and it doesn't scale. WebSockets solve this.
+With plain HTTP the only option is polling ("any updates?" every second) — wasteful, laggy, and it doesn't scale. WebSockets solve this, but they aren't the only option, and it's worth knowing the ladder of choices:
+
+| Technique | How it works | Best when |
+|---|---|---|
+| **Short polling** | Client asks on a timer | Updates are rare and slight delay is fine |
+| **Long polling** | Server holds the request open until it has news | You need push-like behavior but can't use WebSockets |
+| **Server-Sent Events (SSE)** | One-way server → client stream over HTTP | Server pushes, client never needs to send (live feeds, notifications) |
+| **WebSockets** | Full two-way persistent channel | Both sides push frequently (chat, gaming, collaboration) |
+
+Reach for the *lightest* tool that meets the need — a live-updating dashboard may only need SSE, not a full WebSocket.
 
 ### What WebSockets Are
 
