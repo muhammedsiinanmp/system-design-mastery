@@ -549,4 +549,79 @@ One thread leads directly into the next document: once you can state performance
 
 ---
 
-*(Sections 10–11 continue in subsequent commits.)*
+## 10. Putting It All Together — A Flash Sale
+
+Time to watch every concept in this document earn its keep in one story. **Brimble**, an e-commerce site, is about to run its first flash sale: a limited drop at noon, expected to multiply normal traffic ~20×. You're the engineer responsible for checkout surviving it. Walk through the week like a pro.
+
+### Monday — Split the Question (§1)
+
+"Will checkout be fast enough?" is not one question. You split it: **latency** — what does one checkout request cost today, and why? **Throughput** — what's our capacity ceiling, and where is it? Two investigations, two different tools.
+
+### Tuesday — Itemize the Latency (§2)
+
+You trace checkout at quiet load: **340ms** total. The receipt: 90ms of network round trips (the app calls the payment provider *twice*, sequentially), 130ms for an inventory query missing an index, 110ms of app work, ~10ms queueing. Two line items pop: merge the payment calls into one (−45ms), let the DBA add the index (−100ms). Checkout is now ~195ms *at quiet load* — but you know from §7 that this number is a function of load, so you're not done.
+
+### Wednesday — Find the Ceiling (§3, §6)
+
+Load test time — **open-loop** (§9), so coordinated omission can't flatter the results. Capacity maxes out at **900 RPS**, far below the ~2,400 RPS you estimate for the sale peak (average sale traffic ~1,000 RPS × 2.4 peak factor — §9: provision for peaks). The bottleneck isn't CPU: it's the app's **database connection pool of 180 connections**. Little's Law confirms the math: at ~200ms per checkout, 180 connections ÷ 0.2s ≈ 900 RPS. The ceiling is exactly where L = λW says it is.
+
+You have two levers, and now you know they're *the* two levers: raise **L** (more connections/replicas — but the DB has limits) or cut **W** (every millisecond shaved off checkout frees capacity — Tuesday's latency work just became *throughput* work). You do both: pool to 300 with a read replica for the inventory check, and W is already down to ~150ms. New ceiling: 300 ÷ 0.15 = **2,000 RPS.** Closer — not enough.
+
+### Thursday — Spend Latency to Buy Throughput (§8)
+
+You ask §8's tiebreaker question about each piece of checkout work: **is anyone waiting on this?**
+
+- Charging the card, reserving stock → *yes*, the user is staring at a spinner. Latency-optimized path, untouched.
+- The receipt email, loyalty points, analytics events, warehouse notification → *no.* Nobody is waiting. These move behind a queue (Group 6's async split) and get **batched** — trading their latency (seconds now, invisible) for cheap, massive throughput.
+
+Checkout's synchronous work drops to ~110ms. Ceiling: 300 ÷ 0.11 ≈ **2,700 RPS.** Above the estimate — with margin.
+
+### Friday — Set the Watch (§5, §7, §9)
+
+You define what "healthy" means *before* the sale, in the only language that doesn't lie: **P99 checkout latency under 400ms** at up to 2,400 RPS, dashboards showing P50/P95/P99 per service (merged histograms — no averaged percentiles), and an alert on P99 — because §7 taught you the tail degrades *first* as utilization climbs the curve. P99 is your early-warning line, tripping while P50 still looks innocent.
+
+### Noon, Saturday — The Curve Shows Up
+
+The drop goes live. Traffic hits 2,300 RPS — utilization ~85%, and right on schedule the **hockey stick** makes itself known: P50 ticks from 110ms to 160ms, but **P99 leaps from 300ms to 900ms.** The clumps are queueing. No code is broken; the system is simply high on the curve. Because you built headroom levers in advance, you shed optional load — the recommendations panel on the checkout page degrades away (Group 5's graceful degradation), cutting fan-out per page view (§5: fewer branches, smaller inherited tail) and freeing capacity. P99 settles at 380ms. The sale sells out; checkout never blinks.
+
+### The Debrief
+
+Every move traced back to one section of this document: split the axes → itemize latency → find the ceiling with Little's Law → trade axes deliberately → watch the tail → respect the curve. **None of it required new technology** — only knowing which number means what, and which lever moves it.
+
+---
+
+## 11. Final Recap
+
+| Concept | Core Insight | Biggest Tradeoff |
+|---|---|---|
+| **Latency** | Time for one request — a sum (network + queue + processing + transmission) you must itemize before optimizing | Cutting it costs money and design effort (fewer trips, closer data, headroom) |
+| **Throughput** | Completed work per second — capped by the bottleneck, judged against demand | Raising the ceiling adds machines and coordination complexity |
+| **Two Axes** | Different diseases, different cures: more servers fix capacity, not a slow request | Diagnose separately, design together |
+| **Goodput** | Users experience *useful* completed work — not effort | High throughput can hide waste (retries, timeouts) |
+| **Percentiles** | Latency is a skewed distribution; averages describe no real request | Optimizing the tail is expensive — pick the percentile the product needs |
+| **Tail at Fan-out** | 1 − 0.99ⁿ: at 100 parallel calls, the backend's P99 hits ~63% of pages | Parallelism buys time but spends percentiles |
+| **Little's Law** | Concurrency = Throughput × Latency — slow requests eat capacity | Bounded concurrency means rising latency *forces* falling throughput |
+| **Utilization Curve** | Latency is a function of load — hockey stick past ~70–80% | Low latency requires paying for headroom you "don't use" |
+| **Batching & Buffering** | Spend latency to buy throughput; the wait is purchased capacity | Wrong for anything a human is waiting on |
+| **Latency Budgets** | Divide the P99 target across the path; make performance enforceable | Budgets without headroom are already broken |
+| **Measurement Traps** | Coordinated omission and cold-start blending make numbers lie optimistically | Honest (open-loop, condition-labeled) measurement takes deliberate effort |
+
+### The One Thing to Remember
+
+> **Latency is how long one request takes; throughput is how many the system completes — and they meet in two places: slow requests eat capacity (Little's Law), and running near capacity makes requests slow (the utilization curve). So never say "it's slow" — say which number, at which percentile, under what load. The diagnosis is the skill.**
+
+---
+
+## What's Next
+
+> **Topic 2 — Availability**
+
+You can now state how *fast* a system is with precision. The next property asks an even more basic question:
+
+> **Is the system there at all?**
+
+Availability is where the "nines" live — 99.9%, 99.99% — and it's less obvious than it looks. What counts as "down"? Is a system that answers in 30 seconds *up*? (You now know enough about latency to be suspicious.) How do the nines translate into minutes of allowed downtime — and why does each extra nine cost roughly ten times more than the last?
+
+This document ended with performance promises you can state precisely; the next one turns promises into **objectives** — SLIs, SLOs, and the machinery teams use to decide, rationally, how reliable is reliable *enough*. The yardsticks keep sharpening.
+
+---
