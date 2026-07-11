@@ -1,6 +1,6 @@
 # Latency vs Throughput
 
-> **Phase:** Core System Properties → **Topic:** 1 of 5 → **Read time:** ~45 minutes
+> **Phase:** Core System Properties → **Topic:** 1 of 5 → **Read time:** ~50 minutes
 
 ---
 
@@ -73,6 +73,10 @@ Keep the "good direction" straight from day one:
 | **Latency** | Time for one request | ms (milliseconds) | **Low** |
 | **Throughput** | Completed requests per unit time | RPS / QPS (requests/queries per second) | **High** |
 
+### Why the Industry Obsesses Over This
+
+These aren't academic metrics — they're revenue metrics, and the industry learned that the hard way. The classic findings, quoted in performance discussions ever since: Amazon measured that every **100ms of added latency cost ~1% of sales**; Google found that slowing search results by 500ms **cut traffic by 20%**. Latency is user trust in numerical form — people click less, buy less, and churn more from systems that make them wait. Throughput is the cost side of the same coin: it decides how many machines you buy to serve a given demand. Getting these two numbers right is rarely optional at scale; it's the product working or not.
+
 > 💡 **Key Insight**
 >
 > "The system is slow" is a symptom, not a diagnosis. The first professional move in any performance conversation is to split it: **is one request too slow (latency), or are there too many requests for the system (throughput)?** Everything else in this document builds on being able to make that split instantly.
@@ -118,7 +122,7 @@ Two of these deserve special attention, because beginners consistently underesti
 
 ### The Latency Ladder — Numbers Worth Knowing
 
-You met a short version in Group 1. Here's the fuller ladder every engineer should have a feel for — not memorized to the digit, but as *orders of magnitude*:
+You met a short version in Group 1. Here's the fuller ladder — a descendant of the famous "numbers every programmer should know" list that circulated inside Google — every engineer should have a feel for it, not memorized to the digit, but as *orders of magnitude*:
 
 | Operation | Approximate time | Scale intuition |
 |---|---|---|
