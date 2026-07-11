@@ -445,4 +445,108 @@ It also closes the loop with Little's Law into a genuinely vicious cycle: high u
 
 ---
 
-*(Sections 8–11 continue in subsequent commits.)*
+## 8. When They Trade Against Each Other
+
+So far the coupling has been adversarial-by-accident: congestion and slow dependencies hurting both axes. But there's a family of techniques where engineers **deliberately spend one axis to buy the other.** Recognizing this trade — and choosing a side on purpose — is a core design skill (it's doc 00's tradeoff principle, specialized).
+
+### Batching — The Classic Trade
+
+Most work has **per-operation overhead**: a network round trip, a disk flush, a transaction commit. Doing items one at a time pays that overhead every time. **Batching** amortizes it — collect items briefly, then process them together:
+
+```text
+One-at-a-time:  1,000 inserts × (1 round trip + 1 commit each)   → slow overall, but each item lands instantly
+Batched (100):  10 batches   × (1 round trip + 1 commit each)    → far higher throughput…
+                                                                    …but item #1 WAITED for 99 others to arrive
+```
+
+Throughput goes up dramatically. But the first item in every batch pays a new latency cost: **waiting for the batch to fill.** That waiting isn't waste — it's *purchased throughput*.
+
+The same shape appears everywhere once you see it:
+
+| Technique | Throughput gain | Latency cost |
+|---|---|---|
+| **Batching** (DB writes, message consumption, API bulk endpoints) | Amortizes per-op overhead | Items wait for the batch to fill/flush |
+| **Buffering** (write buffers, group commit) | Absorbs bursts; fewer expensive flushes | Data sits in the buffer before landing |
+| **Pipelining / queues** (Group 6's async messaging) | Producer never waits; consumers drain at their own pace | End-to-end result arrives later — this is *eventual consistency's* performance twin |
+| **Compression** | More effective bytes through the same pipe | CPU time added to every request |
+
+And the reverse direction exists too: to *minimize latency* you send each item immediately, pre-allocate resources, keep connections warm, and refuse to wait for company — paying per-item overhead (lower efficiency, lower max throughput) for immediacy.
+
+### System Personalities
+
+Push either preference to its limit and you get two recognizable system archetypes:
+
+| | **Latency-optimized** | **Throughput-optimized** |
+|---|---|---|
+| Cares about | Each individual operation, *now* | Total work per hour |
+| Waiting is | Unacceptable | The whole strategy (batch and amortize) |
+| Utilization | Deliberately low (headroom, §7) | Deliberately high (efficiency) |
+| Examples | Trading systems, gaming, autocomplete, payment authorization | Analytics/ETL pipelines, log ingestion, ML training, billing runs |
+| A "slow" unit of work | An incident | Invisible — nobody waits on one record |
+
+Neither personality is "better" — they're the two ends the requirements choose between. A stock exchange that batched orders for efficiency would be broken; an analytics pipeline that processed events one-by-one for low latency would be absurdly wasteful. Most real products contain **both**: the user-facing request path is latency-optimized, while behind it, queues feed throughput-optimized background workers (Group 6's sync/async split, restated in performance terms).
+
+> 💡 **Key Insight**
+>
+> When latency and throughput conflict, the tiebreaker is one question: **is anyone waiting on this specific piece of work?** A human staring at a spinner → optimize latency. A pipeline where only the aggregate matters → optimize throughput. Answer that per *workload*, not per *system* — the skill is drawing the line through your architecture in the right place.
+
+### Quick Recap — Trading One for the Other
+
+- **Batching, buffering, and pipelining** buy throughput by *adding* latency — the wait is purchased capacity, not waste.
+- Minimizing latency pays the reverse cost: per-item overhead and lower efficiency.
+- **Latency-optimized** (trading, gaming, checkout) and **throughput-optimized** (ETL, ingestion, training) are personalities set by requirements.
+- The tiebreaker question: **"is anyone waiting on this specific piece of work?"** — decided per workload, not per system.
+
+---
+
+## 9. Production Reasoning — Budgets, Peaks, and Measurement Traps
+
+You now have the concepts. This section is about *wielding* them the way production engineers do — three practices and two traps.
+
+### Latency Budgets — Itemizing Before You Build
+
+Section 2 said latency is a sum you can itemize; mature teams itemize it **in advance.** Given a target ("checkout responds in 300ms at P99"), you divide it across the request path like a financial budget:
+
+```mermaid
+flowchart LR
+    Total["🎯 300ms P99 budget"] --> E["Edge/TLS + network: 60ms"]
+    Total --> G["Gateway + auth: 30ms"]
+    Total --> A["App logic: 50ms"]
+    Total --> D["DB + cache: 100ms"]
+    Total --> H["Headroom: 60ms"]
+```
+
+The budget turns vague hopes into enforceable engineering: every component team knows its allowance; a proposed new call into the path must *fit the budget* or displace something; and when the total is breached, the itemization tells you exactly who overspent. Note the explicit **headroom line** — a budget with no slack is already broken (§7 taught you why).
+
+Two structural facts make budgets non-trivial:
+
+- **Sequential calls add; parallel calls don't** — but parallel fan-out inherits the *worst* of its branches, and at high fan-out that means the branches' tail (§5). Parallelism buys you time but spends your percentiles.
+- **Budgets are consumed by percentiles, not averages.** Sum the components' P99s and you'll over-count (they rarely all go slow together); sum their P50s and you'll under-count. In practice teams budget against a high percentile per component and validate against the real end-to-end distribution.
+
+### Provision for Peaks, Not Averages
+
+Doc 00's estimation section said peak ≈ 2–3× average traffic. Now you can see *why that number is the one that matters*: the utilization curve is nonlinear. A system sized for **average** load runs at ~100%+ utilization during every peak — the vertical part of the hockey stick, daily, by design. Capacity planning that uses average RPS isn't approximate; it's *wrong in the direction that hurts*.
+
+### The Traps — How Measurement Lies to You
+
+**Trap 1 — Coordinated omission.** Most load-testing tools send a request, *wait for the response*, then send the next. See the flaw? When the system stalls for 10 seconds, the tool politely stops generating load — so the stall appears in the results as *one* slow request instead of the *hundreds* that real, non-polite users would have fired into that window and had stalled. The tool's latency report ends up wildly optimistic exactly where it matters (the tail). Real traffic doesn't wait for your system to recover; load tests must be **open-loop** (send at a fixed rate regardless of responses) to tell the truth.
+
+**Trap 2 — Cold vs warm numbers.** The first requests after a deploy or idle period hit cold caches, unopened connection pools, JIT-uncompiled code — and can be 10–100× slower than steady state. Benchmarks that ignore warm-up overstate latency; production percentile dashboards that *blend* a deploy's cold spike into the hour's numbers understate steady-state health. Know which regime you're measuring.
+
+> ⚠️ **A latency claim without its conditions is not a claim.** "The API does 50ms" means nothing until you pin down: at which percentile? Under what load (where on the §7 curve)? Warm or cold? Measured open-loop or closed-loop? From the client or the server? Engineers who state their conditions are believed; numbers without conditions get people paged at 3 a.m.
+
+### The Bridge to SLOs
+
+One thread leads directly into the next document: once you can state performance precisely — *"P99 checkout latency below 300ms over a rolling 28 days"* — you can **promise** it. Formalized, such promises become **SLOs** (Service Level Objectives), the machinery behind availability targets, error budgets, and the "nines" you've seen quoted. Latency percentiles are where that machinery gets its parts; the Availability doc picks up the story.
+
+### Quick Recap — Production Reasoning
+
+- A **latency budget** divides a P99 target across the request path — with an explicit headroom line — making performance enforceable per component.
+- Sequential calls add latency; parallel calls inherit their **worst branch's tail**.
+- **Provision for peak** (2–3× average): sizing for average means living on the hockey stick daily.
+- **Coordinated omission** makes closed-loop load tests lie about the tail — test open-loop.
+- Separate **cold and warm** measurements; a latency number without its conditions is not a claim.
+
+---
+
+*(Sections 10–11 continue in subsequent commits.)*
