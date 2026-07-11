@@ -148,4 +148,115 @@ Look at the chasm between memory (~100 ns) and any network hop (~1 ms same-DC �
 
 ---
 
-*(Sections 3–11 continue in subsequent commits.)*
+## 3. Throughput — The System's Capacity
+
+Latency looks at one request under a microscope. **Throughput** zooms all the way out and asks the system-level question:
+
+> **How much work does the whole system complete per unit of time?**
+
+For a web backend that's **requests per second** (RPS, or QPS for queries). For a message pipeline it's events per second; for a data job, rows or megabytes per second. Same concept, different units: **completed work ÷ time.**
+
+### Capacity vs Demand
+
+Throughput only becomes meaningful next to its counterpart, **demand** (also called *offered load*) — how much work is *arriving* per second. Three regimes fall out immediately:
+
+```mermaid
+flowchart TD
+    D{"Demand vs Capacity?"}
+    D -->|"Demand ≪ capacity"| H["🟢 Healthy<br/>work completes as it arrives<br/>queues stay empty"]
+    D -->|"Demand ≈ capacity"| W["🟡 Warning zone<br/>queues form and grow<br/>latency climbs (Section 7)"]
+    D -->|"Demand > capacity"| O["🔴 Overload<br/>queues grow without bound<br/>timeouts, errors, collapse"]
+```
+
+The crucial fact: **a system's throughput has a ceiling.** Some resource — CPU, a database's write capacity, a connection pool, a downstream API's rate limit, a single lock everyone waits on — saturates first, and it caps what the whole system can complete regardless of how much arrives. That resource is the **bottleneck** (Group 4's central word), and the system's maximum throughput *is* the bottleneck's throughput.
+
+That's worth reading twice: your system is exactly as fast, in the throughput sense, as its narrowest component. A fleet of 50 app servers in front of a database that can commit 2,000 writes/second is a 2,000-writes/second system. The other capacity is decoration.
+
+### Bandwidth vs Throughput vs Goodput
+
+Three terms get blurred in casual conversation. Keeping them separate is a cheap way to sound (and be) precise:
+
+| Term | Means | Analogy |
+|---|---|---|
+| **Bandwidth** | The theoretical *maximum* rate a link or component could carry | How wide the pipe is |
+| **Throughput** | The rate you *actually achieve* | How much water actually flows |
+| **Goodput** | The rate of *useful* work — excluding retries, duplicates, overhead, failed responses | Water that reaches the glass |
+
+The gaps between them are diagnostic. Throughput far below bandwidth means something upstream is limiting flow. Goodput far below throughput is more insidious — the system looks busy but much of the work is *waste*: retried requests, redelivered messages, responses that time out after the work was done. A retry storm (Group 5) is exactly this failure: throughput stays high, goodput collapses to nothing.
+
+> ⚠️ **Measure completed useful work, not effort.** A dashboard proudly showing "45,000 requests/second" during an incident may be counting timeouts and retries of the same doomed request. Users experience *goodput*. When throughput is high and users are still failing, waste is eating the difference.
+
+### Quick Recap — Throughput
+
+- **Throughput** = completed work per unit time (RPS/QPS); it's a **system-level** property.
+- It matters relative to **demand**: demand exceeding capacity → queues grow → overload.
+- Every system has a throughput **ceiling set by its bottleneck** — the narrowest component caps everything.
+- **Bandwidth** (theoretical max) ≥ **throughput** (achieved) ≥ **goodput** (useful) — the gaps tell you where waste and limits live.
+
+---
+
+## 4. Why They're Not the Same Axis
+
+Now put the two side by side properly — because the single most common performance misconception is that they're one dial: "make it faster."
+
+### The Highway Mental Model
+
+Picture a highway between two cities:
+
+- **Latency** is *one car's travel time* — how long it takes you, personally, to get from A to B.
+- **Throughput** is *cars arriving per hour* — how many vehicles the road delivers.
+
+Now watch what different "improvements" actually do:
+
+| Change | Latency (one car's trip) | Throughput (cars/hour) |
+|---|---|---|
+| **Add lanes** (more servers) | Unchanged — your car doesn't drive faster | ⬆️ Much higher |
+| **Raise the speed limit** (faster code path, fewer round trips) | ⬇️ Lower | ⬆️ Somewhat higher too |
+| **Move the cities closer** (CDN/edge, Group 4) | ⬇️ Much lower | Mostly unchanged |
+| **Carpooling** (batching — more per vehicle) | ⬆️ *Higher* (you wait to fill the car) | ⬆️ Higher |
+
+```mermaid
+flowchart LR
+    subgraph One["1 lane"]
+        C1["🚗"] --> D1["City B<br/>trip: 60 min<br/>600 cars/hour"]
+    end
+    subgraph Four["4 lanes — same speed limit"]
+        C2["🚗🚗🚗🚗"] --> D2["City B<br/>trip: STILL 60 min<br/>2,400 cars/hour"]
+    end
+    One -->|"add lanes"| Four
+```
+
+Adding lanes is exactly what horizontal scaling (Group 4) does: it multiplies *capacity* without making any individual request faster. If a user complains their page takes 4 seconds, adding six more servers gives you seven servers that each take 4 seconds.
+
+### Two Dials, Four Corners
+
+Because they're independent axes, all four combinations exist in the wild — and naming which quadrant you're in tells you what to do:
+
+| | **High throughput** | **Low throughput** |
+|---|---|---|
+| **Low latency** | 🏆 The goal — fast *and* high-capacity | Fine for small systems — fast but low-traffic (a healthy internal tool) |
+| **High latency** | A batch pipeline: processes millions of records/hour, each taking minutes | 🚨 The worst of both — slow *and* can't handle load |
+
+The batch-pipeline corner is the one that surprises beginners: a nightly analytics job with *terrible* latency (results take an hour) and *spectacular* throughput (terabytes processed) — and that's a **correct design**, because nobody is waiting on any single record. Which quadrant you should aim for is a *requirements* question (doc 00), not a universal ranking.
+
+### The Coupling Preview
+
+Independent axes — but not *unrelated*. Two connections tie them together, and they're the subject of the next three sections:
+
+1. **A capacity link:** latency and concurrency determine achievable throughput (**Little's Law**, Section 6).
+2. **A congestion link:** pushing throughput near the ceiling makes latency explode (**the utilization curve**, Section 7).
+
+> 💡 **Key Insight**
+>
+> Latency and throughput are **independent enough that you must diagnose them separately, and coupled enough that you must design them together.** The professional pattern: *diagnose* on separate axes ("which number is bad?"), then *design* with the coupling in mind ("if I fix this by batching, what happens to the other axis?"). Treating them as one dial called "performance" guarantees you'll eventually turn it the wrong way.
+
+### Quick Recap — Not the Same Axis
+
+- Highway model: latency = **one car's travel time**; throughput = **cars per hour**.
+- **Adding lanes** (horizontal scaling) raises throughput but does nothing for a single request's latency.
+- All four latency/throughput quadrants exist — a high-latency, high-throughput batch pipeline is a *correct* design for its requirements.
+- The axes are independent for **diagnosis** but coupled for **design** — via Little's Law (§6) and the utilization curve (§7).
+
+---
+
+*(Sections 5–11 continue in subsequent commits.)*
