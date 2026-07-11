@@ -335,4 +335,114 @@ At 100 backend calls — completely ordinary for a large product page or social 
 
 ---
 
-*(Sections 6–11 continue in subsequent commits.)*
+## 6. Little's Law — The Equation That Connects Them
+
+Sections 1–5 treated latency and throughput as separate axes. Now for the first of the two links between them — a result from queueing theory so simple and so universal that it's worth engraving:
+
+> **L = λ × W**
+>
+> **Concurrency = Throughput × Latency**
+
+In system terms: the number of requests **in flight** at any moment (L, concurrency) equals the rate they arrive/complete (λ, throughput) multiplied by how long each one stays in the system (W, latency). It holds for *any* stable system — a web server, a database, a queue, a coffee shop — with no assumptions about traffic patterns or processing order.
+
+A coffee shop makes it concrete: customers arrive at 2 per minute (λ), each spends 5 minutes inside ordering and waiting (W). How many customers are in the shop at any moment? **2 × 5 = 10.** Always. If each customer instead took 10 minutes, the same arrival rate would fill the shop with 20.
+
+### Why Engineers Care — Rearranged Forms
+
+The law's power is that knowing any two numbers gives you the third. Each rearrangement answers a real capacity question:
+
+| Form | Question it answers |
+|---|---|
+| **L = λ × W** | "At 2,000 RPS and 50ms latency, how many requests are in flight?" → 2,000 × 0.05 = **100 concurrent requests** |
+| **λ = L / W** | "With 100 worker threads and 50ms per request, what's my max throughput?" → 100 / 0.05 = **2,000 RPS** |
+| **W = L / λ** | "There are 500 messages in the queue and we process 100/sec — how stale is the newest one by the time it's handled?" → **5 seconds** |
+
+That middle form — **λ = L / W** — is the one that predicts incidents. Achievable throughput is *concurrency divided by latency*. Concurrency is always bounded: thread pools, connection pools, memory. So:
+
+> **If latency rises and concurrency is capped, throughput must fall.**
+
+### Slow Requests Eat Capacity
+
+This is the mechanism behind one of the most common production incidents. Say your service has 100 worker threads and calls a downstream dependency:
+
+```text
+Healthy:  downstream answers in 50ms  → λ = 100 / 0.05  = 2,000 RPS capacity
+Degraded: downstream slows to 5s      → λ = 100 / 5     =     20 RPS capacity
+```
+
+Nothing crashed. No traffic spike. A dependency got **100× slower**, and Little's Law converted that into a **100× throughput collapse** — every worker thread sits pinned, waiting, and new requests find nobody free. This is precisely why Group 5's **timeouts** are non-negotiable: a timeout is a cap on W, and capping W is *defending your own throughput*. It's also why one slow service stalls its callers, and their callers — the cascading failure, now with its equation attached.
+
+```mermaid
+flowchart LR
+    Slow["🐌 Dependency latency ↑<br/>(W: 50ms → 5s)"] --> Pin["🧵 All workers pinned waiting<br/>(L is capped at 100)"]
+    Pin --> Drop["📉 Throughput collapses<br/>(λ = L/W: 2,000 → 20 RPS)"]
+    Drop --> Queue["⏳ New requests queue & time out<br/>— callers' W rises too…"]
+```
+
+> 💡 **Key Insight**
+>
+> Little's Law is why **latency is a capacity problem, not just an experience problem.** Every millisecond a request lingers, it occupies a thread, a connection, memory — resources no one else can use. Fast requests don't just please users; they *free capacity*. When you see throughput mysteriously drop during an incident, ask first: **what got slower?**
+
+### Quick Recap — Little's Law
+
+- **Concurrency = Throughput × Latency** (L = λW) — true for any stable system, no assumptions needed.
+- Know two, derive the third: capacity planning, queue-delay estimates, and max-throughput math all fall out of it.
+- With **bounded concurrency** (threads, connections), rising latency **mathematically forces** falling throughput.
+- A 100× slower dependency = a 100× throughput collapse with zero crashes — this is why timeouts defend capacity, not just UX.
+
+---
+
+## 7. The Utilization–Latency Curve
+
+Little's Law was the first link: latency limits throughput. The second link runs the other way — **pushing throughput toward the ceiling destroys latency** — and it produces the single most senior-flavored insight in this document.
+
+### The Intuition — Why Queues Form Before "Full"
+
+Suppose a server can process 100 RPS, and 80 RPS arrive. Utilization is 80% — comfortably below capacity. So requests never wait, right?
+
+Wrong — because arrivals are **random, not evenly spaced.** "80 RPS" is an average; real traffic arrives in clumps. Some 100ms window brings 15 requests, the next brings 3. During every clump, arrivals temporarily exceed what the server can drain, and a queue forms; during every lull, it drains. The busier the server, the less slack remains to absorb clumps, the longer the queues — and remember from Section 2 that **queue time is a latency component.**
+
+The result is one of the most important curves in engineering:
+
+```text
+  Latency
+     │                                    ╭─ 💥
+     │                                   ╭╯
+     │                                  ╭╯
+     │                               ╭──╯
+     │                          ╭────╯
+     │                  ╭───────╯
+     │        ╭─────────╯
+     ├────────╯
+     └────────┬─────────┬─────────┬────────┬──→ Utilization
+             25%       50%       70%      90%
+```
+
+Latency stays nearly flat through low utilization, rises noticeably past ~70%, and past ~80–90% turns into a **hockey stick** — small increases in load produce enormous increases in waiting. Queueing theory makes it precise (for random arrivals, wait time grows like **1 / (1 − utilization)**: at 50% busy the multiplier is 2×; at 90%, 10×; at 99%, 100×) — but the shape is what you must internalize, not the formula.
+
+### "The CPU Isn't Maxed" ≠ Fine
+
+This curve is why a seasoned engineer hears alarm bells at numbers a beginner finds reassuring:
+
+- *"Utilization is only 85%, we have headroom"* — no: at 85% you're on the steep part of the curve. Latency has already multiplied, and the **tail percentiles felt it first** (P99 lives in the worst queueing moments — the clumps). This is a big part of why P99 degrades long before P50 does.
+- *"We'll scale when CPU hits 95%"* — by then, latency is catastrophic and the system is one traffic clump away from the vertical part of the curve.
+
+It also closes the loop with Little's Law into a genuinely vicious cycle: high utilization → queues → **latency rises** → (bounded concurrency) → **effective throughput falls** → utilization rises further. This is **congestion collapse** — the busier the system gets, the less useful work it completes. Highways do exactly this: past a critical density, *more cars means fewer cars getting through*. Stampeding retries (Group 5) pour fuel on it, which is why backoff exists.
+
+> ⚠️ **Headroom is not waste — it's the price of low latency.** Production systems deliberately run at 50–70% utilization not because engineers can't count, but because the *slack is what keeps queues short*. Running "hot" to save money is spending your latency budget (and your absorb-a-spike margin) on hardware costs. When someone proposes pushing fleet utilization to 95%, the curve is the counter-argument.
+
+> 💡 **Key Insight**
+>
+> **Latency is a function of load.** The same system that answers in 40ms at 30% utilization answers in 900ms at 90% — no code changed, no bug appeared. This is why "fast" is meaningless without "under what load" (the mindset shift from page one), why load tests must test *realistic* load, and why capacity planning is really *latency* planning: you provision not for the load you can survive, but for the load at which you're still fast.
+
+### Quick Recap — The Utilization–Latency Curve
+
+- Traffic arrives in **random clumps**, so queues form well before 100% utilization.
+- Latency vs utilization is a **hockey stick**: flat until ~70%, explosive past ~80–90% (wait ∝ 1/(1−utilization)).
+- **Tail percentiles degrade first** — P99 is the early-warning line on the curve.
+- High utilization + bounded concurrency can spiral into **congestion collapse** (more load, less useful work).
+- Deliberate **headroom (run at ~50–70%)** is what buys low latency and spike tolerance — it is not waste.
+
+---
+
+*(Sections 8–11 continue in subsequent commits.)*
