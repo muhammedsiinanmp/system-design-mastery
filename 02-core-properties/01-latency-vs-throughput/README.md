@@ -259,4 +259,80 @@ Independent axes — but not *unrelated*. Two connections tie them together, and
 
 ---
 
-*(Sections 5–11 continue in subsequent commits.)*
+## 5. Measuring Latency — Percentiles and the Tail
+
+You can't reason about what you measure wrong — and latency is the most commonly mis-measured number in engineering. The mistake is always the same one: **averaging.**
+
+### Why Averages Lie
+
+Latency is not one number; it's a **distribution**. Every request takes a different amount of time, and the shape of that spread — not its center — is what your users experience. Worse, latency distributions are almost never bell-shaped. They're **skewed with a long right tail**: most requests are quick, but a minority take much, much longer (a cache miss, a GC pause, a lock, a slow replica).
+
+Averages are exactly the wrong tool for that shape:
+
+```text
+100 requests: 99 take 20ms, 1 takes 10 seconds.
+
+Average:  (99 × 20ms + 10,000ms) / 100  ≈  120ms   ← "looks fine"
+Reality:  1% of your users just waited TEN SECONDS.
+```
+
+The average says 120ms — a number that describes *no actual request*. Nobody experienced 120ms: they experienced 20ms or ten seconds. The average blends two populations into a fiction. And it moves in misleading ways: cutting off the slowest 1% of users entirely (they gave up) *improves* your average.
+
+### Percentiles — Reading the Distribution Honestly
+
+Engineers describe latency with **percentiles**: "PN" is the value that N% of requests complete within.
+
+| Percentile | Reads as | What it tells you |
+|---|---|---|
+| **P50** (median) | Half of requests are faster than this | The *typical* experience |
+| **P95** | 95% are faster; 1 in 20 is slower | The *bad-day* experience — common enough that every user hits it regularly |
+| **P99** | 99% are faster; 1 in 100 is slower | The **tail** — your slowest users, and (as you'll see) your busiest ones |
+| **P99.9** | 1 in 1,000 is slower | What your biggest customers hit constantly at their volume |
+
+```mermaid
+flowchart LR
+    Dist["📊 Latency distribution<br/>(right-skewed)"]
+    Dist --> P50["P50 = 45ms<br/>typical"]
+    Dist --> P95["P95 = 180ms<br/>1 in 20"]
+    Dist --> P99["P99 = 900ms<br/>the tail"]
+    Dist --> P999["P99.9 = 4s<br/>1 in 1,000"]
+```
+
+A healthy latency report is a *set* of percentiles, and the gaps between them are as informative as the values: P50 = 45ms with P99 = 900ms says "the typical path is fine, but something intermittent — cache misses, contention, a slow dependency — is savaging one request in a hundred." That's a *lead*, not just a grade.
+
+### Why the Tail Matters More Than It Seems
+
+"Who cares about 1 in 100?" — two answers, and they're the difference between junior and senior reasoning:
+
+**1. Heavy users hit the tail constantly.** One request in 100 sounds rare — until you notice a single page load fires dozens of requests, and your most engaged users make hundreds of page loads a day. At 100 requests per session, an "1 in 100" P99 event happens roughly **every session**. The tail isn't rare users; it's *every* user, regularly — and disproportionately your **most valuable, highest-activity** ones, because they issue the most requests.
+
+**2. Fan-out amplifies the tail.** Group 1 planted this; here's the full form. Modern pages aggregate many backend calls. If a page fans out to *n* parallel calls and waits for all of them, the page is slow whenever **any one** call is slow:
+
+```text
+P(page hits the tail) = 1 − (0.99)ⁿ      (each call has a 1% chance of a P99 event)
+
+n = 1   →   1%      of page loads are slow
+n = 10  →  ~10%
+n = 50  →  ~39%
+n = 100 →  ~63%
+```
+
+At 100 backend calls — completely ordinary for a large product page or social feed — the *backend's* P99 becomes the *page's* median-ish experience. **Your users experience your dependencies' tail, multiplied.** This is why large systems obsess over P99 and P99.9: at high fan-out, the tail *is* the product.
+
+> ⚠️ **You cannot average percentiles.** The P99 of ten servers is *not* the mean of their ten P99s — percentiles don't compose that way (a mostly-idle server's great P99 doesn't cancel a hot server's terrible one; traffic isn't spread evenly). To get a fleet-wide percentile you must merge the underlying distributions (histograms), not their summaries. Dashboards that average percentiles across hosts are quietly lying to you.
+
+> 💡 **Key Insight**
+>
+> The percentile you optimize is a **product decision disguised as a math choice.** P50 describes your typical user's good day; P99 describes your best customers' every day. Systems serving high-fan-out pages or high-volume API clients live and die by their tail — which is why "we improved average latency 30%" can coexist with "our biggest customer is threatening to leave."
+
+### Quick Recap — Percentiles and the Tail
+
+- Latency is a **skewed distribution**, not a number — averages describe no real request and hide the tail entirely.
+- Report **P50 / P95 / P99 (and P99.9)**; the *gaps* between them point at intermittent causes.
+- The tail is not rare: heavy users hit it **every session**, and they're your most valuable users.
+- **Fan-out amplifies the tail**: at n parallel calls, 1 − 0.99ⁿ of composite requests are slow — at n=100, that's ~63%.
+- **Never average percentiles** across servers — merge histograms instead.
+
+---
+
+*(Sections 6–11 continue in subsequent commits.)*
