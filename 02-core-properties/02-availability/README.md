@@ -245,4 +245,63 @@ Two more practical truths:
 
 ---
 
-*(Sections 5–11 continue in subsequent commits.)*
+## 5. Error Budgets — Spending Unreliability Wisely
+
+Section 4 ended on a claim that sounds almost heretical: **100% availability is not the goal.** This section is why — and it contains the single most behavior-changing idea in the whole topic. It's the concept that turns availability from a vague virtue ("try not to break things") into a *currency teams actively spend*.
+
+### Why 100% Is the Wrong Target
+
+Three independent reasons, each sufficient on its own:
+
+1. **It's impossible.** Hardware fails, networks partition, dependencies go down, deploys go wrong. Physics and other people's systems guarantee you cannot hit 100%.
+2. **The user can't tell.** If the user's own network, phone, or ISP is 99.9% reliable, the difference between your 99.99% and your 100% is *invisible to them* — it's drowned out by everything between your servers and their eyes. Paying to eliminate failures no user can perceive is spending real money for zero delivered value.
+3. **It would freeze the system.** The only way to approach 100% is to *never change anything* — no deploys, no new features, no experiments. But shipping change is the entire point of a product. **Perfect availability and progress are in direct conflict.**
+
+That third reason is the important one, and it reframes everything:
+
+> 💡 **Key Insight**
+>
+> The tension isn't "availability vs. laziness" — it's **availability vs. velocity.** Every deploy, migration, and feature risks availability; refusing to ship protects availability but kills the product. So the real question is never "how do we never fail?" It's "**how much failure can we afford** — and how do we spend it on the changes worth making?" That budget has a name.
+
+### The Error Budget
+
+If your SLO is 99.9%, you are *promising* 99.9% — which means you are explicitly declaring the other **0.1% is allowed to fail.** That 0.1% is not a shameful accident to drive to zero. It's a **resource you are permitted to spend.**
+
+> **Error budget = 100% − SLO.** It is the amount of unreliability you've *pre-approved* for the window — a currency the team gets to spend on risk.
+
+For a 99.9% monthly SLO, the budget is 0.1% of the month ≈ **43 minutes** of allowed downtime. That 43 minutes is *yours to allocate*:
+
+```mermaid
+flowchart LR
+    B["💰 Error budget<br/>0.1% ≈ 43 min/month"] --> D["🚀 Risky deploys<br/>& migrations"]
+    B --> E["🧪 Experiments<br/>& new features"]
+    B --> F["🔧 Planned maintenance"]
+    B --> U["💥 Unplanned incidents"]
+```
+
+### How a Budget Changes Behavior
+
+The magic is what an error budget does to the age-old fight between the team that wants to *ship* and the team that wants *stability*. Instead of a values argument ("move fast!" vs. "be careful!"), it becomes a **data question about the remaining balance** — and that resolves the classic tension the way few things in engineering do:
+
+- **Budget healthy (lots left):** ship aggressively, take risks, run experiments, push deploys. You're being *too* conservative if you're not spending it — unused reliability budget is shipped features you didn't build.
+- **Budget spent (SLO breached):** the calculus flips automatically. Feature work pauses; the team's priority becomes reliability — fix the fragility, add redundancy, improve testing — until the budget refills over the next window.
+
+This is the mechanism famously formalized by Google's SRE practice: the error budget makes "should we ship this risky change?" an objective decision instead of a personality clash. Reliability and velocity stop being enemies and become two sides of one account.
+
+### Burn Rate — Reading the Budget in Real Time
+
+One refinement makes budgets operational: you watch not just *how much* is left but *how fast it's draining* — the **burn rate**. Spending your monthly budget evenly is fine; spending half of it in ten minutes is an emergency in progress. Burn-rate alerts fire on the *slope*, not just the level: "at this rate you'll exhaust the month's budget in 45 minutes" pages someone *now*, while there's still budget left to protect — the same early-warning philosophy the latency doc applied to P99.
+
+> ⚠️ **An unspent error budget is not a trophy — it's a signal.** A team that ends every month at 100% availability isn't winning; it's very likely shipping too slowly and being too cautious. The budget exists to be *spent* on progress. Consistently leaving it untouched means your SLO is probably too lax, or your team is leaving product velocity on the table out of misplaced fear.
+
+### Quick Recap — Error Budgets
+
+- **100% is the wrong target**: impossible, imperceptible to users, and only reachable by freezing all change.
+- The real tradeoff is **availability vs. velocity** — every change risks uptime, but not changing kills the product.
+- **Error budget = 100% − SLO** — pre-approved unreliability, a *currency* to spend on deploys, experiments, and risk.
+- It turns ship-vs-stability from a values fight into a **balance check**: spend freely when healthy, freeze features when exhausted.
+- Watch **burn rate** (the slope) for early warning; a chronically *unspent* budget means you're shipping too cautiously.
+
+---
+
+*(Sections 6–11 continue in subsequent commits.)*
