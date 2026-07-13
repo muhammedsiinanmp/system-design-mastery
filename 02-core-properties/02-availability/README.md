@@ -117,6 +117,8 @@ Expressed as a percentage, it's almost always very close to 100% — so the inte
 
 Read that table slowly, because it reshapes intuition. **99.9% sounds excellent** — and it allows *nearly nine hours of downtime a year*. **99.99%** — one more nine — cuts that to under an hour. **Five nines** ("carrier grade") leaves you **five minutes for the entire year** — which means no human can be in the recovery loop; a single bad deploy or a five-minute cloud blip blows the whole annual budget. Each nine you add cuts allowed downtime by **10×** — a fact Section 8 turns into a statement about *cost*.
 
+These aren't abstract figures — they're the numbers the cloud you build on actually commits to. The major providers publish SLAs right in this range: compute instances are typically promised around **99.99%**, managed storage and databases around **99.9%–99.99%**, with **service credits** (not refunds — §4's SLA teeth) when they miss. When you build on a dependency that promises 99.99%, you've just met the ceiling Section 6 is about: *your* availability can't exceed your dependencies' unless you add redundancy across them.
+
 ```mermaid
 flowchart LR
     N2["99%<br/>3.65 days/yr"] -->|"×10 less downtime"| N3["99.9%<br/>8.8 hrs/yr"]
@@ -534,6 +536,8 @@ The ways "independent" copies secretly fail together:
 - **Correlated load:** a traffic spike or a retry storm (the latency doc's goodput collapse) hits every replica simultaneously; they fall like dominoes.
 
 > ⚠️ **Redundancy protects only against the failures that are actually independent.** Three replicas behind one config service, one database, or one deploy pipeline are *not* three-times-available — they're one component wearing three hats. Before trusting a redundancy story, hunt the shared dependency: "what single thing, if it failed, takes all of these down at once?" That question is the seed of the SPOF topic — and the most valuable one to ask about any "highly available" design.
+
+The industry's largest outages are almost all correlated-failure stories, not "we didn't have enough copies" stories. The recurring pattern in public cloud post-mortems is a *shared control plane* letting go — one region's core networking, DNS, or a central metadata/config service fails, and every "redundant" service depending on it goes down together, often cascading as retries pile on (the latency doc's goodput collapse). Thousands of independently-architected companies discover simultaneously that their redundancy shared a floor. The lesson repeats: **redundancy across things that share a hidden dependency is one component with extra copies of its faces** — real independence means spreading across zones, regions, and sometimes providers, which is expensive and is exactly why §8's nines cost what they do.
 
 ### Blast Radius and the User's-Eye View
 
