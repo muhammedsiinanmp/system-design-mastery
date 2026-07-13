@@ -145,4 +145,104 @@ The right number is set by **what a minute of downtime actually costs** *this* s
 
 ---
 
-*(Sections 3–11 continue in subsequent commits.)*
+## 3. What Counts as Down? — Defining the SLI
+
+Section 2 handed you a formula with a term quietly hiding all the difficulty: *good* requests, or *up*time. Who decides what "good" and "up" mean? This is the hardest and most-skipped question in the whole topic — and getting it wrong makes every nine you report a fiction.
+
+### The Measurement Problem
+
+Imagine your service returns a response in **28 seconds**. Was that request "available"? Technically it succeeded — status 200, correct data. But the user gave up at second 4 and left. Or: a request returns instantly with `200 OK` and a body that says `{"error": "temporarily unavailable"}`. Status code says up; the user got nothing. Or: half your servers are serving fine and half are returning 503 — are you "up"?
+
+There is no universe-given answer. **You have to define it** — and the definition is an engineering decision with real consequences. This is why the industry invented a precise term for "the thing we actually measure":
+
+> **SLI — Service Level Indicator:** a specific, quantitative measurement of one aspect of the service's behavior. It is the *definition of "working"*, made concrete enough to compute.
+
+### Slow Is a Kind of Down
+
+Here the previous document pays off directly. That 28-second response is the bridge: **latency and availability are not separate concerns — past some threshold, slow simply *is* down.** A response nobody waits for is functionally a failure, whatever its status code. So mature availability SLIs almost always fold latency in:
+
+> *"A request is **good** if it returns a non-error status **within 2 seconds**."*
+
+That single sentence quietly unifies the two properties. A request that's correct but takes 30 seconds fails the SLI — counted as unavailable, exactly as the user experienced it. This is why the latency doc insisted you nail down percentiles and thresholds first: **your availability number is built on top of a latency threshold you chose.** Change "2 seconds" to "10 seconds" and your availability improves without a single line of code changing — which should make you suspicious of any availability figure whose latency threshold you don't know.
+
+### Three Common SLI Shapes
+
+Most availability SLIs are one of these, and picking among them is itself a decision:
+
+| SLI type | "Good" means | Best when |
+|---|---|---|
+| **Availability (success rate)** | Non-5xx response | The basic "did it work?" signal |
+| **Latency** | Response within threshold (e.g. P99 < 2s) | Slow = down; user-facing paths |
+| **Quality / correctness** | Full response, not a degraded fallback | You serve partial results under stress (§1's spectrum) |
+
+The third one is subtle and senior: if under load you drop the recommendations panel to keep checkout alive, is that request "good"? Checkout worked — but the user got a lesser experience. Whether you count degraded responses as available is a *product* judgment, and writing it into the SLI forces you to make it on purpose rather than by accident.
+
+### Whose Availability? Request vs System vs Feature
+
+"Available" needs a subject. Three different subjects give three very different numbers from the same incident:
+
+```mermaid
+flowchart TD
+    I["🔥 Checkout is failing<br/>everything else fine"] --> R["Request availability<br/>99.2% (checkout reqs failing)"]
+    I --> F["Feature availability<br/>Checkout: DOWN<br/>Browse: UP"]
+    I --> S["System availability<br/>'up' — most endpoints fine"]
+```
+
+A dashboard reporting **system** availability can show a reassuring 99.95% while your **checkout feature** — the one that makes money — is completely down for an hour. This is why aggregate, system-wide availability is often a *comforting lie*: it averages your critical path together with your health-check endpoint. Senior teams measure availability **per critical user journey** (checkout, login, search), not as one blended site-wide number, because the blend hides exactly the failures that matter most.
+
+> 💡 **Key Insight**
+>
+> Before you can improve availability, you must *define* it — and the definition is where the real decisions hide. What status counts as failure, what latency counts as down, whether degraded counts as up, and *which* user journey you're measuring: change any of those and the number moves without the system changing at all. An availability figure is only as honest as the SLI beneath it.
+
+### Quick Recap — Defining the SLI
+
+- An **SLI** is the concrete, computable *definition of "working"* — you must choose it; the universe won't.
+- **Slow is a kind of down**: good availability SLIs fold in a latency threshold (the latency doc, cashed in).
+- Common SLI shapes: **success rate**, **latency**, and **quality/correctness** (does degraded count as good?).
+- Availability has a **subject** — request vs feature vs system — and system-wide numbers hide dead critical paths. Measure **per user journey**.
+
+---
+
+## 4. SLI · SLO · SLA — The Vocabulary of Promises
+
+You now have the *measurement* (the SLI). Turning a measurement into a managed property takes two more terms — and the three together are the single most useful vocabulary in this document. They form a ladder: **measure → target → promise.**
+
+```mermaid
+flowchart LR
+    SLI["📏 SLI<br/>what we measure<br/>'% of reqs < 2s'"] --> SLO["🎯 SLO<br/>the target<br/>'≥ 99.9% over 28 days'"]
+    SLO --> SLA["📜 SLA<br/>the contract<br/>'≥ 99.5% or you get<br/>a refund'"]
+```
+
+| Term | Full name | What it is | Audience |
+|---|---|---|---|
+| **SLI** | Service Level *Indicator* | The metric — what you actually measure (§3) | Internal (engineers) |
+| **SLO** | Service Level *Objective* | The **target** for that metric — the line between "fine" and "not fine" | Internal (the team's goal) |
+| **SLA** | Service Level *Agreement* | A **contract** with customers, with **consequences** (refunds, credits) if breached | External (legal/commercial) |
+
+### The Distinctions That Matter
+
+**SLI → SLO** is measurement → goal. The SLI says "99.94% of requests were good over the last 28 days"; the SLO says "we promise ourselves ≥ 99.9%." The SLO is the *decision about how good is good enough* — and, as the next section shows, it's the thing that governs how the team behaves day to day.
+
+**SLO → SLA** is goal → contract, and the gap between them is deliberate and important:
+
+> ⚠️ **Your SLA should always be *looser* than your SLO.** You promise customers 99.5% (SLA) while targeting 99.9% internally (SLO). Why the gap? Because the SLA has *teeth* — money changes hands when you miss it — so you build in a safety margin. The SLO is your early-warning line; you want to be alerting and scrambling (SLO breached) *long before* you're paying refunds (SLA breached). A team whose SLA equals its SLO has no margin between "we're worried" and "we owe money."
+
+Two more practical truths:
+
+- **Not everything needs an SLA.** SLAs are commercial instruments — you write them for paying customers who demand guarantees. Internal services and free tiers often have SLOs (targets the team holds itself to) with no SLA at all.
+- **100% is never the target.** No SLO is ever 100%, and no SLA promises it, because 100% is both impossible and — as the next section argues — *undesirable*. This is where availability stops being an aspiration ("stay up!") and becomes a managed budget.
+
+> 💡 **Key Insight**
+>
+> SLI, SLO, SLA are **measure → target → promise**, aimed at three different audiences. The most common mistakes are conflating the target with the contract (leaving no safety margin before penalties) and writing an SLA for something that never needed one. Get the ladder straight and most availability conversations suddenly have precise words to happen in.
+
+### Quick Recap — SLI · SLO · SLA
+
+- **SLI** = the metric you measure; **SLO** = the internal target for it; **SLA** = the external contract with consequences.
+- Keep the **SLA looser than the SLO** — the gap is your safety margin between "worried" and "paying refunds."
+- **Not every service needs an SLA**; many have SLOs only.
+- **No SLO is 100%** — which turns availability from an aspiration into a *budget* (next section).
+
+---
+
+*(Sections 5–11 continue in subsequent commits.)*
