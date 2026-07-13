@@ -430,4 +430,125 @@ The extreme case has a name you'll meet as a full topic soon: a **Single Point o
 
 ---
 
-*(Sections 8–11 continue in subsequent commits.)*
+## 8. The Cost of Nines — Diminishing Returns
+
+Every prior section has hinted at a price. This one names it — and it's the senior-level insight of the topic, the availability analogue to the latency doc's utilization curve: **the relationship between availability and cost is not linear. It's exponential.**
+
+### Each Nine Costs Roughly 10× the Last
+
+Recall from Section 2 that each nine cuts allowed downtime tenfold. The mirror fact is that each nine *costs* roughly tenfold to achieve — because eliminating each successive order of magnitude of downtime requires attacking failure modes the previous level let you ignore:
+
+| Target | What it typically takes |
+|---|---|
+| **99%** | A single well-run server; restart it when it breaks |
+| **99.9%** | Redundancy, load balancing, automated deploys, basic monitoring |
+| **99.99%** | Multi-zone redundancy, fast automated failover, on-call rotation, no single points of failure |
+| **99.999%** | Multi-region active-active, no human in the recovery loop, chaos testing, redundant *everything* — and an org built around reliability |
+
+```mermaid
+flowchart LR
+    A["💵 99%<br/>one good server"] -->|"~10× cost"| B["💵💵 99.9%<br/>redundancy + LB"]
+    B -->|"~10× cost"| C["💵💵💵 99.99%<br/>multi-zone + failover"]
+    C -->|"~10× cost"| D["💵💵💵💵 99.999%<br/>multi-region, no humans"]
+```
+
+The jump from 99% to 99.9% might be a weekend of load-balancer work. The jump from 99.99% to 99.999% can mean a multi-region active-active rebuild and reorganizing the company around reliability — for **~47 fewer minutes of downtime a year**. Whether those 47 minutes are worth a multi-million-dollar program is *exactly* the question, and it has different answers for a stock exchange and a recipe blog.
+
+### The Curve, and Where to Stop
+
+Plot availability against cost and you get a hockey stick — flat and cheap at first, then near-vertical:
+
+```text
+  Cost
+    │                                        ╭─ 99.999%
+    │                                       ╱
+    │                                    ╭─╯
+    │                              ╭─────╯ 99.99%
+    │                    ╭─────────╯
+    │        ╭───────────╯ 99.9%
+    ├────────╯ 99%
+    └──────────────────────────────────────────→ Availability
+```
+
+The engineering skill is knowing **where on this curve to stop** — and the answer comes from the economics, not from ambition:
+
+> **Target availability ≈ the point where the cost of one more nine exceeds the cost of the downtime it prevents.**
+
+Put the two numbers side by side. If an hour of downtime costs you \$1,000 in lost revenue and goodwill, spending \$5M to eliminate 45 minutes a year is deranged. If you're a payment processor losing \$500K per *minute*, five nines is a bargain and you buy more. Same curve, opposite decisions — because the *cost of downtime*, not the beauty of the number, sets the target. This is doc 00's "requirements drive design" and the latency doc's "fast for whom, at what cost" wearing a reliability hat.
+
+> 💡 **Key Insight**
+>
+> Availability is bought in exponentially expensive increments, so "as available as possible" is never the right answer — "**as available as the downtime cost justifies**" is. The mature move is to *deliberately* pick a target lower than the maximum achievable, because the money saved buys more user value spent elsewhere (features, latency, new products). Choosing *not* to chase another nine is a sign of engineering judgment, not of cutting corners.
+
+### Availability Trades Against the Other Properties
+
+Nines don't just cost money — they're spent against the other yardsticks in this phase, and naming the trades keeps you honest:
+
+- **Availability vs. consistency:** during a network partition you must often choose — stay available and risk serving stale/divergent data, or stay consistent and refuse to answer. This is the **CAP theorem** (Group 5), and it's coming as its own deep topic. You cannot have both when the network splits.
+- **Availability vs. latency:** redundancy across distant regions adds availability but also adds network distance (the latency doc's speed-of-light tax) — the copy that survives a regional outage is farther from some users.
+- **Availability vs. cost/simplicity:** every nine adds moving parts, and moving parts are their own failure sources. Past a point, complexity added in the name of availability starts *reducing* it.
+
+### Quick Recap — The Cost of Nines
+
+- Each nine cuts downtime 10× and **costs ~10× more** — availability vs. cost is an exponential curve.
+- **Stop where the next nine costs more than the downtime it prevents** — set the target by the *cost of downtime*, not by ambition.
+- Deliberately choosing a *lower* target to spend the savings elsewhere is **good judgment**, not corner-cutting.
+- Availability **trades against** consistency (CAP), latency (distant redundancy), and simplicity (complexity as its own risk).
+
+---
+
+## 9. Production Reasoning — Windows, Correlation, and Blast Radius
+
+You have the concepts. This section is how practitioners avoid fooling themselves with them — because availability, even more than latency, is a number that lies when you're not careful.
+
+### The Measurement Window Changes Everything
+
+An availability number is meaningless without the window it's computed over, and *which* window you pick can flatter or damn the same system:
+
+- **Rolling vs. calendar:** a rolling 28-day window (today minus 28 days, recomputed continuously) is honest — it can't hide a bad patch behind a calendar boundary. A "per calendar month" window resets on the 1st, so an outage spanning month-end gets *split* across two budgets and looks smaller in each.
+- **Long windows launder outages.** A single catastrophic 8-hour outage violates a 99.9% *monthly* SLO outright, but against a *yearly* window it's diluted by eleven good months to a survivable-looking figure. The same incident, "99.98% for the year" or "SLO breached in March," depending only on the window. Attackers of your dashboard — including your honest self — should always ask *over what window?* first.
+
+### Planned vs. Unplanned Downtime
+
+Not all downtime is equal, and how you count planned maintenance is a real decision. Maintenance windows announced in advance, at low-traffic hours, hurt users far less than a surprise 3 p.m. outage — and many SLAs explicitly *exclude* announced maintenance. But beware the trap: excluding "planned" downtime too generously lets a team keep a green dashboard while users still can't use the system. If a user can't check out, they do not care that the outage was on your calendar. The honest SLI counts what the *user* experienced; the SLA may carve out negotiated exceptions.
+
+### Correlated Failure — The Independence Lie
+
+Section 7 warned that the parallel-availability math assumes independent failures. In production, **independence is the exception, not the rule** — and correlated failure is where most "but we had redundancy!" outages are born:
+
+```mermaid
+flowchart TD
+    subgraph Shared["Hidden shared dependencies = correlation"]
+        C["⚙️ One config service"] --> S1["Replica 1"]
+        C --> S2["Replica 2"]
+        C --> S3["Replica 3"]
+    end
+    C -.->|"config service dies"| X["💥 ALL replicas fail together<br/>redundancy = 0"]
+```
+
+The ways "independent" copies secretly fail together:
+
+- **Shared infrastructure:** same rack, power, network switch, availability zone, or cloud region.
+- **Shared dependencies:** all replicas hit the same database, config service, DNS, or auth provider — that shared thing is the real SPOF.
+- **Shared code and deploys:** the same bad deploy or poisoned config rolls out to *all* replicas at once. Your redundancy is perfect against hardware failure and useless against a bad `git push` — which is why progressive/canary rollouts exist.
+- **Correlated load:** a traffic spike or a retry storm (the latency doc's goodput collapse) hits every replica simultaneously; they fall like dominoes.
+
+> ⚠️ **Redundancy protects only against the failures that are actually independent.** Three replicas behind one config service, one database, or one deploy pipeline are *not* three-times-available — they're one component wearing three hats. Before trusting a redundancy story, hunt the shared dependency: "what single thing, if it failed, takes all of these down at once?" That question is the seed of the SPOF topic — and the most valuable one to ask about any "highly available" design.
+
+### Blast Radius and the User's-Eye View
+
+Two final production instincts:
+
+- **Blast radius** — when something fails, *how much* fails with it? A design where one bad shard degrades 5% of users is dramatically healthier than one where any failure is total. Limiting blast radius (bulkheads, cells, sharding — later phases) means failures degrade the system (§1's spectrum) instead of dropping it. Availability engineering is often less about *preventing* failure than about *containing* it.
+- **Component vs. user-perceived availability** — the number that ultimately matters is the one measured at the user's eyeballs, end to end, including their network, DNS, CDN, and client. Every internal component can report green while users still can't log in. Instrument the **real user journey** (synthetic probes, real-user monitoring), not just the pieces you find easy to measure.
+
+### Quick Recap — Production Reasoning
+
+- Always ask **"over what window?"** — long/calendar windows launder outages that a rolling 28-day window exposes.
+- Distinguish **planned vs. unplanned** downtime, but count what the *user* felt — don't let "planned" carve-outs green-wash real pain.
+- **Correlated failure** (shared infra, dependencies, deploys, load) breaks the independence the redundancy math assumes — hunt the shared SPOF.
+- Engineer the **blast radius** (contain failures into the §1 spectrum) and measure **user-perceived**, end-to-end availability, not just green components.
+
+---
+
+*(Sections 10–11 continue in subsequent commits.)*
