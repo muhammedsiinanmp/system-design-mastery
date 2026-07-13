@@ -551,4 +551,101 @@ Two final production instincts:
 
 ---
 
-*(Sections 10–11 continue in subsequent commits.)*
+## 10. Putting It All Together — Brimble Sets an SLO
+
+Meet **Brimble** again — the e-commerce site that survived a flash sale in the latency document. That was a *performance* fire drill. This is a slower, more deliberate exercise: Brimble has never had a real availability target, incidents are handled by vibes and heroics, and the business wants to sell an "enterprise" plan whose customers will demand an SLA. You're asked to put availability on an engineering footing. Walk it like a pro, one section per tool.
+
+### Step 1 — Define "Down" Before Measuring (§1, §3)
+
+The first meeting isn't about servers; it's about *definitions*. "Is Brimble up?" is refused as a question. Instead: **which user journeys matter, and what counts as good for each?** The team lands on three critical journeys and writes an SLI for each — folding in latency, because a checkout that takes 30 seconds is down (the latency doc, cashed in):
+
+- **Checkout** (the money path): *good* = completes with a non-error response in < 3s.
+- **Browse/search:** *good* = returns results in < 1s.
+- **Homepage:** *good* = loads in < 2s.
+
+Crucially they measure these **per journey**, not as one blended site-wide number — so a checkout outage can never hide behind a healthy homepage (§3's comforting lie).
+
+### Step 2 — Pick Targets by the Cost of Downtime (§2, §8)
+
+Not every journey deserves the same nines. The team sizes each target by *what an hour down actually costs* (§8), refusing the temptation to slap five nines on everything:
+
+| Journey | SLO | Why |
+|---|---|---|
+| **Checkout** | 99.95% | Directly loses money and trust when down — but five nines isn't worth a multi-region rebuild yet |
+| **Browse** | 99.9% | Important, but a brief blip is survivable |
+| **Homepage** | 99.9% | Front door; degraded is acceptable |
+
+Checkout's 99.95% ≈ **22 minutes** of allowed downtime a month — the error budget the rest of the plan spends against.
+
+### Step 3 — Do the Series Math, and Recoil (§6)
+
+Now the sobering part. The team maps checkout's *actual* dependency chain and multiplies (§6):
+
+```mermaid
+flowchart LR
+    U["👤"] --> LB["LB<br/>99.99%"] --> API["API<br/>99.95%"] --> Cart["Cart<br/>99.95%"] --> Inv["Inventory<br/>99.9%"] --> Pay["Payments<br/>99.9%"]
+```
+
+```text
+0.9999 × 0.9995 × 0.9995 × 0.999 × 0.999  ≈  0.9969  →  99.69%
+```
+
+Checkout's real availability is **99.69%** — *below* the 99.95% target, before a single extra feature is added. The chain is weaker than its weakest link, exactly as §6 warned. Two offenders stand out: the single load balancer (a **SPOF**, §7) and the third-party **payments** provider at 99.9%, sitting right on the critical path.
+
+### Step 4 — Buy Back Availability with Parallel (§7)
+
+The team applies §6's parallel escape and §7's mechanics, targeting the weak links rather than gold-plating everything:
+
+- **Load balancer SPOF → redundant LBs** across two zones with fast failover: 99.99% → ~99.999%, and the single-point-of-failure is gone.
+- **Payments SPOF → a second payment provider** as failover. Two 99.9% providers in parallel: 1 − (0.001 × 0.001) ≈ **99.9999%** — the payments hop essentially stops being a risk.
+- **Inventory** gets a read replica so a primary blip degrades to read-only (§1's spectrum) instead of failing checkout.
+
+Re-running the multiplication with the weak links hardened lifts checkout above the 99.95% target — *with margin*. Note the judgment: they spent redundancy money on the two worst links, not uniformly (§8's diminishing returns).
+
+### Step 5 — Turn the Budget into Behavior (§5)
+
+With checkout at ~99.96% measured, the ~22-minute monthly error budget becomes the team's operating currency (§5). They wire it into how they work: **budget healthy → ship features and risky deploys freely; budget burning fast → a burn-rate alert pages on-call; budget exhausted → checkout feature-freeze until it refills.** The perennial ship-vs-stability argument is now a balance check, not a shouting match.
+
+### Step 6 — Set the SLA Looser, and Watch Honestly (§4, §9)
+
+For the new enterprise plan, Brimble promises customers **99.9%** checkout availability (SLA) while targeting **99.95%** internally (SLO) — the deliberate gap (§4) so alerts fire well before refunds do. And they instrument it honestly (§9): a **rolling 28-day** window (no calendar-boundary laundering), measured at the **user's eyeballs** with synthetic checkout probes from multiple regions, and a standing question in every design review — *"what single shared thing takes all of this down at once?"* (§9's correlated-failure hunt).
+
+### The Payoff — An Outage That Isn't a Crisis
+
+Two months later, the **primary payment provider has a two-hour regional outage.** In the old world, that's checkout down for two hours and the enterprise deal dead. Now: failover to the second provider kicks in within seconds (§7), checkout stays up, the error budget takes a small, survivable dent, and the SLA is never breached. The incident is a footnote in a channel, not an all-hands fire. **Nothing exotic saved them** — just definitions chosen on purpose, math done honestly, redundancy placed where it paid, and a budget that turned reliability into a daily decision.
+
+---
+
+## 11. Final Recap
+
+| Concept | Core Insight | Biggest Tradeoff |
+|---|---|---|
+| **Availability** | Can the user do the thing, when they ask? Measured from *their* side, not the server's | Being "there" is distinct from being correct (reliability) |
+| **Up as a Spectrum** | Systems degrade, they don't just die — there's a wide middle | Instrumenting only up/down blinds you to where incidents live |
+| **The Nines** | Each nine cuts allowed downtime 10× (99.9% ≈ 8.8 hrs/yr) | Each nine also costs ~10× more |
+| **SLI** | The *definition of working* — you must choose it (status, latency, quality) | Move the threshold and the number moves without the system changing |
+| **SLO / SLA** | Internal target vs external contract with consequences | SLA must stay looser than SLO, or there's no margin before penalties |
+| **Error Budget** | 100% − SLO = pre-approved unreliability to *spend* on velocity | The real fight is availability vs. shipping speed |
+| **Series Math** | Dependencies *multiply* — a chain is weaker than its weakest link (30 × 99.9% ≈ 97%) | Every critical-path hop drags availability down |
+| **Parallel Math** | Redundant copies multiply *failures* away — nines get cheap (2 × 99% ≈ 99.99%) | Only works when failures are independent |
+| **Failover** | Redundancy needs a fast, *tested* switch | Failover time is itself downtime; untested failover is a hope |
+| **Cost of Nines** | Availability vs. cost is exponential — stop where the next nine costs more than the downtime it prevents | Chasing unneeded nines is expensive over-engineering |
+| **Correlated Failure** | Shared infra/deps/deploys make "independent" copies fail together | Your redundancy is only as real as your independence |
+
+### The One Thing to Remember
+
+> **Availability isn't "is it up?" — it's a *ratio*, over a *window*, against a *definition of working you chose*, spent as a *budget*. Series dependencies multiply availability *down* (a chain is weaker than its weakest link); parallel redundancy multiplies failure *away* — but only as far as failures are independent and failover is tested. And 100% is never the target: pick the nines the cost of downtime justifies, then spend the rest on progress.**
+
+---
+
+## What's Next
+
+> **Topic 3 — Reliability**
+
+You can now reason about whether a system is **there**. The next property asks a sharper question that availability alone can't answer:
+
+> **When it *is* there and answers — does it do the *right thing*?**
+
+A system can be beautifully available and deeply unreliable: it responds to every request, on time, with the *wrong* answer — a double-charged card, a lost write, a corrupted order. Availability counts the response; **reliability** asks whether the response was *correct*, and whether it stays correct over time and under failure. You've already brushed against the boundary — the SLI's "quality/correctness" flavor (§3), the degraded-but-answering states (§1) — and Reliability is where that boundary becomes the whole subject, pulling in Group 5's fault-tolerance thread. The yardsticks keep sharpening.
+
+---
