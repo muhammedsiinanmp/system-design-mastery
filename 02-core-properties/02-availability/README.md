@@ -304,4 +304,130 @@ One refinement makes budgets operational: you watch not just *how much* is left 
 
 ---
 
-*(Sections 6–11 continue in subsequent commits.)*
+## 6. The Math of Availability — Serial vs Parallel
+
+Time for the result that reorganizes how you see every architecture diagram. Availability *composes* — the availability of a whole system is a function of its parts' availabilities — and it composes in two opposite directions depending on whether parts are arranged **in series** or **in parallel.** This is the mathematical heart of the topic.
+
+### Series — Dependencies Multiply (and It's Brutal)
+
+When a request must pass through several components and **every one must work**, they're in *series*. The system works only if component A **and** B **and** C all work — and probabilities of independent "and" conditions **multiply**:
+
+```text
+A_total = A_1 × A_2 × A_3 × … × A_n
+```
+
+Multiplying numbers below 1 always gives something *smaller than any of them.* A chain is **less available than its weakest link** — and far less available than intuition expects. Watch how fast it decays even with excellent parts:
+
+```mermaid
+flowchart LR
+    U["👤"] --> LB["LB<br/>99.99%"] --> API["API<br/>99.95%"] --> Auth["Auth<br/>99.95%"] --> DB["DB<br/>99.9%"] --> Pay["Payments<br/>99.9%"]
+```
+
+| Services in series (each 99.9%) | Combined availability | Downtime / year |
+|---|---|---|
+| 1 | 99.9% | ~8.8 hrs |
+| 5 | 99.5% | ~1.8 days |
+| 10 | 99.0% | ~3.6 days |
+| 30 | 97.0% | ~11 days |
+| 50 | 95.1% | ~18 days |
+
+Thirty "three-nines" services in a chain produce a **97%** system — barely two nines. This is one of the most important and least intuitive facts in system design, and it explains a defining pain of microservices (Group 6): decomposing a monolith into 30 services means a single user request may now traverse 30 independently-failing hops, and their availabilities *multiply downward*. **You cannot build a highly-available system by chaining many mediocre parts** — the math forbids it.
+
+> ⚠️ **Every dependency you add to the critical path drags total availability *down*, multiplicatively.** Before adding a synchronous call to another service into a request, ask: does this belong on the critical path at all? Each hop there spends availability you can't easily get back. This is a core reason to push non-essential work *off* the request path and into async processing (Group 6) — work that isn't in the chain can't lower the chain's availability.
+
+### Parallel — Redundancy Multiplies the *Failures*
+
+Now the opposite arrangement — and the only escape from the series problem. When you run **redundant copies** and the system works if **any one** of them works, they're in *parallel*. Here it's easier to reason about *failure*: the system is down only if **all** copies are down simultaneously, and those failure probabilities multiply:
+
+```text
+Unavailability_total = (1 − A) ^ n
+A_total = 1 − (1 − A) ^ n
+```
+
+Because unavailabilities are small numbers below 1, multiplying them makes them *tiny* — redundancy adds nines fast:
+
+| Redundant copies (each 99%) | Combined availability | Downtime / year |
+|---|---|---|
+| 1 | 99% | ~3.65 days |
+| 2 | 99.99% | ~53 min |
+| 3 | 99.9999% | ~32 s |
+
+Two 99% components in parallel yield **99.99%** — the same jump that costs a fortune to buy inside a single component (Section 8) comes almost free from a second cheap copy. This is *why* redundancy is the universal availability tool: series drags you down, parallel lifts you back up, and real systems are a constant interplay of both.
+
+```mermaid
+flowchart TD
+    U["👤 Request"] --> LB["⚖️ Load balancer"]
+    LB --> S1["Server A · 99%"]
+    LB --> S2["Server B · 99%"]
+    LB --> S3["Server C · 99%"]
+    S1 & S2 & S3 --> R["System up if ANY works<br/>→ 99.9999%"]
+```
+
+> 💡 **Key Insight**
+>
+> Availability composes in two directions: **series multiplies availabilities** (every dependency drags the total *down* — a chain is weaker than its weakest link), while **parallel multiplies failure probabilities** (every redundant copy lifts the total *up*, fast). Reading any architecture, your eye should now split it instinctually into "what's in series here (risk stacking up) and what's in parallel (risk cancelling out)?"
+
+### Quick Recap — Serial vs Parallel
+
+- **Series (all must work):** availabilities *multiply* → total is **below the weakest link**; 30 × 99.9% ≈ 97%.
+- Every **critical-path dependency** lowers availability multiplicatively — keep non-essential work off the request path.
+- **Parallel (any can work):** *unavailabilities* multiply → redundancy adds nines cheaply; 2 × 99% ≈ 99.99%.
+- Real systems interleave both — train your eye to see which parts stack risk and which cancel it.
+
+---
+
+## 7. Redundancy and Failover — Buying Nines
+
+Section 6 proved *that* parallelism buys availability. This section is the *mechanism* — how redundancy actually works in practice, and the costs the clean math hides. (True to the Phase 02 charter, this is the intuition, not a build guide — the deep mechanics live in the Scaling and Distributed Systems phases.)
+
+### Redundancy Needs a Switch
+
+A spare copy is useless unless traffic can actually move to it when the primary dies. Redundancy therefore always has two parts: **replicas** (the spare capacity) and **failover** (the mechanism that detects failure and redirects). The two dominant arrangements:
+
+| Model | How it works | Tradeoff |
+|---|---|---|
+| **Active–Passive** (standby) | One live node serves; a standby waits, ready to take over | Simpler, but the standby is idle capacity you pay for and rarely test |
+| **Active–Active** | All nodes serve traffic simultaneously; losing one just sheds load onto the rest | Full use of capacity + instant failover, but harder — state, balancing, consistency |
+
+```mermaid
+flowchart LR
+    subgraph AP["Active–Passive"]
+        LB1["LB"] --> P1["🟢 Active"]
+        LB1 -. "on failure" .-> S1["⚪ Standby"]
+    end
+    subgraph AA["Active–Active"]
+        LB2["LB"] --> A1["🟢 Node 1"]
+        LB2 --> A2["🟢 Node 2"]
+        LB2 --> A3["🟢 Node 3"]
+    end
+```
+
+### Failover Time Is Its Own Downtime
+
+Here's what Section 6's tidy formula quietly ignored: **failover is not instant.** Between the primary failing and the replica serving, there's a gap — detect the failure (health checks must notice), promote the standby, reroute traffic, warm caches and connection pools (cold-start, from the latency doc). That gap is *real downtime*, and it caps the availability redundancy can actually deliver:
+
+- Failover in **milliseconds** (active-active behind a load balancer): the math nearly holds.
+- Failover in **minutes** (detect + promote a database replica): you've *reduced* downtime, not eliminated it — and if failover is flaky or needs a human, your real availability is far below what the parallel formula promised.
+
+> ⚠️ **Untested failover is not redundancy — it's a hope.** The standby that has never actually taken traffic, the replica promotion nobody has rehearsed, the "automatic" failover that silently broke three deploys ago — these routinely fail at the exact moment they're needed, turning your paper 99.99% into a real outage. This is why teams practice failure on purpose (chaos engineering, from Group 5): the only redundancy that counts is the kind you've *watched* work.
+
+### The Ceiling: Correlated Failure and SPOF
+
+The parallel formula assumes failures are **independent** — that's what lets you multiply them. Reality rarely cooperates, and this is the crack that Section 9 widens: two servers in the *same rack* share a power supply; two replicas in the *same datacenter* share a network and a cooling system; two services sharing *one config system* fail together when it does. When copies fail *together*, the `(1−A)ⁿ` math evaporates — you weren't running `n` independent copies, you were running one copy with `n` faces.
+
+The extreme case has a name you'll meet as a full topic soon: a **Single Point of Failure (SPOF)** — a single component with no redundancy whose failure takes the whole system down, no matter how much redundancy surrounds it. The load balancer in front of your beautifully redundant server fleet, if there's only one of it, is a SPOF that caps the entire system at *its* availability. Finding and eliminating SPOFs is Topic 5 of this phase; for now, note that **redundancy only helps where failures are genuinely independent** — and making them independent (spreading across racks, zones, regions, providers) is most of the actual work.
+
+> 💡 **Key Insight**
+>
+> Redundancy buys nines only to the degree that failures are *independent* and failover is *fast and tested*. The clean `1−(1−A)ⁿ` is an **upper bound** you approach but never reach — eroded by failover time, correlated failure, and the SPOFs hiding in shared infrastructure. Diminishing returns set in hard: going from one copy to two is transformative; from three to four often buys almost nothing, because by then correlated failure, not lack of copies, is your real ceiling.
+
+### Quick Recap — Redundancy and Failover
+
+- Redundancy = **replicas + failover**; the switch matters as much as the spare.
+- **Active-passive** (simple, idle standby) vs **active-active** (efficient, instant failover, harder).
+- **Failover time is downtime** — a slow, flaky, or human-in-the-loop switch undercuts the parallel-availability math.
+- The formula assumes **independent** failures; **correlated failure** and **SPOFs** (shared racks/zones/configs) are the real ceiling — and the reason returns diminish fast past two copies.
+
+---
+
+*(Sections 8–11 continue in subsequent commits.)*
