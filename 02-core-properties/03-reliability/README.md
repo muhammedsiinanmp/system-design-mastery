@@ -243,4 +243,60 @@ This persistence axis is quietly crucial for the *next* topics: **retries are th
 
 ---
 
-*(Sections 5–11 continue in subsequent commits.)*
+## 5. Why Systems Really Fail
+
+Ask a beginner what threatens reliability and you'll hear "hardware failure — a server dies, a disk crashes." That instinct is decades out of date, and correcting it reshapes where you spend your reliability effort. To design against failure, you first have to know *where failure actually comes from* — and the real distribution is deeply counterintuitive.
+
+### It's (Mostly) Not the Hardware
+
+Modern datacenters *assume* hardware fails and route around it automatically — redundant disks, power, and network are standard. Hardware failure is real but largely *solved* as a surprise. The failures that actually take down modern systems come from somewhere else:
+
+```mermaid
+flowchart TD
+    F["💥 What actually causes outages"] --> S["🐛 Software bugs<br/>& bad deploys"]
+    F --> C["⚙️ Config changes<br/>(the #1 culprit)"]
+    F --> H["🧑 Human / operational<br/>error"]
+    F --> D["🔗 Dependency<br/>failures"]
+    F --> HW["🔌 Hardware<br/>(smallest slice)"]
+```
+
+Study after study and public post-mortem points the same way: the dominant causes of large outages are **software changes, configuration changes, and human/operational error** — not spontaneous hardware death. The single most common trigger in practice is a **change** the team made itself: a deploy, a config push, a migration, a scaling operation. The system was fine; someone changed it, and the change was the fault.
+
+This flips the naive mental model on its head:
+
+> ⚠️ **The biggest threat to a running system is usually *you deploying to it*.** Most outages don't strike out of a clear sky — they're triggered by an intentional change. This is exactly why the Availability doc's error budget (§5) governs *deploy velocity*, why progressive/canary rollouts exist, and why "have you changed anything recently?" is the first question in every incident. Reliability is dominated by how you *manage change*, not by hardware quality.
+
+### Failures Compound — Cascades and Correlation
+
+The other reason production failures are worse than intuition expects: they don't stay contained. Two amplifiers turn a small fault into a large failure — both of which you met in earlier docs, now converging:
+
+- **Cascading failure:** one component's failure *overloads* the others. A service dies → its callers retry → the retries (the latency doc's goodput collapse) hammer the recovering service and its dependencies → they fall too. Failure propagates *along the dependency graph* like dominoes. The initial fault was small; the blast was systemic.
+- **Correlated failure:** the "independent" copies you counted on (the Availability doc's §9) fail *together* because they shared something hidden — a config service, a deploy pipeline, an availability zone. Your redundancy silently evaporates at the worst moment.
+
+```mermaid
+flowchart LR
+    A["Service A<br/>slows down"] --> B["Callers retry<br/>+ pile up"]
+    B --> C["Retry storm<br/>overloads B & C"]
+    C --> D["💥 Whole path down<br/>(cascade)"]
+```
+
+Put together: the typical serious outage is a *change* that activates a latent *fault*, which produces *errors* that *cascade* across *correlated* components faster than a human can react. Every word in that sentence is from this phase — and it's why reliability is a systems property, not a component one.
+
+### The Long Tail of Failure Modes
+
+A final humbling truth: systems fail in ways nobody predicted. The failures you designed for are handled; the ones that hurt are the *unanticipated* combinations — a rare input meeting a full disk meeting a slow dependency meeting a retry loop. You cannot enumerate them all in advance. This is *why* the operational practices in §9 exist — chaos engineering, observability, blameless postmortems — because if you can't predict every failure mode, you must instead get very good at *detecting and recovering* from the ones you didn't (back to MTTR, §3).
+
+> 💡 **Key Insight**
+>
+> Design your reliability effort against the failures that *actually happen* — changes, config, humans, dependencies, and cascades — not the Hollywood image of a server bursting into flames. The highest-leverage reliability investments are usually **safe deployment (canary, rollback), change management, dependency isolation, and fast detection** — not more redundant hardware. You're defending against your own next deploy far more than against entropy.
+
+### Quick Recap — Why Systems Really Fail
+
+- The dominant causes of outages are **software bugs, config changes, and human/operational error** — *not* hardware, which datacenters already route around.
+- The most common trigger is a **change you made** — a deploy, config push, or migration — which is why error budgets govern deploy velocity.
+- Small faults become large failures via **cascades** (retry storms overloading neighbors) and **correlated failure** (hidden shared dependencies).
+- Failures come from an unpredictable **long tail** — so invest in *detecting and recovering* (MTTR), not just predicting.
+
+---
+
+*(Sections 6–11 continue in subsequent commits.)*
