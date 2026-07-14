@@ -299,4 +299,108 @@ A final humbling truth: systems fail in ways nobody predicted. The failures you 
 
 ---
 
-*(Sections 6–11 continue in subsequent commits.)*
+## 6. Designing for Reliability — Redundancy, Isolation, Recovery
+
+Now the constructive turn. Given that faults are inevitable (§4) and mostly come from change and cascades (§5), how do you build a system that stays *right* anyway? Nearly every reliability technique falls into **three families**, each attacking a different part of the problem. True to the Phase 02 charter, this is the *strategy* — the mechanisms themselves (how a circuit breaker or bulkhead actually works) live in Group 5 and the deep-dive phases.
+
+```mermaid
+flowchart TD
+    G["🛡️ Designing for reliability"] --> R["1 · Redundancy<br/>no single point of failure"]
+    G --> I["2 · Isolation<br/>contain the blast radius"]
+    G --> Rec["3 · Recovery<br/>heal fast (low MTTR)"]
+```
+
+### Family 1 — Redundancy: Remove Single Points of Failure
+
+The first line of defense, straight from the Availability doc's parallel math (§6–7): run more than one of everything so no *single* component's failure takes the system down. Redundant servers, replicated data, multiple availability zones. The reliability framing adds a sharpened question — the one that becomes Topic 5 of this phase:
+
+> **"What single thing, if it failed right now, would break the system?"** That's a **Single Point of Failure (SPOF)**, and finding/eliminating them is the core of redundancy work.
+
+The Availability doc's warning carries straight over: redundancy only helps against *independent* failures. Redundancy is necessary but not sufficient — it handles the "a part died" fault beautifully and does *nothing* for a bad deploy that poisons every replica at once (§5). Which is why you need the other two families.
+
+### Family 2 — Isolation: Contain the Blast Radius
+
+If you can't prevent every failure, prevent it from *spreading*. Isolation limits how much breaks when something does — turning a total outage into a partial, survivable one (the Availability doc's failure spectrum, §1). The key patterns (mechanisms detailed later):
+
+| Pattern | Idea | Contains |
+|---|---|---|
+| **Bulkheads** | Partition resources so one workload can't consume them all (named after a ship's watertight compartments) | One flooded compartment doesn't sink the ship |
+| **Circuit breakers** | Stop calling a failing dependency after N failures; fail fast instead of piling on | Cascading failure (§5) — breaks the retry-storm loop |
+| **Cells / shards** | Split users across independent slices of the system | A failure hits one cell → a fraction of users, not all |
+| **Timeouts** | Cap how long you wait on anything (the latency doc's W) | One slow dependency stalling all your threads |
+
+The unifying idea: **failure is a fluid that spreads unless you build walls.** Isolation is how you make failures *partial by design*, so the blast radius is a slice instead of the whole.
+
+### Family 3 — Recovery: Heal Fast (Attack MTTR)
+
+Since failure is certain (§3), the third family accepts breakage and optimizes *getting back to correct* — directly lowering MTTR:
+
+- **Automatic failover** — traffic reroutes to a healthy replica without a human (fast MTTR).
+- **Retries with backoff** — for *transient* faults only (§4); backoff + jitter avoids the retry storm.
+- **Self-healing** — health checks kill and replace sick instances automatically (restart the crashed process, reschedule the dead container).
+- **Rollback** — the fastest recovery from a bad deploy (the #1 cause, §5) is often *undo the deploy*, not debug it live.
+
+> 💡 **Key Insight**
+>
+> Reliability is not one trick — it's three complementary bets: **redundancy** (so a part failing isn't the *system* failing), **isolation** (so a failure stays *small*), and **recovery** (so a failure stays *brief*). Redundancy alone is the beginner's answer and it's incomplete — it's useless against the change-induced, cascading, correlated failures that actually dominate (§5). A system is reliable when all three are present: no SPOF, contained blast radius, and fast healing.
+
+### Quick Recap — Designing for Reliability
+
+- **Redundancy** removes SPOFs — necessary but only handles *independent* part failures; useless against a bad deploy hitting every replica.
+- **Isolation** (bulkheads, circuit breakers, cells, timeouts) contains the **blast radius** — failure becomes partial by design.
+- **Recovery** (failover, backoff retries, self-healing, rollback) attacks **MTTR** — accept failure, get back to correct fast.
+- A reliable system uses **all three**; the mechanisms themselves are Group 5 / deep-dive territory.
+
+---
+
+## 7. Failure Modes and Graceful Degradation
+
+Redundancy, isolation, and recovery decide *whether* you survive a fault. This section is about *how you behave in the moment of failure itself* — because when something breaks, the system does *something*, and choosing that something deliberately is a core reliability decision. A system that fails in a *safe, predictable* way is far more reliable than one that fails unpredictably, even if they fail equally often.
+
+### How to Fail — Choosing a Failure Mode
+
+When a component can't do its job, it has a choice of posture. The three classic ones, and they are genuinely different decisions:
+
+| Failure mode | Behavior on failure | Right when… |
+|---|---|---|
+| **Fail-fast** | Stop immediately, return a clear error | A wrong answer is dangerous — better to error visibly than proceed on bad state |
+| **Fail-safe** | Fall back to a safe default and keep going | A sensible default exists — serve stale/cached data, hide the broken widget |
+| **Fail-silent** | Fail *without* corrupting or emitting garbage — go quiet, don't crash neighbors | You'd rather lose a feature than propagate a fault |
+
+The one to *avoid* is the unnamed fourth: **fail-ugly** — corrupting data, returning plausible-but-wrong answers (the Byzantine fault, §4), or crashing in a way that takes down neighbors. The entire point of choosing a failure mode is to never fail that way.
+
+> ⚠️ **The worst failure is a *silent, plausible-looking* wrong answer.** A loud error gets noticed and fixed; a component that quietly returns wrong-but-believable data (a stale price, a mis-summed total) corrupts everything downstream while every dashboard stays green. When in doubt, **fail loud and safe, not quiet and wrong** — a visible error is a reliability *feature*, not a bug.
+
+### Graceful Degradation — Using the Spectrum
+
+Here the Availability doc's most important idea (§1: "up" is a spectrum, not a binary) pays off fully. Because failure has a middle, a well-designed system responds to a broken part by **degrading, not collapsing** — shedding function to protect its core:
+
+```mermaid
+flowchart TD
+    N["🟢 All features healthy"] -->|"recommendations service dies"| D1["🟡 Hide recommendations,<br/>checkout still works"]
+    D1 -->|"inventory DB read-replica lag"| D2["🟠 Show 'stock unknown',<br/>still let people buy"]
+    D2 -->|"payment provider down"| D3["🟠 Queue order,<br/>'we'll confirm shortly'"]
+    D3 -->|"total collapse (avoid!)"| F["🔴 Everything 500s"]
+```
+
+The design skill is deciding, *in advance*, the **priority order in which features shed** — what's essential (checkout) versus what's sacrificial (recommendations, reviews, related items). Under stress, the system sheds the sacrificial to protect the essential. This is the reliability twin of the latency doc's flash-sale move (drop the recommendations panel to protect checkout) — same instinct, now generalized: **a reliable system knows what to sacrifice.**
+
+Two supporting techniques worth naming:
+
+- **Load shedding:** when overloaded, deliberately reject *some* requests early (fail-fast) so the rest succeed — better to cleanly serve 90% than to collapse and serve 0% (the latency doc's utilization cliff).
+- **Default responses:** when the real answer is unavailable, a sensible fallback (cached data, a generic recommendation, a conservative estimate) keeps the user moving instead of blocking on an error.
+
+> 💡 **Key Insight**
+>
+> Failure is not binary, so your *response* to failure shouldn't be either. The reliability question is never just "will it fail?" but "**how** will it fail, and **what will it sacrifice** to protect what matters?" Design the failure modes and the shed-order deliberately — a system that degrades gracefully under partial failure is dramatically more reliable *in the ways users feel* than one that's either perfect or dead.
+
+### Quick Recap — Failure Modes and Degradation
+
+- Choose a **failure mode** on purpose: **fail-fast** (error clearly), **fail-safe** (safe default), **fail-silent** (go quiet, don't corrupt) — never **fail-ugly** (wrong-but-plausible).
+- **Fail loud and safe, not quiet and wrong** — a visible error is a feature; a silent wrong answer is the worst outcome.
+- **Graceful degradation** uses the availability spectrum: shed sacrificial features to protect essential ones; decide the shed-order *in advance*.
+- **Load shedding** and **default responses** keep the core alive under stress — serve most, cleanly, rather than all, catastrophically.
+
+---
+
+*(Sections 8–11 continue in subsequent commits.)*
