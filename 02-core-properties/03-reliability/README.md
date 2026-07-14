@@ -508,4 +508,83 @@ The practice that makes reliability *improve* over time. After every incident, a
 
 ---
 
-*(Sections 10–11 continue in subsequent commits.)*
+## 10. Putting It All Together — Brimble's Double-Charge
+
+Back to **Brimble**. In the Availability document, its story was a triumph: a second payment provider let checkout *survive* a two-hour outage of the primary. Availability: saved. But that very save planted a reliability bug — and this is the incident where it detonates. Watch every concept in this document appear in one real-feeling failure.
+
+### The Incident
+
+Three weeks after the failover was deployed, support tickets spike: **customers are being charged twice.** The site is flawlessly available — 100% uptime, fast responses, every dashboard green. And it is quietly corrupting people's bank statements. This is §1's nightmare exactly: **available but unreliable**, the silent-killer quadrant of §2.
+
+### Tracing the Chain (§4, §8)
+
+The on-call engineer walks the fault → error → failure chain (§4):
+
+- **The fault (dormant):** the checkout → payment call was **not idempotent** (§8). It said "charge \$50," not "charge \$50 *for order #123, once*." Harmless for weeks — a latent defect waiting.
+- **The activation (partial failure, §8):** under load, the primary provider gets slow. Brimble's **timeout** (its isolation, §6) fires and it **retries** against the second provider. But the first charge had *already succeeded* — only its *response* was lost in the slowness. Classic partial failure: silence meant "done," not "not done."
+- **The error → failure:** the retry charges a second time. The error (a duplicate charge in the ledger) propagates straight to the user as a failure (two line items on their statement). The very failover that bought *availability* cost *reliability*, because a fault-tolerance mechanism (retry) met a non-idempotent operation — the trap of §2, sprung.
+
+```mermaid
+flowchart LR
+    F["🌱 Fault<br/>non-idempotent<br/>charge"] --> A["⚡ Retry after<br/>lost response<br/>(partial failure)"]
+    A --> Fa["💥 Failure<br/>customer charged<br/>twice"]
+```
+
+### Detect, Recover, Measure (§3, §9)
+
+Because availability monitoring was green, **detection came from customers, not systems** — the worst way, and a direct hit on MTTR (§3): detection time was *days*. The team's first move is recovery, not root-cause: a **fail-safe** stopgap (§7) — pause the automatic payment retry (accept slightly lower availability to stop the correctness bleed) — then reconcile and refund the duplicate charges. Note the deliberate trade: they spend availability to buy back reliability, because a wrong charge is worse than a slow checkout (§1's "available but wrong is worse than down").
+
+### The Real Fix — Idempotency (§8)
+
+The permanent fix is the cornerstone of §8: attach an **idempotency key** to every payment — `charge for order #123`. The payment path now records processed order IDs; a retry of an already-charged order returns the *original* result instead of charging again. Retries become *safe*, so Brimble regains the failover's availability **without** the double-charge — **at-least-once retry + idempotent processing = effectively-once** (§8). The availability win and the reliability guarantee finally coexist.
+
+### Hardening — All Three Families + Operations (§6, §9)
+
+The blameless postmortem (§9 — *what allowed this*, not *who retried*) turns one incident into permanent gains across every family:
+
+| Fix | Family / practice |
+|---|---|
+| Idempotency keys on all mutating operations | Correctness under retry (§8) |
+| A **reconciliation job** that flags duplicate charges within minutes | Observability → MTTR (§3, §9) — never let *customers* be the detector again |
+| Alert on business metrics ("charge-to-order ratio > 1"), not just uptime | Detect *reliability* failure, not just availability (§2) |
+| A **chaos drill** that kills the primary provider in staging to prove the fix | Rehearse failure (§9); verify failover is reliable, not hopeful |
+
+### The Payoff
+
+A month later, the primary provider blips again. Failover fires; some orders get retried against the backup; **every duplicate is silently absorbed by the idempotency keys.** The reconciliation job reports a clean charge-to-order ratio. Checkout stayed *available* (the Availability doc's win) **and** every customer was charged exactly once (this document's win). The two properties, once in conflict, now hold together — because the team learned to ask not just "did it respond?" but "**did it do the right thing?**"
+
+---
+
+## 11. Final Recap
+
+| Concept | Core Insight | Biggest Tradeoff |
+|---|---|---|
+| **Reliability** | Doing the *right thing*, over time, under failure — "can I *trust* it?", not "is it up?" | Correctness costs more than mere uptime to build and verify |
+| **vs Availability** | Availability counts responses; reliability *judges* them — available-but-wrong is the silent killer | Green dashboards hide correctness failures |
+| **Fault Tolerance** | The *mechanism*; reliability is the *outcome* it buys | A mechanism (retry) can help availability and wreck reliability |
+| **MTBF / MTTR** | Availability = MTBF / (MTBF + MTTR) — fail rarely *or* recover fast | At scale, low **MTTR** beats high MTBF — failure is inevitable |
+| **Fault → Error → Failure** | Reliability = breaking the chain before it reaches the user | You stop *propagation*, not the existence of faults |
+| **Why systems fail** | Mostly change, config, and humans — *not* hardware | Your biggest threat is your own next deploy |
+| **Redundancy / Isolation / Recovery** | Three bets: no SPOF · contain blast radius · heal fast | Redundancy alone is incomplete against cascades and bad deploys |
+| **Failure modes** | Fail fast/safe/silent — never fail-ugly (wrong-but-plausible) | Fail loud+safe may sacrifice a feature to protect correctness |
+| **Graceful degradation** | Shed sacrificial features to protect essential ones | Requires deciding the shed-order in advance |
+| **Idempotency** | Same effect however many times applied — makes retries safe | Requires designing operations (keys, set-not-add) deliberately |
+| **Operations** | Most reliability is *operated*, not architected — observe, rehearse, postmortem blamelessly | Reliability is a discipline you practice, not a feature you ship |
+
+### The One Thing to Remember
+
+> **Availability asks "did it respond?" — reliability asks "did it do the *right thing*, and will it keep doing so when parts fail?" You can't prevent faults, so reliability is breaking the fault→error→failure chain before users see it: remove single points of failure, contain the blast radius, recover fast, and make operations idempotent so retries are safe. And remember where the nines actually come from — not from perfect hardware, but from how you deploy, observe, and learn from failure.**
+
+---
+
+## What's Next
+
+> **Topic 4 — Scalability**
+
+You can now reason about a system being *there* (availability) and being *right* (reliability). The next property adds the dimension that breaks both as a system grows:
+
+> **Does it stay fast *and* correct *and* available as load increases — and where does growth actually hurt?**
+
+Everything you've learned gets harder under scale. Reliability is easy with ten users and brutal with ten million — more components mean more faults, more partial failures, more cascades, more correlated blast radius. **Scalability** is the property of holding latency, availability, *and* reliability steady while demand multiplies — and it's where the flash-sale spikes of the latency doc, the redundancy math of the availability doc, and the idempotency of this one all get stress-tested at once. The yardsticks are about to meet their real adversary: growth.
+
+---
