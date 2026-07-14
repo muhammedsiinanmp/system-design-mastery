@@ -132,4 +132,115 @@ One more cousin worth placing: **durability** — once the system says data is s
 
 ---
 
-*(Sections 3–11 continue in subsequent commits.)*
+## 3. Measuring Reliability — MTBF, MTTR, Failure Rate
+
+You cannot manage what you cannot measure, and the Availability doc already gave you one lens: SLIs and error budgets apply to reliability too (define "correct," measure the fraction of correct outcomes, budget the rest). But reliability has its own classic pair of metrics, and they reveal something the availability ratio hides: **it's not just how *often* you fail, but how *fast* you recover.**
+
+### The Two Numbers
+
+> **MTBF — Mean Time Between Failures:** on average, how long the system runs correctly before something breaks. *Higher is better* (failures are rare).
+>
+> **MTTR — Mean Time To Recovery:** on average, how long it takes to detect, diagnose, and restore service once something breaks. *Lower is better* (you bounce back fast).
+
+```mermaid
+flowchart LR
+    F1["💥 fail"] -->|"⟵ MTBF: running fine ⟶"| F2["💥 fail"]
+    F2 -->|"MTTR:<br/>down"| U["🟢 recovered"]
+    U -->|"⟵ MTBF ⟶"| F3["💥 fail"]
+```
+
+Here's the equation that ties this entire topic back to the previous one — availability *falls out of* these two reliability numbers:
+
+```text
+              MTBF
+Availability = ───────────────
+              MTBF + MTTR
+```
+
+Read what that says. Availability — the nines you spent all of the last document on — is just *the fraction of time you're between failures rather than recovering from one*. You can reach the same availability two completely different ways: **fail rarely** (huge MTBF) or **recover instantly** (tiny MTTR). A system that fails once a year and takes 8 hours to fix, and a system that fails weekly but self-heals in seconds, can post the *same* availability number — while being very different systems to operate and trust.
+
+### Why MTTR Often Matters More Than MTBF
+
+The instinct is to chase MTBF — *prevent* all failures. But at scale, with thousands of components and other people's dependencies, **failure is not preventable; it's a certainty.** The mature shift is to stop trying to make failures impossible and start making them *survivable and brief*:
+
+- **Chasing MTBF** (never fail) hits a wall — you cannot out-engineer entropy, bad deploys, and dependency outages. Each additional nine of "never fails" costs exponentially (the Availability doc's §8 curve).
+- **Chasing low MTTR** (recover fast) is often cheaper and more achievable — good monitoring (detect fast), clear runbooks (diagnose fast), automated rollback and failover (restore fast). Halving MTTR improves availability exactly as much as doubling MTBF, and is usually the better investment.
+
+> 💡 **Key Insight**
+>
+> Since failure is inevitable at scale, **reliability engineering is less about preventing failures than about surviving them quickly.** MTTR is the more actionable lever: you can't guarantee nothing breaks, but you *can* guarantee you notice in seconds and recover in minutes. "Fail rarely" and "recover instantly" buy the same availability — but only one of them is fully in your control.
+
+> ⚠️ **A great MTBF can hide a terrible MTTR — and vice versa.** "We hardly ever go down" sounds wonderful until the once-a-year outage lasts nine hours because nobody has practiced recovery. Measure *both*: rare-but-catastrophic and frequent-but-trivial are different reliability profiles that a single availability number blends into an indistinguishable blur.
+
+### Quick Recap — Measuring Reliability
+
+- **MTBF** (time between failures, higher better) and **MTTR** (time to recover, lower better) are the classic reliability metrics.
+- **Availability = MTBF / (MTBF + MTTR)** — the nines are just the fraction of time you're *not* recovering.
+- The same availability is reachable by **failing rarely** *or* **recovering fast** — very different systems.
+- At scale, failure is inevitable, so **MTTR is usually the more actionable lever** — make failures brief, not impossible.
+
+---
+
+## 4. Faults, Errors, Failures — The Precise Vocabulary
+
+Engineers use "fault," "error," and "failure" interchangeably in casual talk. In reliability they are three *distinct* things in a causal chain, and the distinction is not pedantry — it's the entire strategy, because you can intervene at each stage to stop a small problem becoming a user-visible disaster.
+
+### The Chain
+
+```mermaid
+flowchart LR
+    Fa["🌱 Fault<br/>a flaw / defect<br/>(dormant)"] -->|"gets activated"| Er["⚡ Error<br/>wrong internal state"]
+    Er -->|"propagates<br/>unchecked"| Fai["💥 Failure<br/>user-visible<br/>wrong behavior"]
+```
+
+| Term | What it is | Example |
+|---|---|---|
+| **Fault** | The underlying *defect* or flaw — may lie dormant | A null-pointer bug; a disk with a bad sector; a mistyped config value |
+| **Error** | The fault *activated* — the system is now in a wrong internal state | The code path hits the bug and computes a wrong value in memory |
+| **Failure** | The error *reaches the user* — observable wrong behavior | The customer sees a wrong balance, or gets double-charged |
+
+The critical realization: **a fault does not have to become a failure.** The chain can be *broken* at every arrow, and that's precisely where reliability engineering happens:
+
+- **Prevent the fault:** testing, code review, type systems, config validation — stop the defect existing.
+- **Stop fault → error:** redundancy means a faulty component's activation doesn't corrupt state (a healthy replica serves instead).
+- **Stop error → failure:** error detection, validation, checksums, and graceful handling catch the wrong state *before* the user sees it — return a safe fallback instead of a wrong answer.
+
+A reliable system is not one with no faults (impossible). It's one that **stops faults from propagating into failures.**
+
+### A Taxonomy of Faults
+
+Faults aren't all alike, and the *kind* determines the defense. Two axes matter.
+
+**By behavior** — how the component misbehaves (in rough order of nastiness):
+
+| Fault type | The component… | Why it matters |
+|---|---|---|
+| **Crash** | …stops entirely (fail-stop) | The *easiest* to handle — it's obviously gone; detect and fail over |
+| **Omission** | …drops some requests/responses silently | Harder — it looks alive but loses things |
+| **Timing** | …responds too slowly (or too fast) | Slow = down (the latency doc) — a timing fault becomes an availability one |
+| **Byzantine** | …behaves arbitrarily/inconsistently — wrong answers, lies, different answers to different observers | The *hardest* — the component is actively confusing; needs voting/quorums |
+
+> A "crash" fault is a gift compared to a Byzantine one: a dead node is easy to route around, but a node returning *plausible wrong answers* can poison the whole system before anyone suspects it. Much of distributed-systems theory (consensus, quorums — later phases) exists to tolerate the Byzantine end of this spectrum.
+
+**By persistence** — how it behaves over time:
+
+- **Transient:** happens once and vanishes (a dropped packet, a blip). A *retry* fixes it — this is what retries are *for*.
+- **Intermittent:** flickers unpredictably (a loose connection, a race condition under load). The maddening kind — hard to reproduce, hard to catch.
+- **Permanent:** stays until fixed (a dead disk, a logic bug). No amount of retrying helps; you must repair or replace.
+
+This persistence axis is quietly crucial for the *next* topics: **retries are the right medicine for transient faults and exactly the wrong one for permanent faults.** Blindly retrying a permanent fault just hammers a broken thing (and can cause the retry storms the latency doc warned about). Knowing *which* kind you face determines whether "try again" helps or harms.
+
+> 💡 **Key Insight**
+>
+> Reliability is the art of **breaking the fault → error → failure chain before it reaches the user.** You will never eliminate faults; you *can* stop them propagating. Every reliability technique — redundancy, validation, retries, circuit breakers, graceful degradation — is really a claim about *which arrow it breaks* and *which kind of fault it's meant for*. Match the defense to the fault, or the defense becomes the next fault.
+
+### Quick Recap — Faults, Errors, Failures
+
+- **Fault** (dormant defect) → **error** (activated, wrong internal state) → **failure** (user sees wrong behavior) — a causal chain.
+- Reliability = **breaking that chain** at any arrow; a reliable system has faults but stops them becoming failures.
+- Fault *behaviors*: crash (easiest) → omission → timing → **Byzantine** (hardest, needs quorums).
+- Fault *persistence*: **transient** (retry helps) · **intermittent** (maddening) · **permanent** (retry harms — repair needed). Match the defense to the fault.
+
+---
+
+*(Sections 5–11 continue in subsequent commits.)*
