@@ -260,7 +260,7 @@ flowchart TD
     F --> HW["🔌 Hardware<br/>(smallest slice)"]
 ```
 
-Study after study and public post-mortem points the same way: the dominant causes of large outages are **software changes, configuration changes, and human/operational error** — not spontaneous hardware death. The single most common trigger in practice is a **change** the team made itself: a deploy, a config push, a migration, a scaling operation. The system was fine; someone changed it, and the change was the fault.
+Study after study and public post-mortem points the same way: the dominant causes of large outages are **software changes, configuration changes, and human/operational error** — not spontaneous hardware death. The single most common trigger in practice is a **change** the team made itself: a deploy, a config push, a migration, a scaling operation. The system was fine; someone changed it, and the change was the fault. The pattern is remarkably consistent across the industry's public incident reports — the largest cloud and platform outages of recent years trace overwhelmingly to a bad configuration push or a routine change gone wrong, cascading through systems that were otherwise healthy, rather than to hardware failing.
 
 This flips the naive mental model on its head:
 
@@ -437,7 +437,7 @@ This single property dissolves the partial-failure dilemma. If your operations a
 
 How it's achieved in practice (mechanism detail is later phases; the *idea* is essential now):
 
-- **Idempotency keys:** the client attaches a unique ID to the operation (`charge #abc-123`). The server records processed IDs and, on a duplicate, returns the *original* result instead of doing the work again. Every serious payments API works this way — for exactly the double-charge reason above.
+- **Idempotency keys:** the client attaches a unique ID to the operation (`charge #abc-123`). The server records processed IDs and, on a duplicate, returns the *original* result instead of doing the work again. Every serious payments API works this way — Stripe, PayPal, and the like expose an explicit `Idempotency-Key` header for exactly the double-charge reason above; it is not an optional nicety but the load-bearing mechanism that lets a client safely retry a payment it isn't sure went through.
 - **Naturally idempotent design:** prefer operations that are safe by nature — "set balance to \$50" (idempotent) over "add \$50" (not). "Ensure this row exists" over "insert a row."
 
 ### The "Exactly-Once" Illusion
