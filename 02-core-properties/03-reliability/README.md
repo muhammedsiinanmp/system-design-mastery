@@ -403,4 +403,109 @@ Two supporting techniques worth naming:
 
 ---
 
-*(Sections 8–11 continue in subsequent commits.)*
+## 8. Reliability in Distributed Systems — Partial Failure and Idempotency
+
+Everything so far applies to any system. This section is where reliability gets genuinely *hard* — the distributed case Group 5 introduced, where the failure modes are strange and the most important reliability tool in all of backend engineering lives. If you remember one *technique* from this document, make it this one.
+
+### The Root Difficulty — Partial Failure
+
+On a single machine, operations mostly succeed or fail cleanly. Across a network, a third outcome appears and ruins everything: **you don't know.** You send a request; you get no response. What happened?
+
+```mermaid
+flowchart TD
+    C["📤 Client sends<br/>'charge $50'"] --> Q{"⏳ No response.<br/>What happened?"}
+    Q --> A["😀 Request lost<br/>(never charged)"]
+    Q --> B["😱 Response lost<br/>(charged! you just<br/>don't know it)"]
+    Q --> D["🐢 Just slow<br/>(charging right now)"]
+```
+
+This is **partial failure**, and its cruelty is the *ambiguity*: a lost request and a lost *response* look identical to the sender — silence — but they mean opposite things (nothing happened vs. it happened and you don't know). The Availability doc's Brimble failover lived exactly here: when the payment provider seemed unresponsive and Brimble failed over, *had the first provider already charged the card?*
+
+### The Naive Fix Makes It Worse
+
+The obvious response to "no response" is **retry** — and for the *transient* faults of §4, retrying is correct and is what keeps distributed systems working. But retry collides head-on with partial failure:
+
+> If the original request *did* succeed but its response was lost, retrying **does the thing twice.** Charge the card twice. Ship the order twice. Apply the credit twice.
+
+This is the precise mechanism by which a *fault-tolerance* technique (retry, which raises availability) *destroys reliability* (correctness) — the exact trap §2 warned about. Availability said "get a successful response"; the retry got one — by charging the customer a second time. You cannot have reliable distributed operations by retrying naively. You need the operations themselves to be safe to repeat.
+
+### Idempotency — The Cornerstone
+
+> **Idempotency:** an operation is *idempotent* if performing it multiple times has the **same effect as performing it once.** Retry it ten times — the outcome is identical to one time.
+
+This single property dissolves the partial-failure dilemma. If your operations are idempotent, "I don't know if it succeeded, so I'll retry" becomes *safe* — worst case, you harmlessly repeat something already done. Idempotency is what makes retries (and therefore fault tolerance in distributed systems) compatible with correctness.
+
+How it's achieved in practice (mechanism detail is later phases; the *idea* is essential now):
+
+- **Idempotency keys:** the client attaches a unique ID to the operation (`charge #abc-123`). The server records processed IDs and, on a duplicate, returns the *original* result instead of doing the work again. Every serious payments API works this way — for exactly the double-charge reason above.
+- **Naturally idempotent design:** prefer operations that are safe by nature — "set balance to \$50" (idempotent) over "add \$50" (not). "Ensure this row exists" over "insert a row."
+
+### The "Exactly-Once" Illusion
+
+A myth worth killing directly, because it clarifies the whole area. True **exactly-once delivery** across an unreliable network is effectively impossible — you cannot guarantee a message is delivered once and only once when any packet can vanish. What real systems build instead is:
+
+```text
+at-least-once delivery  +  idempotent processing  ≈  effectively-once
+       (keep retrying             (duplicates are           (correct end state,
+        until acked)               harmless)                 the goal you wanted)
+```
+
+You *retry until you're sure it arrived* (at-least-once, which may cause duplicates), and you make duplicates *harmless* (idempotency). The combination gives you the correctness people *mean* when they say "exactly once" — without the impossible delivery guarantee. This is one of the most important patterns in all of distributed systems, and it rests entirely on idempotency.
+
+> 💡 **Key Insight**
+>
+> In a distributed system, **"did it work?" is often unanswerable — so build operations whose answer doesn't matter.** Idempotency is that property: it makes retrying safe, which makes at-least-once delivery correct, which gives you effectively-once behavior over an unreliable network. Chase "exactly-once delivery" and you chase a ghost; build "idempotent + retry" and you get the reliability you actually wanted.
+
+### Quick Recap — Distributed Reliability
+
+- **Partial failure** adds a third outcome — *"you don't know"* — where a lost request and a lost response look identical but mean opposite things.
+- **Naive retries** collide with partial failure: if the original succeeded but its response was lost, retrying **does the thing twice** (double-charge) — a mechanism that raises availability while destroying reliability.
+- **Idempotency** (same effect however many times applied) makes retries safe — via **idempotency keys** or naturally-idempotent operations.
+- **Exactly-once delivery is a myth**; real systems use **at-least-once + idempotent = effectively-once**.
+
+---
+
+## 9. The Human and Operational Side
+
+A final, humbling truth that ties the topic together: **most reliability does not come from your architecture. It comes from how you operate.** §5 already showed that most failures are changes, config, and human error — which means most reliability *gains* live in the same place: process, not code. A beautifully redundant system operated carelessly is unreliable; a modest system operated with discipline can be remarkably solid.
+
+### Reliability Is Mostly Operations
+
+The highest-leverage reliability work is often unglamorous and entirely operational:
+
+| Practice | Reliability payoff | Ties to |
+|---|---|---|
+| **Safe deployments** (canary, blue-green, gradual rollout, instant rollback) | Defuses the #1 cause of outages — bad changes (§5) | Error budgets (Availability §5) |
+| **Observability** (metrics, logs, traces, alerts) | You can't recover what you can't *see* — cuts detection time, the biggest MTTR component | MTTR (§3) |
+| **Runbooks & practiced on-call** | Diagnose and act fast under pressure instead of improvising | MTTR (§3) |
+| **Chaos engineering** | Inject failure *on purpose* to find weaknesses before they find you | The long tail (§5); tests failover is real (Availability §7) |
+| **Change management** (review, staging, feature flags) | Catch faults before they reach production | Break fault→failure (§4) |
+
+### Observability: You Can't Fix What You Can't See
+
+Worth isolating because it's the multiplier on everything else. Recall MTTR = detect + diagnose + repair (§3). In real incidents, **detection and diagnosis usually dominate** — the fix is often quick *once you understand it*; the hours are lost figuring out *what* broke and *why*. Observability attacks exactly that: good metrics tell you *something's* wrong fast, good traces tell you *where*, good logs tell you *why*. A system you can see into has a low MTTR almost automatically; a black box, however well-built, does not — because every incident starts with a scramble to understand it.
+
+### Chaos Engineering: Rehearse Failure
+
+The Availability doc warned that untested failover is just a hope (§7). Chaos engineering is the discipline of removing the hope: deliberately inject failures into production-like (or production) systems — kill instances, add latency, sever dependencies — to *verify* the redundancy, isolation, and recovery you designed actually work, and to surface long-tail failure modes (§5) while you're watching, rather than at 3 a.m. You only truly know a system is reliable when you've *watched* it survive failure.
+
+### Blameless Postmortems: Reliability Compounds
+
+The practice that makes reliability *improve* over time. After every incident, a **blameless postmortem** asks *what in the system and process* allowed this — not *who to blame*. The distinction is not soft-heartedness; it's cold engineering pragmatism:
+
+> ⚠️ **Blame makes systems *less* reliable.** Punish people for incidents and they hide problems, avoid touching fragile areas, and stop reporting near-misses — starving you of exactly the information reliability improvement runs on. A blameless culture treats each failure as a *free lesson the system paid for*, turning incidents into permanent fixes. Reliability is a compounding process, and blame is what breaks the compounding.
+
+> 💡 **Key Insight**
+>
+> You cannot architect your way to reliability and stop there. The system that stays reliable is the one that's *operated* well — deployed safely, observed deeply, rehearsed against failure, and improved after every incident without blame. Reliability is less a property you *build* than a discipline you *practice*: most of the nines live in the operations, not the diagram.
+
+### Quick Recap — The Human and Operational Side
+
+- Most failures — and most reliability *gains* — are **operational**: deploys, config, process, people.
+- **Safe deployment** (canary/rollback) defuses the #1 outage cause; **observability** slashes MTTR by cutting detect+diagnose time.
+- **Chaos engineering** verifies your redundancy/recovery actually work and surfaces long-tail modes on your terms.
+- **Blameless postmortems** make reliability *compound*; blame makes systems less reliable by hiding problems.
+
+---
+
+*(Sections 10–11 continue in subsequent commits.)*
