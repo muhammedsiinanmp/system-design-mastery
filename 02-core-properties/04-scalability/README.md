@@ -138,4 +138,99 @@ The lesson isn't about social feeds; it's that **the dimension that kills you is
 
 ---
 
-*(Sections 3–11 continue in subsequent commits.)*
+## 3. Scalability vs Performance vs Capacity
+
+Three words travel together and blur constantly: performance, capacity, scalability. Pulling them apart sharpens exactly what you're asking when a system is "under strain," and stops the classic error of trying to fix a *scalability* problem with a *performance* tweak.
+
+| Term | The question | Snapshot or slope? |
+|---|---|---|
+| **Performance** | How well does it behave *right now, at the current load*? (latency, throughput) | A **snapshot** at one point |
+| **Capacity** | How much load can it handle *before it breaks*, as currently built? | A **single point** — the ceiling |
+| **Scalability** | How do performance and cost **change as load grows** and you add resources? | The **slope** — the whole curve |
+
+The relationship: **performance is a point, capacity is the edge of the cliff, and scalability is the shape of the road toward it — and whether you can build more road.** You can improve performance (make each request faster) without improving scalability (the system still hits a wall at the same relative point). And you can improve scalability (add the ability to grow) without improving raw performance (each request is no faster — there are just more lanes).
+
+### The Two Scaling Questions
+
+"Does it scale?" actually hides two distinct questions, and confusing them causes real design mistakes:
+
+```mermaid
+flowchart TD
+    Q["'Does it scale?'"] --> A["① Load fixed, add resources:<br/>does performance improve?<br/><i>(can I throw money at latency?)</i>"]
+    Q --> B["② Load grows + resources grow together:<br/>does performance HOLD?<br/><i>(can I serve 10× users<br/>at the same speed?)</i>"]
+```
+
+- **Question 1 — Speedup:** hold the work fixed, add resources — does it get *faster*? (Give the batch job 10× machines; does it finish in 1/10 the time?) This is where Amdahl's Law (§5) rules.
+- **Question 2 — Scale-out:** grow the load *and* the resources together — does performance *stay constant*? (10× users on 10× servers — same latency, or worse?) This is the question production systems actually live or die by.
+
+A system can ace one and fail the other. The distinction matters because the *answer* tells you what kind of scaling you can even do — and §5 shows why both questions have hard mathematical ceilings.
+
+> 💡 **Key Insight**
+>
+> **Performance is a snapshot; scalability is the derivative.** Making something faster (performance) and making something *grow-able* (scalability) are different investments with different techniques — and one does not imply the other. When a system struggles under growth, the first diagnostic move is to ask which you actually lack: is each request too slow (performance), or does adding resources fail to help (scalability)? They have opposite fixes — exactly like the latency-vs-throughput split, one level up.
+
+### Quick Recap — Scalability vs Performance vs Capacity
+
+- **Performance** = behavior now (a snapshot); **capacity** = the breaking point (a single ceiling); **scalability** = how both change with growth (the slope).
+- You can raise performance without raising scalability, and vice versa — they're different investments.
+- "Does it scale?" splits into **speedup** (fixed work + more resources → faster?) and **scale-out** (more load + more resources → performance holds?).
+- Diagnose which you lack before fixing — slow-request (performance) and won't-grow (scalability) have opposite cures.
+
+---
+
+## 4. Vertical vs Horizontal Scaling
+
+There are exactly two ways to add resources, and they define the entire vocabulary of scaling. This section is about *what they are and their tradeoffs* — the intuition. The *mechanics* of doing them (load balancers, orchestration, sharding) belong to Group 4 and the Scaling & Performance phase; here we're naming the two roads and where each one ends.
+
+```mermaid
+flowchart LR
+    subgraph V["⬆️ Vertical — scale UP"]
+        direction TB
+        V1["🖥️ one server"] --> V2["🖥️💪 one BIGGER server<br/>(more CPU/RAM)"]
+    end
+    subgraph H["➡️ Horizontal — scale OUT"]
+        direction TB
+        H1["🖥️ one server"] --> H2["🖥️🖥️🖥️🖥️<br/>many servers"]
+    end
+```
+
+### Scale Up vs Scale Out
+
+> **Vertical scaling (scale up):** make the machine *bigger* — more CPU, RAM, faster disk. One beefier box.
+>
+> **Horizontal scaling (scale out):** add *more* machines — many boxes sharing the load.
+
+They could not be more different in character, and the tradeoffs decide most architectures:
+
+| | **Vertical (scale up)** | **Horizontal (scale out)** |
+|---|---|---|
+| **How** | Bigger box | More boxes |
+| **Simplicity** | ✅ Simple — no code changes, no distribution | ❌ Complex — needs distribution, coordination |
+| **Ceiling** | ❌ **Hard limit** — biggest machine that exists | ✅ Effectively unbounded — keep adding nodes |
+| **Failure** | ❌ The one big box is a **SPOF** (Topic 5) | ✅ One node dies, others carry on (Availability doc) |
+| **Cost curve** | Super-linear — top-end hardware costs a *premium* per unit | Roughly linear — commodity boxes |
+
+### Why Real Scale Is Horizontal — and Why It Costs You
+
+Vertical scaling is the *tempting* first move: it's simple, requires no architectural change, and for a long time is the right call (don't distribute before you must). But it has a **hard ceiling** — there is a biggest machine money can buy, and once you're on it, growth stops dead. It's also a single point of failure (Topic 5, next) and priced at a premium.
+
+Horizontal scaling is the path to *real* scale — its ceiling is effectively unlimited, and it doubles as fault tolerance (the redundancy of the Availability doc). But it imports a tax you'll spend the rest of the curriculum learning to pay:
+
+> ⚠️ **Scaling out turns your program into a distributed system — and everything gets harder.** The moment "add another machine" is your growth strategy, you inherit Group 5's entire world: partial failure, network unreliability, coordination, and consistency. Data must be split or replicated; requests must be balanced; nodes must agree. Horizontal scaling doesn't *remove* the scaling problem — it *trades* a hardware ceiling for a coordination cost. The next section is the mathematics of exactly that cost.
+
+The senior framing: **vertical scaling buys you time; horizontal scaling buys you a future — at the price of distributed-systems complexity.** Most real systems do both: scale up until it's uneconomical or hits the SPOF/ceiling problem, then scale out. Knowing *when* to switch is a judgment call the later phases equip you for.
+
+> 💡 **Key Insight**
+>
+> The two scaling directions aren't just "bigger" vs "more" — they're a choice between a **simplicity-with-a-ceiling** and an **unbounded-ceiling-with-complexity.** Vertical is a better *starting* answer than beginners think (simplicity has real value); horizontal is the only *ending* answer for large scale — and its true cost isn't the extra machines, it's the distributed-systems tax stamped onto everything you build afterward.
+
+### Quick Recap — Vertical vs Horizontal
+
+- **Vertical (up):** bigger box — simple, no code changes, but a **hard ceiling**, a SPOF, and premium cost.
+- **Horizontal (out):** more boxes — effectively unbounded and fault-tolerant, but imports **distributed-systems complexity**.
+- Real scale is **horizontal**; its real price is not hardware but the **coordination tax** (partial failure, consistency, balancing).
+- Most systems scale **up first, then out** — the skill is knowing when the ceiling/SPOF forces the switch.
+
+---
+
+*(Sections 5–11 continue in subsequent commits.)*
