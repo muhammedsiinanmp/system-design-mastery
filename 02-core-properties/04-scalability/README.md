@@ -123,7 +123,7 @@ flowchart TD
     F --> W["💥 50M writes from 1 write<br/>— a hidden load dimension"]
 ```
 
-The lesson isn't about social feeds; it's that **the dimension that kills you is usually the one you weren't measuring.** Real scalability analysis starts by *enumerating* the load parameters and asking which are growing and how fast — a direct application of the estimation discipline from *What Is System Design?* (§4).
+The lesson isn't about social feeds; it's that **the dimension that kills you is usually the one you weren't measuring.** This exact fan-out problem is why real platforms maintain two entirely different delivery strategies — pushing a post into followers' feeds on write versus assembling the feed on read — and switch between them based on a poster's follower count, precisely because the "followers per poster" dimension spans six orders of magnitude. Real scalability analysis starts by *enumerating* the load parameters and asking which are growing and how fast — a direct application of the estimation discipline from *What Is System Design?* (§4).
 
 > 💡 **Key Insight**
 >
@@ -256,7 +256,7 @@ The consequence is brutal and counterintuitive. Suppose 95% of your work paralle
 Max speedup = 1 / (1 − 0.95) = 1 / 0.05 = 20×
 ```
 
-With *infinite* machines, a 95%-parallel workload can go at most **20× faster.** The 5% serial part becomes the entire wall. Add this table to your intuition:
+With *infinite* machines, a 95%-parallel workload can go at most **20× faster.** The 5% serial part becomes the entire wall. This is not a dusty 1960s result, either — it is the same reason a modern many-core CPU or a thousand-node data cluster delivers a small fraction of its theoretical throughput: the un-parallelizable slice dominates once you throw enough workers at it. Add this table to your intuition:
 
 | Serial fraction | Max speedup (∞ workers) |
 |---|---|

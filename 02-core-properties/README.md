@@ -29,7 +29,7 @@ documents pick up threads planted there and assume its vocabulary.
 | 1 | [Latency vs Throughput](01-latency-vs-throughput/README.md) | How fast is one request — and how much can the system handle? Two different questions with opposite cures |
 | 2 | [Availability](02-availability/README.md) | Is the system there at all? The "nines", what counts as down, and what each extra nine costs |
 | 3 | [Reliability](03-reliability/README.md) | Does it do the *right thing* over time — and how is that different from merely being up? |
-| 4 | Scalability *(coming)* | Does it stay fast and correct as load grows — and where does growth actually hurt? |
+| 4 | [Scalability](04-scalability/README.md) | Does it stay fast and correct as load grows — and where does growth actually hurt? |
 | 5 | Single Point of Failure (SPOF) *(coming)* | Which single component takes everything down with it — and how do you find it before it finds you? |
 
 ---
