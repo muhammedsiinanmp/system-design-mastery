@@ -233,4 +233,73 @@ The senior framing: **vertical scaling buys you time; horizontal scaling buys yo
 
 ---
 
-*(Sections 5–11 continue in subsequent commits.)*
+## 5. The Limits of Scaling — Amdahl and the USL
+
+Here is the senior-level heart of the topic — the scalability analogue to the latency doc's utilization curve. Beginners imagine scaling out is linear: 10 machines do 10× the work, 100 do 100×, forever. **It never works that way**, and two laws explain exactly why. Understanding them is the difference between promising your boss "we'll just add servers" and knowing where that promise breaks.
+
+### Amdahl's Law — The Serial Fraction Caps You
+
+Almost no workload is *fully* parallelizable. Some fraction of it is inherently **serial** — it must happen in sequence, on one worker, no matter how many you add. Coordinating, merging results, a shared step everything waits on. Amdahl's Law says that serial fraction sets a hard ceiling on speedup:
+
+```text
+                    1
+Speedup(N) = ─────────────────────
+             (1 − p) + (p / N)
+
+  p = the parallelizable fraction     N = number of workers
+  (1 − p) = the stubborn serial fraction
+```
+
+The consequence is brutal and counterintuitive. Suppose 95% of your work parallelizes (p = 0.95) — sounds great. Take N to infinity — infinite machines:
+
+```text
+Max speedup = 1 / (1 − 0.95) = 1 / 0.05 = 20×
+```
+
+With *infinite* machines, a 95%-parallel workload can go at most **20× faster.** The 5% serial part becomes the entire wall. Add this table to your intuition:
+
+| Serial fraction | Max speedup (∞ workers) |
+|---|---|
+| 1% serial | 100× |
+| 5% serial | 20× |
+| 10% serial | 10× |
+| 25% serial | 4× |
+
+```mermaid
+flowchart LR
+    N1["1 worker"] --> N2["speedup climbs…"]
+    N2 --> N3["…then flattens HARD<br/>at 1/(1−p)"]
+    N3 --> W["🧱 the serial fraction<br/>is the ceiling"]
+```
+
+> The lesson: **the serial fraction, not the machine count, is your ceiling.** Beyond a point, adding workers does essentially nothing — you're paying for hardware that sits waiting on the one part that can't parallelize. To scale further you must *shrink the serial fraction* (remove the shared step, the global lock, the coordination point) — which is exactly the hard architectural work scaling really is.
+
+### The Universal Scalability Law — It Can Get *Worse*
+
+Amdahl says extra workers stop *helping*. Reality is often nastier: extra workers start actively *hurting*. The **Universal Scalability Law (USL)** adds a second penalty Amdahl ignores — **coherence**: the cost of workers *coordinating with each other*. Every node that joins must sometimes synchronize, share state, or agree with the others — and that cross-talk grows with the *number of pairs* of nodes, faster than the workers you're adding.
+
+```mermaid
+flowchart TD
+    A["Add workers →"] --> B["📈 throughput rises<br/>(contention drag)"]
+    B --> C["🛑 plateaus<br/>(Amdahl's serial limit)"]
+    C --> D["📉 then FALLS<br/>(USL coherence cost:<br/>coordination overwhelms work)"]
+```
+
+So the real-world scalability curve doesn't just flatten — it **rises, peaks, and then declines.** Past some node count, adding machines makes the system *slower*, because the workers spend more time coordinating than working. You've felt the human version: one person builds a wall in 10 days; ten people build it faster; but a *thousand* people just trip over each other and the wall goes up slower than with ten. Software does this too — database connection pools, distributed locks, chatty microservices, consensus groups all have a peak past which "more" is worse.
+
+> ⚠️ **Adding capacity can *reduce* it.** This is the trap that stuns people the first time: the system is slow, so you add servers — and it gets *slower*, because the bottleneck was coordination, not compute, and you just added more things to coordinate. The famous production version is the "thundering herd" on a shared resource, or a database that grinds to a halt as you add app servers all contending for the same locks. When scaling *out* makes things *worse*, USL coherence is your suspect.
+
+> 💡 **Key Insight**
+>
+> Linear scaling is a fantasy; the real curve **flattens (Amdahl's serial fraction) and can even bend downward (USL coordination cost).** The practical takeaways are permanent: (1) the path to scale is *removing serialization and coordination*, not adding hardware; (2) there is a point past which more nodes hurt, so "just add servers" has a mathematically guaranteed expiry date. The most scalable systems are the ones that make workers share and coordinate as *little* as possible — which is the deep reason §6's lesson about **state** is the crux of the whole topic.
+
+### Quick Recap — The Limits of Scaling
+
+- **Amdahl's Law:** the **serial fraction** caps speedup — 5% serial means ≤ 20× even with infinite workers; the fix is *shrinking serialization*, not adding machines.
+- **Universal Scalability Law:** adds **coherence** (coordination cost) — the curve rises, peaks, then *declines*; past a point more nodes make it *slower*.
+- "Just add servers" has a **mathematically guaranteed ceiling** — and beyond it, negative returns.
+- The route to real scale is **minimizing shared state and coordination** — which is why state (§6) is the central difficulty.
+
+---
+
+*(Sections 6–11 continue in subsequent commits.)*
