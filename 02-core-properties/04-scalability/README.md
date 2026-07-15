@@ -302,4 +302,95 @@ So the real-world scalability curve doesn't just flatten — it **rises, peaks, 
 
 ---
 
-*(Sections 6–11 continue in subsequent commits.)*
+## 6. Why Scaling Is Hard — State
+
+Section 5 ended on a hint: scaling is about minimizing what workers *share*. This section names the thing they share that makes scaling hard. If you take one idea from this entire document, take this one:
+
+> **Scaling compute is easy. Scaling *state* is the whole problem.**
+
+### Stateless Scales Trivially
+
+A component is **stateless** if it remembers nothing between requests — every request carries everything needed to handle it, and any instance can serve any request identically. Stateless components scale *beautifully*, almost for free:
+
+```mermaid
+flowchart TD
+    LB["⚖️ Load balancer"] --> A1["Stateless app #1"]
+    LB --> A2["Stateless app #2"]
+    LB --> A3["Stateless app #3"]
+    LB --> A4["…just add more,<br/>any node serves any request"]
+```
+
+Need more capacity? Clone the instance, add it behind the load balancer, done. There's nothing to coordinate because there's nothing shared — which, per Amdahl and the USL (§5), means *no serial fraction and no coherence cost from these nodes*. This is why the **application/compute tier** of most systems is the *easy* part to scale: keep it stateless and it scales horizontally almost linearly. Horizontal scaling and statelessness are two sides of one coin.
+
+### Stateful Is Where It All Gets Hard
+
+The trouble is that a system has to remember things *somewhere* — user accounts, orders, balances, the shopping cart. That **state** has to be consistent no matter which node you talk to, and *that* requirement is the enemy of easy scaling. The instant two nodes must agree on shared mutable data, you're back in the serial/coordination world of §5.
+
+Watch where the difficulty concentrates. Push state *out* of the stateless tier and it doesn't vanish — it piles up in whatever holds it:
+
+| Where state hides | Why it resists scaling |
+|---|---|
+| **The database** | The classic wall — everyone reads/writes one source of truth; the hardest thing to scale (§8) |
+| **Session state in memory** | Ties a user to one server (can't freely add/replace nodes); the fix is to externalize it |
+| **Locks / shared counters** | Every worker contends on one hot spot — pure USL coherence cost |
+| **Caches** | Help enormously, but introduce their own consistency problem (which phase 06 tackles) |
+
+> 💡 **Key Insight**
+>
+> The reason "just add servers" works for the app tier and *fails* for the database is **state.** Stateless things clone freely; stateful things must stay consistent, and consistency requires coordination, and coordination is the serial fraction that caps scaling (§5). The master pattern of scalable design is therefore: **push state out of the compute path, keep as much as possible stateless, and isolate the unavoidable shared state into as small and specialized a component as you can** — because that component will be your scaling ceiling.
+
+### The Bridge to Consistency (and SPOF)
+
+This is also where two of the biggest themes in the curriculum announce themselves. That "one source of truth everyone must agree on" is the seed of **consistency** (how do distributed copies of state agree? — the CAP/consistency topics ahead) and of **Single Points of Failure** (that shared stateful component is often both your scaling ceiling *and* the thing whose failure takes everything down — Topic 5, next). State is where scalability, consistency, and availability all collide. Hold that thought; the next topic walks straight into it.
+
+### Quick Recap — Why Scaling Is Hard
+
+- **Stateless components scale trivially** — clone them behind a balancer; any node serves any request, nothing to coordinate.
+- **State is the hard part**: shared mutable data must stay consistent, and consistency demands the coordination that caps scaling (§5).
+- Pushing state out of compute concentrates it in the **database, sessions, locks, caches** — whichever holds it becomes the ceiling.
+- The scalable-design pattern: **maximize statelessness, minimize and isolate shared state** — and that shared state links straight to consistency and SPOF (Topic 5).
+
+---
+
+## 7. Bottlenecks and the Shifting Constraint
+
+Group 4 taught you to hunt bottlenecks. Scalability is where that skill becomes a *way of seeing*, because scaling is nothing but a long game of finding and moving the current bottleneck — over and over, forever.
+
+### A System Scales Only As Far As Its Bottleneck
+
+At any moment, exactly *one* resource is the constraint — the thing that saturates first and caps the whole system's throughput (Latency doc: the narrowest component sets the ceiling). No amount of surplus elsewhere helps:
+
+> A system's scalability at any instant is **the scalability of its current bottleneck.** Ten idle app servers in front of a maxed-out database is a database-limited system. The rest is decoration.
+
+This means scaling work is *targeted*, not general. "Make it scale" is meaningless; "find what saturates first and relieve *that*" is the actual job. Adding resources anywhere *except* the bottleneck buys you nothing but a bigger bill — a classic and expensive beginner mistake.
+
+### The Bottleneck Always Moves
+
+Here's the part that makes scaling a *process* rather than a fix: **relieve one bottleneck and the constraint doesn't disappear — it moves to the next-weakest resource.** You never "finish" scaling; you chase a constraint that keeps relocating.
+
+```mermaid
+flowchart LR
+    B1["🔴 App CPU maxed"] -->|"add app servers"| B2["🔴 Now DB is maxed"]
+    B2 -->|"add read replicas"| B3["🔴 Now DB writes maxed"]
+    B3 -->|"shard writes"| B4["🔴 Now the network / cache…"]
+    B4 --> B5["♾️ the constraint always<br/>moves to the next weakest link"]
+```
+
+Each fix reveals the next wall. Scale the app tier, and load slams into the database. Add read replicas, and the write master becomes the limit. Shard the writes, and cross-shard queries or the network become the constraint. This is *whack-a-mole*, and it's not a sign of doing it wrong — it *is* scaling. The senior mindset accepts it: you're not eliminating the bottleneck, you're deciding *which bottleneck you want to have next*, and how far each move buys you.
+
+> ⚠️ **Optimizing anything but the current bottleneck is wasted effort — sometimes worse than wasted.** Speeding up a non-bottleneck component makes it finish its work faster only to wait longer at the real constraint, and (per §5's USL) *adding* capacity away from the bottleneck can even increase coordination cost. Before any scaling change, answer one question: *what saturates first right now?* If your change doesn't move **that**, it's not a scaling change — it's a cost increase.
+
+> 💡 **Key Insight**
+>
+> Scaling is **iterative bottleneck relocation.** There is always a current constraint; you relieve it; a new one appears; repeat. This reframes the whole activity: the question is never "is it scalable?" (nothing is, infinitely) but "**where is the bottleneck now, how far will relieving it get me, and what becomes the bottleneck after that?**" A roadmap of your next three bottlenecks is worth more than any single optimization.
+
+### Quick Recap — The Shifting Constraint
+
+- A system scales **only as far as its current bottleneck** — surplus capacity elsewhere is decoration.
+- Scaling work is **targeted**: find what saturates first and relieve *that*; optimizing non-bottlenecks just raises cost.
+- Relieving a bottleneck **moves it** to the next-weakest resource — scaling is whack-a-mole *by nature*, not by mistake.
+- The senior question is never "is it scalable?" but "**where's the bottleneck now, and what's the next one?**"
+
+---
+
+*(Sections 8–11 continue in subsequent commits.)*
