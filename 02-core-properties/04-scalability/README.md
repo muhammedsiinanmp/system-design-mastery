@@ -488,4 +488,83 @@ There's no free scaling. Every technique that raises the ceiling charges you in 
 
 ---
 
-*(Sections 10–11 continue in subsequent commits.)*
+## 10. Putting It All Together — Brimble Grows 100×
+
+**Brimble** survived a flash sale (Latency doc), set availability SLOs (Availability doc), and fixed a double-charge (Reliability doc). Now the happiest and most dangerous thing that can happen to a system happens: it goes viral. Over a year, traffic grows **100×** — and every architectural sin that was invisible at small scale comes due. Watch the whole document play out as one growth story.
+
+### Step 1 — Name the Dimensions (§2)
+
+The team resists the vague panic of "we need to scale!" and asks §2's question first: *scale along which axis?* They enumerate the load parameters and find they are **not** growing together — the killer, as always, is the one nobody watched:
+
+- Request rate: up ~100× (expected).
+- Data volume: up ~100× (orders, users — expected).
+- **Read/write ratio:** browsing dwarfs buying — Brimble is ~**95% reads**. This is *good news* (§8): the easy axis dominates.
+- **Fan-out:** a new "notify followers of a wishlist" feature quietly makes one action write to thousands of feeds — a hidden dimension (§2) that wasn't on any dashboard.
+
+### Step 2 — Scale the Easy Tier First (§6)
+
+The app/checkout tier turns out to be **stateless** (§6) — sessions were externalized during the reliability work. So it scales the boring, wonderful way: clone instances behind the load balancer, near-linearly (§4 horizontal). The team barely thinks about it. *This* is the payoff of statelessness: the compute tier is a solved problem, and attention is freed for the real wall.
+
+### Step 3 — Hit the Database Wall, and Watch the Bottleneck Move (§7, §8)
+
+With app servers multiplied, load slams straight into the database — the bottleneck relocates exactly as §7 promised. The team works the shifting constraint, one move at a time:
+
+```mermaid
+flowchart LR
+    A["🔴 App CPU"] -->|"clone stateless app"| B["🔴 DB reads maxed"]
+    B -->|"add read replicas + cache"| C["🔴 DB writes maxed"]
+    C -->|"shard writes by user"| D["🔴 Cross-shard + fan-out"]
+```
+
+- **Reads max out first** → because Brimble is 95% reads (§8, the easy axis), read replicas plus a cache for hot product pages absorb enormous load cheaply. Big win, low pain.
+- **Writes max out next** → the single write master becomes the ceiling *and* a SPOF (§8, §6). Harder: they **shard** orders by user ID so different writes hit different owners. The distributed-systems tax (§4) arrives — cross-shard reports are now painful — but write capacity multiplies.
+- **The fan-out feature** → its own bottleneck; the team moves it *off* the request path into async processing (a pointer to the Async phase) so it stops competing with checkout.
+
+Each fix reveals the next wall. Nobody is surprised — they know scaling *is* whack-a-mole (§7), and they have a roadmap of their next three bottlenecks, not just the current one.
+
+### Step 4 — Respect the Limits (§5)
+
+Tempted to "just add more app servers," an engineer checks against §5. The checkout path has a serial step — a single inventory-reservation lock. Amdahl says that serial fraction caps speedup no matter how many servers they add; past a point, more app nodes just contend harder on the lock (USL coherence) and make things *worse*. So the real work isn't more hardware — it's *removing the serialization* (reworking how reservations coordinate). The team spends its effort shrinking the serial fraction, not growing the fleet. That's the senior move the laws demand.
+
+### Step 5 — Make It Pay (§9)
+
+Finally, the economics (§9). Traffic is spiky — huge at noon, tiny at 3 a.m. — so they make the stateless tier **elastic**, following demand up *and down*, paying for used capacity rather than peak-sized metal. And they track the metric that actually matters: **cost per order as they grow**. Early on it was creeping *upward* (a super-linear warning — the fan-out feature and lock contention were making each order more expensive). After the sharding and de-serialization work, cost per order flattens. Brimble is now *linearly* scalable: 2× the orders costs ~2× — success is finally survivable.
+
+### The Payoff
+
+A year and 100× later, Brimble is fast, available, reliable — *and* scalable, meaning growth is now a matter of writing proportional cheques, not emergency rewrites. **Nothing magic did it** — just naming the dimensions, keeping compute stateless, chasing the shifting bottleneck, removing serialization instead of piling on hardware, and watching cost-per-order instead of vanity capacity. Growth stopped being an existential threat and became a line item.
+
+---
+
+## 11. Final Recap
+
+| Concept | Core Insight | Biggest Tradeoff |
+|---|---|---|
+| **Scalability** | Absorbing growth by adding resources — a *slope* (cost vs load), not a speed | Linear costs money; sub-linear is rare; super-linear kills you |
+| **Dimensions of load** | "Scale" is a vector — rate, data, concurrency, fan-out, read/write mix | The axis that kills you is the one you didn't measure |
+| **vs Performance** | Performance is a snapshot; scalability is the *derivative* | Faster ≠ more grow-able; opposite fixes |
+| **Vertical vs Horizontal** | Up = simple with a ceiling; out = unbounded with complexity | Out imports the whole distributed-systems tax |
+| **Amdahl's Law** | The serial fraction caps speedup (5% serial → ≤ 20×) | Real scaling = shrinking serialization, not adding hardware |
+| **Universal Scalability Law** | Coordination cost can make more nodes *slower* | "Just add servers" has a guaranteed expiry |
+| **State** | Stateless scales trivially; shared state is the whole problem | Consistency requires coordination requires serialization |
+| **Shifting bottleneck** | A system scales only as far as its current bottleneck — which *moves* | Optimizing non-bottlenecks just raises cost |
+| **Reads / Writes / Data** | Reads copy, writes split, data fractures your assumptions | The read/write ratio predicts your pain |
+| **Elasticity & cost** | The real metric is cost/request as you grow; scale down too | No free scaling — pay in money, complexity, consistency, or latency |
+
+### The One Thing to Remember
+
+> **Scalability isn't speed and isn't "handles lots of traffic" — it's the *slope* of cost versus load, and whether that slope stays affordable as you grow. Compute scales trivially when it's stateless; the real wall is always shared state and the coordination it demands (Amdahl and the USL guarantee "just add servers" expires). So scaling is iterative bottleneck-chasing: find what saturates first, relieve it, watch the constraint move — and measure success as flat cost-per-request, not vanity capacity.**
+
+---
+
+## What's Next
+
+> **Topic 5 — Single Point of Failure (SPOF)**
+
+Scalability kept pointing at one thing: the **shared component everything depends on** — the write master, the one source of truth, the serial step, the lock. That component is your scaling ceiling. It is also something more dangerous, and it's the final property in this phase:
+
+> **Which single component, if it failed right now, would take the *whole system* down with it?**
+
+A Single Point of Failure is where scalability and availability collide in one place: the shared, stateful, hard-to-scale thing is *also* usually the thing with no redundancy, whose failure is total. You've met SPOFs in every doc so far — the single load balancer (Availability §7), the config service everyone shares (Reliability §9), the write master (this doc, §8). Topic 5 makes hunting and eliminating them the whole subject — the capstone that ties the five core properties together. One yardstick left.
+
+---
