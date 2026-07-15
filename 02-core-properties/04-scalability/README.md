@@ -393,4 +393,99 @@ Each fix reveals the next wall. Scale the app tier, and load slams into the data
 
 ---
 
-*(Sections 8–11 continue in subsequent commits.)*
+## 8. Scaling Reads, Writes, and Data
+
+Section 6 said state is the wall and the database is where it piles up. But "scaling the database" isn't one problem — it's *three*, of wildly different difficulty. Knowing which one you face tells you how hard your life is about to be. (This is intuition and vocabulary; the *mechanisms* — replication, partitioning, sharding — are the Storage & Databases phase's job.)
+
+### The Difficulty Ladder: Reads → Writes → Data
+
+```mermaid
+flowchart LR
+    R["📖 Reads<br/>EASY"] --> W["✍️ Writes<br/>HARD"] --> D["🗄️ Data size<br/>HARDEST"]
+```
+
+**Reads are (relatively) easy.** A read doesn't change anything, so you can make *copies* of the data and spread reads across them — more copies, more read capacity. Two families of pointer (mechanisms later): **replicas** (read-only copies of the database) and **caching** (keep hot answers close). Because reads don't mutate, adding read capacity is close to the "clone it" ease of stateless compute. Most read-heavy systems scale reads a long way without deep pain.
+
+**Writes are hard.** A write *changes* the source of truth, and every copy now has to agree with it. You can't just clone your way out — the whole point of a write is that there's *one* correct outcome everyone must converge on. Scaling writes means either funneling them through one master (which caps you at that master's capacity — a bottleneck and a SPOF) or *splitting* the data so different writes hit different owners (**partitioning/sharding**), which then makes anything spanning partitions hard. Writes are where the serial fraction (§5) and the state problem (§6) meet in one place.
+
+**Data volume is the hardest.** Even setting throughput aside, sheer *size* eventually exceeds one machine's storage, forcing you to split data across many — and the moment data is split, everything that was trivially simple on one machine (a query, a join, a transaction, keeping things consistent) becomes a distributed problem. Big data doesn't just strain the database; it *fractures* the assumptions the rest of your system was built on.
+
+| What you're scaling | Why it's that hard | Named pointer (later phases) |
+|---|---|---|
+| **Reads** | Copies don't need to agree with each other, only catch up | Replicas, caching |
+| **Writes** | One source of truth everyone must converge on | Sharding/partitioning, write masters |
+| **Data size** | Splitting data breaks single-machine guarantees | Partitioning, distributed storage |
+
+> ⚠️ **"Just scale the database" is where naive architectures go to die.** The database is usually the hardest thing to scale precisely because it holds the shared, consistent state everything depends on (§6). This is why so much of system design — read replicas, caches, sharding, denormalization, eventual consistency, event-driven designs — exists essentially to *take pressure off the database*. When someone waves a hand and says "we'll scale the DB later," they're deferring the single hardest problem in the system.
+
+> 💡 **Key Insight**
+>
+> Not all scaling is equal: **reads scale by copying, writes scale by splitting, and data scales by fracturing your assumptions.** The read/write *ratio* (a load parameter from §2) therefore tells you a lot about how hard your scaling will be — a 99%-read system has an easy road; a write-heavy one is staring straight at the hardest problem in the field. Know your ratio before you promise anyone a timeline.
+
+### Quick Recap — Scaling Reads, Writes, Data
+
+- **Reads scale by copying** (replicas, caches) — copies needn't agree, only catch up; relatively easy.
+- **Writes scale by splitting** — one source of truth must converge, so you funnel (bottleneck/SPOF) or shard (cross-partition pain).
+- **Data size is hardest** — splitting data *fractures* single-machine guarantees (queries, joins, transactions, consistency).
+- Much of system design exists to **relieve the database**; the **read/write ratio** predicts how hard your scaling will be.
+
+---
+
+## 9. Elasticity, Cost, and the Economics of Scale
+
+The final reframing, and the one that separates engineers from *senior* engineers: **scalability is ultimately an economic property.** Section 1 said it's a slope of cost versus load — this section takes that seriously, because a system that "scales" by spending infinite money doesn't really scale at all.
+
+### The Real Metric — Cost per Unit of Work
+
+Raw capacity ("we can handle a million users!") is a vanity number. The metric that actually matters is **cost per request** (or per user, per transaction) — and crucially, *how it changes as you grow*. This is §1's slope, made concrete:
+
+```text
+             total cost
+Cost/request = ──────────────
+             total requests
+```
+
+- **Flat or falling cost/request as you grow** → linear or sub-linear scaling → a healthy, sustainable business.
+- **Rising cost/request as you grow** → super-linear scaling → the death spiral: each new user is more expensive than the last, and growth eventually eats you alive.
+
+> A system that needs 4× the machines for 2× the users has a *rising* cost per request. It may pass every load test and still be a failing business — because it gets *less* efficient exactly as it succeeds. Scalability that ignores cost/request is measuring the wrong thing.
+
+### Elasticity — Scaling Down Is Half the Job
+
+Beginners think scaling is about handling *peaks*. But traffic isn't flat — it has daily cycles, weekly rhythms, seasonal spikes (the flash sale from the Latency doc). **Elasticity** is the ability to scale *both directions*: add resources for the peak **and give them back in the trough.**
+
+```mermaid
+flowchart LR
+    Low["🌙 3am: low traffic<br/>→ shed resources,<br/>stop paying"] --> High["☀️ noon peak:<br/>→ add resources"]
+    High --> Low2["🌙 night again:<br/>→ release them"]
+```
+
+Elasticity is what makes cloud economics work: you pay for the capacity you *use*, not the peak you *provisioned*. A system that can only scale *up* (and never down) wastes enormous money running peak-sized hardware at 3 a.m. — and note the tension with the Latency doc's headroom lesson (§7 there): you need slack for spikes *and* you don't want to pay for idle metal, so elasticity is the reconciliation — provision headroom *dynamically*.
+
+### The Economic Tradeoffs
+
+Scalability is bought, and the currency isn't only dollars:
+
+| You spend… | To buy… |
+|---|---|
+| **Money** (more machines) | The simplest capacity — but watch cost/request |
+| **Complexity** (distribution, sharding, coordination) | Higher ceilings — but distributed-systems tax (§4) and USL risk (§5) |
+| **Consistency** (eventual instead of strong) | Easier scaling of writes/data — but weaker guarantees (consistency topics ahead) |
+| **Latency** (batching, async) | Higher throughput per dollar — the Latency doc's §8 trade, at fleet scale |
+
+There's no free scaling. Every technique that raises the ceiling charges you in money, complexity, consistency, or latency — which is precisely why scalability is not a switch but a *series of deliberate tradeoffs*, made against the growth you actually expect (doc 00's requirements thinking, one last time).
+
+> 💡 **Key Insight**
+>
+> The mature measure of scalability is **cost per request as load grows**, not peak capacity — and the mature *capability* is **elasticity** (scaling down as readily as up). A system "scales" only if growth stays *affordable*: flat-or-falling cost/request, resources that follow demand in both directions, and tradeoffs chosen on purpose. Vanity capacity numbers impress in a demo; the cost slope is what determines whether success is survivable.
+
+### Quick Recap — The Economics of Scale
+
+- Scalability is **economic**: the true metric is **cost per request as load grows**, not raw peak capacity.
+- **Falling/flat cost per request** = healthy (linear/sub-linear); **rising** = the super-linear death spiral, a failing business even if load tests pass.
+- **Elasticity** (scale *down* as well as up) is half the job — it reconciles spike-headroom with not paying for idle metal.
+- Scaling is **bought** with money, complexity, consistency, or latency — never free; choose the tradeoffs against expected growth.
+
+---
+
+*(Sections 10–11 continue in subsequent commits.)*
