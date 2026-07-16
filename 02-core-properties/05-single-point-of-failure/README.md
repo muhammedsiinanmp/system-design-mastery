@@ -231,4 +231,47 @@ The **certificate** example is a perennial, almost ritual outage: everything is 
 
 ---
 
-*(Sections 5–11 continue in subsequent commits.)*
+## 5. SPOF — The Collision Point of All Five Properties
+
+This is the capstone section — the reason SPOF is the *last* core property rather than just another item on a list. A Single Point of Failure isn't a separate concern from the other four properties; it's the place where **all of them fail at the same time, for the same reason.** Understanding this is understanding why the five properties form one connected picture rather than five isolated checkboxes.
+
+### One Component, Four Violations
+
+Take a single un-redundant component that everything depends on, and watch it violate every yardstick you've learned:
+
+```mermaid
+flowchart TD
+    SPOF["🔴 One shared, un-redundant<br/>component (e.g. the write master)"]
+    SPOF --> A["📉 Availability<br/>caps the whole system at ITS uptime<br/>(Avail §6–7)"]
+    SPOF --> S["🧱 Scalability<br/>the shared bottleneck that can't scale out<br/>(Scale §6, §8)"]
+    SPOF --> R["💥 Reliability<br/>its failure is correlated + total<br/>(Rel §5, §9)"]
+    SPOF --> B["🌍 Blast radius<br/>everyone, everything, at once"]
+```
+
+- **It caps availability.** The Availability doc's series math (§6) proved a system can't be more available than any single component every request depends on. A SPOF *is* that component — its nines become the system's ceiling, no matter how redundant everything around it is. The single load balancer (Avail §7) was this exactly.
+- **It caps scalability.** The Scalability doc showed the shared, stateful component — the write master, the one source of truth (§6, §8) — is both the scaling wall *and*, usually, un-redundant. The thing you can't scale out is very often the same thing that has no backup. Scaling ceilings and SPOFs are frequently the *same component*.
+- **It wrecks reliability.** A SPOF failure is the opposite of graceful — no partial degradation, no spectrum (Rel/Avail), just total collapse. And SPOFs are where **correlated failure** (Rel §5, §9) concentrates: the shared thing everything depends on is the thing whose failure is everything's failure.
+- **Its blast radius is the whole system.** Every other failure mode can be *contained* (bulkheads, cells, isolation — Rel §6). A SPOF, by definition, cannot — containment requires an alternative, and a SPOF is the absence of an alternative.
+
+### Why It's the Capstone
+
+The other four properties are, in a sense, all *about avoiding SPOFs* — or about what happens when you can't:
+
+> A SPOF is the single structural flaw that makes a system simultaneously **un-available, un-scalable, and un-reliable**, with **total blast radius**. Conversely, *eliminating* SPOFs — adding redundancy so no single failure is total — is one action that improves availability, scalability, *and* reliability at once. It's the highest-leverage structural move in system design, which is why it's the property the whole phase converges on.
+
+This is the unifying lesson of Phase 02: **the five properties are not independent.** They share a common enemy (single points of failure), a common cure (redundancy, isolation, no shared un-redundant dependencies), and a common root question (*what happens when a part fails?*). Latency has its utilization cliff, availability its nines, reliability its fault chains, scalability its shared-state wall — and underneath all of them sits the same structural question SPOF makes explicit.
+
+> 💡 **Key Insight**
+>
+> SPOF is where the five core properties stop being a checklist and become a *system*. One un-redundant critical component caps availability, caps scalability, destroys reliability, and guarantees total blast radius — four violations from one flaw. That's why SPOF-elimination is the highest-leverage structural work there is: a single redundancy investment pays out across every property at once. See the SPOF, and you see all five yardsticks in one place.
+
+### Quick Recap — The Collision Point
+
+- A SPOF violates **four properties from one flaw**: caps availability (series math), caps scalability (shared bottleneck), wrecks reliability (correlated + total), and guarantees **total blast radius**.
+- The scaling ceiling and the SPOF are frequently the **same shared, un-redundant component**.
+- Eliminating a SPOF improves availability, scalability, *and* reliability **simultaneously** — the highest-leverage structural move.
+- Phase 02's unifying lesson: the five properties share a common enemy (SPOFs), cure (redundancy/isolation), and root question (*what happens when a part fails?*).
+
+---
+
+*(Sections 6–11 continue in subsequent commits.)*
