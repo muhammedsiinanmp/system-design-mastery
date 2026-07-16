@@ -216,7 +216,7 @@ flowchart TD
 | **Third-party API** | "That's their problem" | Their outage is your outage if you have one provider and no fallback |
 | **The human SPOF** | Not a machine at all | One person is the only one who understands a critical system (§9) |
 
-The **certificate** example is a perennial, almost ritual outage: everything is redundant, healthy, scaled — and the whole system goes dark because a single certificate nobody was tracking expired, and TLS rejects every connection simultaneously. There was no server failure, no bug — just one silent, shared, un-redundant dependency reaching its expiry. That is a SPOF in its purest form.
+The **certificate** example is a perennial, almost ritual outage: everything is redundant, healthy, scaled — and the whole system goes dark because a single certificate nobody was tracking expired, and TLS rejects every connection simultaneously. There was no server failure, no bug — just one silent, shared, un-redundant dependency reaching its expiry. That is a SPOF in its purest form — and it has taken down some of the largest, most sophisticated operators in the world, from telecom networks that dropped millions of users for a day to widely-used platforms felled by a single lapsed cert. The lesson recurs precisely *because* the victims were otherwise excellent at redundancy; the cert simply wasn't thought of as a component.
 
 > 💡 **Key Insight**
 >
