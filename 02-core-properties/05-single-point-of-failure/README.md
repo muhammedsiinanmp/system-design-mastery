@@ -137,4 +137,98 @@ Zoom out from one request to the whole **dependency graph**: draw what depends o
 
 ---
 
-*(Sections 3–11 continue in subsequent commits.)*
+## 3. Why SPOFs Exist — The Anatomy
+
+If SPOFs are so dangerous, why does every system have them? Because they are not *added* — they are what you get by *default*. SPOFs are the natural resting state of a system; redundancy is the thing you have to work (and pay) to add. Understanding *why* they appear is what lets you anticipate them instead of discovering them.
+
+### They Are the Default, Not the Exception
+
+Every system starts as a SPOF. Version one is one server, one database, one of everything — because that's the simplest thing that works, and simplicity is the right call early (the Scalability doc's "scale up first" wisdom). Redundancy is *added later*, deliberately, to the components someone decided were worth it. Which means:
+
+> Every component is a SPOF **until someone spends effort and money to make it redundant.** SPOFs aren't bugs that crept in — they're the absence of work that was never done.
+
+This reframing matters: you don't hunt SPOFs by looking for mistakes, but by looking for *where redundancy hasn't been added yet* — which is everywhere you haven't explicitly looked.
+
+### The Forces That Create Them
+
+Four recurring pressures manufacture SPOFs, and naming them helps you predict where they'll be:
+
+| Force | How it creates a SPOF |
+|---|---|
+| **Cost** | Redundancy means running (and paying for) N copies of things — the cheap choice is one |
+| **Simplicity** | One of something is easier to reason about, deploy, and operate than a coordinated cluster |
+| **Convenience / "temporary"** | A quick single-instance solution ships to meet a deadline — and "temporary" becomes permanent and load-bearing |
+| **Implicit growth** | New features quietly add a shared dependency (one config service, one queue, one auth) that everything gradually comes to rely on |
+
+```mermaid
+flowchart TD
+    Start["🌱 v1: one of everything<br/>(everything is a SPOF)"] --> Grow["📈 System grows"]
+    Grow --> Add["✅ Redundancy added<br/>to components someone<br/>judged worth it"]
+    Grow --> Miss["🔴 Redundancy NOT added<br/>(cost, forgotten, 'temporary')<br/>→ these stay SPOFs"]
+```
+
+The most insidious is the last two. The "temporary" single-instance script that becomes critical, and the shared service that *accretes* dependents until it silently sits under everything — these create SPOFs that nobody consciously *decided* to have. They formed by drift.
+
+> ⚠️ **Systems drift *toward* SPOFs over time unless actively resisted.** Entropy is on the SPOF's side: every new shared component, every deadline-driven shortcut, every "we'll make it redundant later" adds risk that compounds silently. Without a standing practice of hunting them (§2), a system accumulates hidden SPOFs the way it accumulates technical debt — invisibly, until one fails. The absence of a recent SPOF audit is itself a warning sign.
+
+### Quick Recap — Why SPOFs Exist
+
+- SPOFs are the **default state** — every component is one until redundancy is deliberately added; they're *missing work*, not *added bugs*.
+- Four forces create them: **cost**, **simplicity**, **"temporary" convenience**, and **implicit growth** of shared dependencies.
+- The worst form by **drift** — "temporary" single instances that become load-bearing, shared services that accrete dependents.
+- Systems trend *toward* SPOFs over time unless a standing hunt (§2) actively resists the drift.
+
+---
+
+## 4. Obvious vs Hidden SPOFs
+
+Not all SPOFs are equally hard to see, and the distinction is where most real outages live. The obvious ones get found and fixed early; the *hidden* ones are what actually take companies down — because you can't add redundancy to a dependency you don't know you have.
+
+### The Obvious Ones
+
+These are visible on the architecture diagram, and any competent review catches them:
+
+- The **single database** every request reads and writes.
+- The **single load balancer** in front of the fleet.
+- The **single application server** (in a tiny deployment).
+
+They're "obvious" because they're *drawn*, they're *known* dependencies, and the fix is well-understood (add redundancy — §6). Mature systems have usually handled these. They're real, but they're not where the danger concentrates.
+
+### The Hidden Ones — Where Outages Actually Come From
+
+The dangerous SPOFs share one trait: **they're dependencies you didn't consciously realize you had.** They rarely appear on the architecture diagram because nobody thinks of them as "components":
+
+```mermaid
+flowchart TD
+    Sys["Your 'redundant' system"] --> D1["🌐 DNS — one provider"]
+    Sys --> D2["🔐 TLS certificate — one, expiring"]
+    Sys --> D3["⚙️ Config / secrets service — shared by all"]
+    Sys --> D4["🔗 Third-party API — one vendor"]
+    Sys --> D5["🧑 The one engineer who understands it"]
+    D1 & D2 & D3 & D4 & D5 -.-> Hidden["🫥 None of these are on<br/>the architecture diagram"]
+```
+
+| Hidden SPOF | Why it's missed | How it bites |
+|---|---|---|
+| **DNS** | "It just works" — not thought of as a component | DNS fails → nobody can *find* you, however healthy your servers |
+| **TLS certificate** | A config detail, not a "system" | Cert expires → every connection rejected, globally, at once |
+| **Shared config/secrets service** | Infrastructure, not application | It dies → every service can't start or reload — the correlated-failure engine (§8) |
+| **Third-party API** | "That's their problem" | Their outage is your outage if you have one provider and no fallback |
+| **The human SPOF** | Not a machine at all | One person is the only one who understands a critical system (§9) |
+
+The **certificate** example is a perennial, almost ritual outage: everything is redundant, healthy, scaled — and the whole system goes dark because a single certificate nobody was tracking expired, and TLS rejects every connection simultaneously. There was no server failure, no bug — just one silent, shared, un-redundant dependency reaching its expiry. That is a SPOF in its purest form.
+
+> 💡 **Key Insight**
+>
+> The SPOFs that cause the worst outages are almost never the ones on the diagram — they're the **implicit, shared, "not really a component" dependencies**: DNS, certificates, config services, a single vendor, a single person. This is why §2's advice was to *trace actual dependencies*, not list known components: the deadliest SPOF is precisely the one you'd never write down, because you never think of it as something that could fail. Hunt the invisible, not the obvious.
+
+### Quick Recap — Obvious vs Hidden
+
+- **Obvious SPOFs** (single DB/LB/server) are drawn, known, and usually already fixed in mature systems.
+- **Hidden SPOFs** — DNS, TLS certs, shared config/secrets, single vendors, single humans — cause the worst outages because they're *unrecognized* dependencies.
+- The expiring **certificate** outage is the archetype: total failure, no bug, one silent shared dependency.
+- Find them by tracing *real* dependencies (§2), not by listing components you already consider important.
+
+---
+
+*(Sections 5–11 continue in subsequent commits.)*
