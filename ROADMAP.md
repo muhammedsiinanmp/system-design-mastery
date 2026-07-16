@@ -79,7 +79,7 @@ Follow these every time you add a topic:
 | 02 | Availability | ✅ Done | `02-core-properties/02-availability/README.md` |
 | 03 | Reliability | ✅ Done | `02-core-properties/03-reliability/README.md` |
 | 04 | Scalability | ✅ Done | `02-core-properties/04-scalability/README.md` |
-| 05 | Single Point of Failure (SPOF) | 🚧 In Progress | `02-core-properties/05-single-point-of-failure/README.md` |
+| 05 | Single Point of Failure (SPOF) | ✅ Done | `02-core-properties/05-single-point-of-failure/README.md` |
 
 ---
 
@@ -354,7 +354,7 @@ Follow these every time you add a topic:
 | Phase | Name | Total | ✅ Done | 🚧 In Progress | 📋 Planned | 💡 Idea |
 |---|---|---|---|---|---|---|
 | 01 | Introduction | 7 | 7 | 0 | 0 | 0 |
-| 02 | Core System Properties | 5 | 4 | 1 | 0 | 0 |
+| 02 | Core System Properties | 5 | 5 | 0 | 0 | 0 |
 | 03 | Networking | 7 | 0 | 0 | 6 | 1 |
 | 04 | APIs & Communication | 15 | 0 | 0 | 14 | 1 |
 | 05 | Storage & Databases | 27 | 0 | 0 | 19 | 8 |
@@ -364,7 +364,7 @@ Follow these every time you add a topic:
 | 09 | Architecture & Microservices | 13 | 0 | 0 | 7 | 6 |
 | 10 | Observability & Security | 13 | 0 | 0 | 11 | 2 |
 | 11 | Interview Preparation | 21 | 0 | 0 | 4 | 17 |
-| **Total** | | **150** | **11** | **1** | **98** | **40** |
+| **Total** | | **150** | **12** | **0** | **98** | **40** |
 
 ---
 
