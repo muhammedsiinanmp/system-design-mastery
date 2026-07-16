@@ -274,4 +274,93 @@ This is the unifying lesson of Phase 02: **the five properties are not independe
 
 ---
 
-*(Sections 6–11 continue in subsequent commits.)*
+## 6. Eliminating SPOFs — Redundancy and Its Limits
+
+Finding SPOFs is the hard part (§2); the *fix* is conceptually simple and you already know it. This section names it and — more importantly — its limits, because "just add redundancy" is a half-truth that lulls teams into false confidence. (Consistent with the phase charter, the *mechanics* of redundancy live in the Availability material and later phases; here's the reasoning.)
+
+### The Cure: Remove One of the Two Conditions
+
+A SPOF needs *both* conditions (§1): critical dependency **and** no redundancy. Break either one:
+
+| Approach | What it does | Example |
+|---|---|---|
+| **Add redundancy** | Kill condition 2 — give it a backup so failure isn't total | Multiple load balancers, DB replicas, multi-AZ |
+| **Remove the dependency** | Kill condition 1 — make the system not *need* it on the critical path | Push non-essential work off the request path (async); cache so a dependency's outage degrades instead of kills |
+
+The first is the usual move (redundancy = the Availability doc's parallel math, §6: copies in parallel multiply failure probability *away*). The second is subtler and often better: the best way to survive a component's failure is sometimes to *not depend on it* for the critical path in the first place (graceful degradation, Rel §7 — if the recommendations service is a SPOF, make the page work *without* it).
+
+### Why "Just Add Redundancy" Is a Half-Truth
+
+Redundancy is necessary but comes with three caveats you already learned — and forgetting them is how teams get outages *despite* redundancy:
+
+```mermaid
+flowchart TD
+    R["Add redundancy"] --> C1["⚠️ Only if failures are INDEPENDENT<br/>(else correlated failure, §8)"]
+    R --> C2["⚠️ Only if failover actually WORKS<br/>(untested failover = a hope, Avail §7)"]
+    R --> C3["⚠️ Can't make EVERYTHING redundant<br/>(cost — Avail §8 diminishing returns)"]
+```
+
+- **Independence.** Two copies that fail together aren't redundancy — they're one SPOF wearing two faces. This is important enough to get its own section (§8).
+- **Failover must work.** Redundancy that doesn't fail *over* — a replica that's never been promoted, a standby never tested — is decorative. Untested failover is a hope (Avail §7), and hopes fail at 3 a.m.
+- **You can't afford infinite redundancy.** Every redundant copy costs money and complexity (Avail §8's exponential cost-of-nines). You make the *critical* things redundant and consciously accept SPOF risk on the rest — which means SPOF elimination is a *prioritization* exercise, not a "fix them all" one.
+
+> 💡 **Key Insight**
+>
+> The fix for a SPOF is to break one of its two conditions — add redundancy (a backup) *or* remove the dependency (don't need it on the critical path). But "add redundancy" only counts if the copies fail **independently** and the **failover is tested** — otherwise you've spent money to keep a SPOF. And since you can't afford to make everything redundant, SPOF work is really about *ranking*: which single failures would be total, and which of those can you afford to leave standing?
+
+### Quick Recap — Eliminating SPOFs
+
+- Break either SPOF condition: **add redundancy** (a backup) or **remove the dependency** (don't need it on the critical path).
+- Redundancy only works with **independent failures** (§8) and **tested failover** (Avail §7) — otherwise it's decorative.
+- You **can't afford infinite redundancy** (Avail §8) — SPOF elimination is *prioritization*: harden the total-failure risks you can't accept.
+- Sometimes the better fix is *not depending* on the component (async, caching, graceful degradation — Rel §7).
+
+---
+
+## 7. The SPOF You Can't Remove
+
+Sometimes you trace the dependencies, find the SPOF, reach for redundancy — and discover you *can't* eliminate it. Some single points are irreducible: the system genuinely needs *one* of something. Mature engineering isn't "zero SPOFs" (often impossible); it's *knowing* your remaining SPOFs and managing them deliberately. This is the realistic senior stance the topic builds toward.
+
+### Why Some SPOFs Are Irreducible
+
+A few things resist redundancy by their very nature — usually because *correctness requires a single authority*:
+
+- **A single source of truth.** Consistency (the topic waiting in the distributed-systems phases) often *requires* one authoritative owner of a piece of data. The moment you have two writable copies, they can disagree — so for strongly-consistent data, "one owner" is not an oversight, it's a *requirement*. (You can replicate for failover, but the *authority* is singular at any instant.)
+- **A single coordinator.** Some jobs need exactly one thing in charge — one leader, one lock holder, one sequencer. Redundancy here means *electing a replacement* (leader election — later phases), not running two at once, because two coordinators is a contradiction.
+- **DNS, and the root of any lookup chain.** Something has to be the entry point clients resolve first; that root is hard to fully de-SPOF (you mitigate with multiple providers, but the *concept* of "where do I start" is singular).
+
+### When You Can't Eliminate, You *Manage*
+
+If a SPOF can't be removed, you shrink the danger along three axes — the same tools from the Reliability doc, aimed at the irreducible core:
+
+```mermaid
+flowchart LR
+    Irr["🔒 Irreducible SPOF<br/>(single source of truth,<br/>coordinator, DNS root)"] --> H["🛡️ Harden it<br/>make it as reliable<br/>as possible (Rel MTBF)"]
+    Irr --> F["⚡ Fail over fast<br/>minimize MTTR<br/>(Rel §3)"]
+    Irr --> B["🧱 Shrink blast radius<br/>cells/shards so 'total'<br/>means one slice"]
+```
+
+| Lever | What it does | From |
+|---|---|---|
+| **Harden** | Pour reliability effort into the one thing that can't have a backup — highest MTBF you can buy | Rel §3 |
+| **Fast failover / recovery** | If it *does* fail, minimize how long (promote a replica in seconds, not hours) — attack MTTR | Rel §3, Avail §7 |
+| **Shrink the blast radius** | Partition so the "single" point is single *per cell*, not for the whole system — a failure hits 1/N users | Rel §6 (cells/bulkheads) |
+
+That last move is the clever one: if you can't avoid a single point, make it a single point for a *small slice* rather than for everything. Sharding/cells (a scaling technique) doubles as SPOF containment — the per-shard coordinator failing takes down one shard's users, not all of them. The blast radius shrinks from "total" to "partial," dragging the failure back into the survivable middle of the availability spectrum.
+
+> ⚠️ **"Zero SPOFs" is usually neither achievable nor the goal — *knowing* your SPOFs is.** The failure isn't having an irreducible single point; it's having one you haven't identified, hardened, or planned recovery for. A documented, hardened, fast-failover SPOF with a contained blast radius is a managed risk. An unknown SPOF is an unscheduled outage. The senior deliverable is an honest list of "here are our remaining single points and here's what we do when each fails," not an impossible claim of having none.
+
+> 💡 **Key Insight**
+>
+> Some SPOFs are irreducible because *correctness needs a single authority* (one source of truth, one coordinator). For these, the goal shifts from **eliminate** to **manage**: harden it (raise MTBF), fail over fast (cut MTTR), and shrink its blast radius (cells, so "total" means one slice). Maturity is a *known and managed* SPOF list — not the fantasy of zero.
+
+### Quick Recap — The SPOF You Can't Remove
+
+- Some SPOFs are **irreducible** — a single source of truth, a single coordinator, the DNS root — because correctness needs one authority.
+- When you can't eliminate, **manage**: **harden** (MTBF), **fail over fast** (MTTR), and **shrink the blast radius** (cells/shards).
+- Sharding doubles as containment: make the single point single *per slice*, so failure is partial not total.
+- The goal is a **known, managed** SPOF list — not "zero SPOFs" (usually impossible); an *unknown* SPOF is the real danger.
+
+---
+
+*(Sections 8–11 continue in subsequent commits.)*
