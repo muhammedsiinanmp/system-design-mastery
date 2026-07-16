@@ -452,4 +452,109 @@ The connection to the Reliability doc (§9) is direct: reliability is largely *o
 
 ---
 
-*(Sections 10–11 continue in subsequent commits.)*
+## 10. Putting It All Together — Brimble's SPOF Hunt
+
+One last visit to **Brimble** — and this time the story closes the whole phase. Brimble is now big and successful: fast (Latency doc), with availability SLOs (Availability doc), correct under retries (Reliability doc), and scaled 100× (Scalability doc). After a competitor suffers a humiliating day-long outage from an expired certificate, Brimble's team runs a formal **SPOF audit** before it happens to them. Watch every section of this document become a checklist item.
+
+### Step 1 — Trace a Request, List Every Dependency (§2)
+
+They take the checkout request and trace it end to end (§2's method), writing down *everything* it touches — not the components they think about, but every actual dependency:
+
+```mermaid
+flowchart LR
+    U["👤"] --> DNS["DNS"] --> CDN["CDN"] --> LB["Load balancer"] --> API["API"] --> Auth["Auth"] --> DB["Order DB"] --> Cfg["Config service"] --> Pay["Payment API"]
+```
+
+### Step 2 — Sort Into Obvious, Hidden, and Human (§3, §4, §9)
+
+They classify each dependency by whether it's redundant and how visible it was:
+
+| Dependency | SPOF? | Type |
+|---|---|---|
+| Load balancer | ✅ Already fixed (redundant, Avail doc) | Obvious — handled |
+| Payment provider | ✅ Already fixed (second provider, Avail doc) | Obvious — handled |
+| **Config/secrets service** | 🔴 One instance, every service reads it at startup | **Hidden** (§4) — correlated-failure engine (§8) |
+| **DNS** | 🔴 Single provider | **Hidden** (§4) |
+| **TLS certificate** | 🔴 One cert, manual renewal, no expiry alert | **Hidden** (§4) — the competitor's exact killer |
+| **Single region** | 🔴 Everything in one cloud region | **Hidden/correlated** (§8) |
+| **Payment knowledge** | 🔴 Only one engineer understands the payment integration | **Human** (§9) — bus factor 1 |
+
+The audit's value is instantly clear: the *obvious* SPOFs were already handled by the prior docs' work. Every *remaining* SPOF is a **hidden or human** one (§4, §9) — exactly as the theory predicted. The dangerous ones were never on the architecture diagram.
+
+### Step 3 — Decide Per SPOF: Eliminate, Harden, or Accept (§6, §7)
+
+Rather than "fix everything" (impossible — §6's cost limit), they triage each against the *cost of its failure* (Avail §8 economics):
+
+- **Config service → eliminate** (§6): make it redundant *and* have services cache last-known-good config so a config outage degrades instead of kills. Correlated failure (§8) defused.
+- **DNS → eliminate** (§6): add a second DNS provider. Cheap, high-value.
+- **TLS certificate → eliminate the *process* SPOF** (§9): automate renewal and add expiry alerting. The competitor's outage can't happen here now.
+- **Single region → manage, not yet eliminate** (§7): full multi-region is expensive (Avail §8). They *harden* (fast intra-region failover) and *shrink blast radius* (put the groundwork for cells), documenting it as a *known, accepted* SPOF with a plan — not an unknown one.
+- **Payment knowledge → add knowledge redundancy** (§9): document the integration, pair a second engineer onto it, write the runbook. Bus factor goes from 1 to 3.
+
+### Step 4 — Make It a Practice, Not an Event (§2, §3)
+
+The final and most important decision: the SPOF audit becomes a **standing part of design review** (§2), and the region SPOF goes on a roadmap with a trigger ("multi-region when we cross X revenue"). They've internalized that systems *drift toward SPOFs* (§3) — so the hunt is now continuous, not a one-off.
+
+### The Payoff — and the Whole Phase, Closed
+
+Six months later a cloud provider has a regional networking incident — the kind that takes down thousands of "redundant" companies via correlated failure (§8). Brimble degrades (its config caching and fast failover hold the core path) but doesn't collapse, its team calmly follows the documented region-failure plan (not one panicked person — §9), and no certificate silently expires. Brimble is now fast, available, reliable, scalable, **and** has no unmanaged single point of failure. **The five yardsticks are all green — and this last one is what tied them together.**
+
+---
+
+## 11. Final Recap and Phase Synthesis
+
+| Concept | Core Insight | Biggest Tradeoff |
+|---|---|---|
+| **What a SPOF is** | Critical dependency **AND** no redundancy — the lethal intersection | Its blast radius is *total*, not partial |
+| **Finding SPOFs** | Trace one request / walk the dependency graph; ask "what single thing takes everything down?" | The dangerous ones are the dependencies you forgot you had |
+| **Why they exist** | The default state — every component is a SPOF until redundancy is *added* | Systems drift toward SPOFs unless actively hunted |
+| **Obvious vs hidden** | The worst SPOFs (DNS, certs, config, humans) aren't on the diagram | You can't add redundancy to a dependency you don't know about |
+| **Collision point** | One SPOF violates availability, scalability, *and* reliability at once | ...so eliminating it improves all three — highest leverage |
+| **Eliminating** | Add redundancy *or* remove the dependency | Only real if failures are independent + failover tested |
+| **Irreducible SPOFs** | Some single points can't be removed (source of truth, coordinator) | Then *manage*: harden, fail over fast, shrink blast radius |
+| **Correlated failure** | "Redundant" copies sharing a hidden dependency are one SPOF | Independence, not copy-count, is what removes the SPOF |
+| **Organizational SPOFs** | People (bus factor), pipelines, keys, vendors are SPOFs too | The cure is knowledge/process redundancy, not just servers |
+
+### The One Thing to Remember
+
+> **A Single Point of Failure is one thing everything depends on with no backup — and its failure isn't a degradation, it's a total collapse. Finding them is harder and more valuable than fixing them, because the deadly ones (DNS, certificates, shared config, the one engineer who knows) are never on the diagram. You can't eliminate every SPOF, so maturity isn't "zero SPOFs" — it's a *known, hardened, managed* list, hunted continuously, because systems drift toward single points unless you resist.**
+
+### Phase 02 Synthesis — The Five Properties Are One Picture
+
+You've now completed all five core properties, and SPOF reveals why they were always one connected idea rather than five checkboxes:
+
+```mermaid
+flowchart TD
+    Load["📈 Load & failure<br/>(the pressures)"]
+    Load --> LT["⚡ Latency/Throughput<br/>fast enough?"]
+    Load --> Av["🟢 Availability<br/>there?"]
+    Load --> Rel["🛡️ Reliability<br/>right?"]
+    Load --> Sc["📊 Scalability<br/>survives growth?"]
+    LT & Av & Rel & Sc --> SPOF["🎯 SPOF<br/>the shared un-redundant thing<br/>that breaks all four at once"]
+```
+
+| Property | The question | Its failure mode |
+|---|---|---|
+| **Latency / Throughput** | Fast enough, and how much? | Slow, or capacity-capped |
+| **Availability** | Is it there? | Down (measured in nines) |
+| **Reliability** | Is it right, over time, under failure? | Wrong answers, silently |
+| **Scalability** | Does it survive growth? | Cost explodes, hits a wall |
+| **SPOF** | What single thing breaks *everything*? | Total collapse |
+
+They share one root question — **what happens when a part fails or load grows?** — and one family of answers: **no shared un-redundant dependencies, contain the blast radius, and know your tradeoffs.** Latency's utilization cliff, availability's redundancy math, reliability's fault chains, scalability's shared-state wall, and SPOF's single points are five views of the same underlying truth: *systems are defined by how they behave at their limits and under failure.* That is the vocabulary the rest of the curriculum is spoken in.
+
+> 💡 **The One Thing to Remember (whole phase):** these five properties are the **yardsticks every future design is measured against.** From here on, every technology, pattern, and architecture you study is really an *answer* to one or more of them — a way to be faster, more available, more reliable, more scalable, or to remove a single point of failure. You now have the questions. The rest of the curriculum is the answers.
+
+---
+
+## What's Next
+
+> **Phase 03 — Networking Deep Dives**
+
+Phase 02 gave you the **properties** — the yardsticks. But every one of them, traced to its root, ran into the same physical substrate: the **network.** Latency was dominated by round trips; availability by whether packets reach you; SPOFs hid in DNS and load balancers; distributed reliability lived and died on partial network failure.
+
+Phase 01's Group 1 gave you networking *intuition*. Phase 03 goes *deep*: DNS, TCP/UDP, TLS, HTTP's evolution, load balancers and proxies — the wire-level machinery underneath every property you just learned. You'll stop treating the network as a magic arrow between boxes and start understanding what actually happens on it — because you can't reason about latency, availability, or SPOFs without understanding the medium they all depend on.
+
+The yardsticks are built. Now we go beneath them, to the wire.
+
+---
