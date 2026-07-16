@@ -363,4 +363,93 @@ That last move is the clever one: if you can't avoid a single point, make it a s
 
 ---
 
-*(Sections 8–11 continue in subsequent commits.)*
+## 8. Correlated Failure — The Hidden SPOF Multiplier
+
+This is the most dangerous SPOF of all, because it *looks* like it isn't one. You added redundancy — three replicas, multiple servers, "no single point of failure" on the diagram — and yet a single event takes them all down together. The redundancy was an illusion, and the thing that made it an illusion is a **hidden shared dependency**. You met this as correlated failure in the Availability (§9) and Reliability (§5) docs; here it earns its place as the SPOF class that fools the most people.
+
+### "Redundant" Copies That Share a Secret
+
+Redundancy only multiplies away failure *if the copies fail independently* (§6). When they secretly share something, that shared thing is the real SPOF — and your N copies are one component wearing N faces:
+
+```mermaid
+flowchart TD
+    LB["⚖️ Load balancer"] --> R1["Replica 1"]
+    LB --> R2["Replica 2"]
+    LB --> R3["Replica 3"]
+    R1 & R2 & R3 --> Shared["⚙️ ...all on the same rack /<br/>same AZ / same config service /<br/>same deploy pipeline"]
+    Shared -.->|"it fails"| Boom["💥 all 3 down at once<br/>— redundancy = 0"]
+```
+
+The usual hidden dependencies that turn "redundant" into "SPOF in disguise":
+
+| Shared thing | Why the redundancy is fake |
+|---|---|
+| **Same rack / power / switch** | One power or network failure takes all copies |
+| **Same availability zone or region** | A zone/region outage drops every "redundant" copy together |
+| **Same config / secrets service** | It dies → all copies can't start or reload simultaneously |
+| **Same deploy pipeline** | One bad deploy or poisoned config rolls out to *all* copies at once |
+| **Same dependency downstream** | All copies call the same database/auth/API — that's the real SPOF |
+
+### The Deploy SPOF — Redundancy's Blind Spot
+
+Reread the Reliability doc's lesson (§5): most outages come from *changes*, not hardware. Correlated failure is why. Your three replicas are perfect protection against *one server dying* — and zero protection against a *bad deploy*, because the deploy hits all three identically and simultaneously. The deploy pipeline is a SPOF that no amount of *runtime* redundancy addresses; the mitigation is a different axis entirely — progressive/canary rollout (deploy to one copy first, watch, then proceed), which is really "don't let the change be a single simultaneous event."
+
+> ⚠️ **Redundancy on paper is not redundancy in reality until failures are independent.** Three replicas in one availability zone are *one* SPOF (the zone). Three services sharing one config system are *one* SPOF (the config). The industry's largest outages are overwhelmingly this pattern — a shared control plane, a single region's core networking, one config push — where thousands of "redundant" systems discover at the same instant that they shared a floor. Achieving genuine *independence* (spreading across racks, zones, regions, providers, and rollout stages) is most of the real work of removing SPOFs — and it's invisible on a diagram that just shows "3 replicas."
+
+> 💡 **Key Insight**
+>
+> The deadliest SPOF is the **hidden shared dependency** beneath "redundant" components — because it passes every casual review ("we have three replicas!") and fails catastrophically. When you see redundancy, don't check the *count* of copies; check what they **share**: rack, zone, region, config, pipeline, downstream dependency. Redundancy is only real to the degree the copies can fail *independently* — and independence, not multiplicity, is what actually removes the SPOF.
+
+### Quick Recap — Correlated Failure
+
+- Redundancy removes a SPOF **only if copies fail independently**; a hidden shared dependency makes N copies *one* SPOF wearing N faces.
+- Common culprits: same **rack/power**, **AZ/region**, **config/secrets service**, **deploy pipeline**, or shared **downstream dependency**.
+- The **deploy pipeline** is a SPOF runtime redundancy can't fix — canary/progressive rollout is the different-axis mitigation.
+- Don't count copies — check what they **share**; genuine **independence** (spread across racks/zones/regions/providers) is the real work.
+
+---
+
+## 9. Beyond Infrastructure — Organizational and Process SPOFs
+
+The final expansion, and one beginners almost always miss: **a SPOF doesn't have to be a machine.** The same structural pattern — one thing everything depends on, with no backup — applies to *people, processes, and knowledge*. And these are frequently the most severe SPOFs in a whole organization, precisely because nobody thinks to draw them on an architecture diagram at all.
+
+### The Human SPOF
+
+The classic: **one person is the only one who understands a critical system.** Only Dana knows how the payment reconciliation works; only Sam can deploy to production; only one engineer understands the legacy order pipeline. That person is a SPOF as real as any single database — and the failure modes are human: they go on vacation, get sick, leave the company, or are simply asleep during an incident.
+
+```mermaid
+flowchart TD
+    Sys["💳 Critical payment system"] --> P["🧑 Only ONE engineer<br/>understands it"]
+    P -.->|"on vacation /<br/>quits / unavailable"| Boom["💥 nobody can fix it<br/>when it breaks"]
+```
+
+This is often called the **bus factor** (bluntly: how many people would have to be hit by a bus before the project is in serious trouble). A bus factor of one is a human SPOF. The fix mirrors the infrastructure fix exactly — *add redundancy*, but of **knowledge**: documentation, pairing, runbooks (Rel §9), shared ownership, deliberately spreading understanding so no single person is irreplaceable.
+
+### Process and Credential SPOFs
+
+Beyond people, the same pattern hides in processes and access:
+
+| Organizational SPOF | The single point | Failure mode |
+|---|---|---|
+| **The one deploy pipeline** | All releases flow through it | It breaks → nobody can ship (or worse, ship a fix during an incident) |
+| **The lone build server** | Everything builds in one place | It dies → no new artifacts |
+| **A single credential / signing key** | One secret unlocks a critical system | Lost → locked out; leaked → compromised |
+| **One vendor / one account** | Whole business on a single provider or account | Account suspended or vendor down → total outage |
+| **Bus factor = 1** | One person's knowledge | Unavailable → unrecoverable |
+
+The connection to the Reliability doc (§9) is direct: reliability is largely *operational*, not just architectural — and so is SPOF elimination. A perfectly redundant infrastructure operated by a single irreplaceable human, deployed through a single fragile pipeline, is *not* a system without single points of failure. It just moved them off the diagram.
+
+> 💡 **Key Insight**
+>
+> SPOFs aren't only boxes on a diagram — they're anywhere the pattern *"one thing everything depends on, with no backup"* appears, including **people (bus factor), pipelines, credentials, and vendors.** These are often the most severe and least-noticed SPOFs, because SPOF-hunting instinctively looks at infrastructure. The same cure applies: add redundancy — of knowledge (docs, shared ownership), of process (multiple deploy paths), of access (key rotation, backups), of vendors. Ask the SPOF question about your *team and processes*, not just your servers.
+
+### Quick Recap — Organizational SPOFs
+
+- A SPOF needn't be a machine — the pattern (one critical thing, no backup) applies to **people, processes, knowledge, credentials, vendors**.
+- The **human SPOF / bus factor of 1**: one person is the only one who understands a critical system — fix with *knowledge* redundancy (docs, pairing, shared ownership).
+- **Process/credential SPOFs**: the lone deploy pipeline, single build server, single signing key, single vendor/account.
+- SPOF elimination is **operational too** (Rel §9) — ask the SPOF question about your team and processes, not just your servers.
+
+---
+
+*(Sections 10–11 continue in subsequent commits.)*
