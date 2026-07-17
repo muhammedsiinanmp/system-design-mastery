@@ -460,3 +460,106 @@ Then §5 sends its bill. A 300-second TTL means 288× more lookups than a 24-hou
 - The "propagation window" is the **disagreement window** — §1's eventual consistency (Dist §4) seen from operations. You're waiting for the world to *forget*, not to receive.
 - There is **no emergency lever** — you cannot flush caches you don't own. Believing otherwise costs you the stragglers when you decommission early.
 - The only lever is **lowering TTL in advance**, and it's itself gated by the old TTL — so it must be pulled at least one full old-TTL before the change (§10).
+
+---
+
+## 8. DNS as a SPOF
+
+The SPOF doc named DNS twice, and both entries were promissory notes this section settles.
+
+It listed DNS in its **hidden SPOF** table (SPOF §4) with a line worth re-reading now that you know the machinery: *"It just works" — not thought of as a component. DNS fails → nobody can **find** you, however healthy your servers.* And in §7 it called the resolution root one of the **irreducible** SPOFs — "something has to be the entry point clients resolve first."
+
+You now have enough to see why both are true, and where each stops being true.
+
+### Why DNS Fails the Two-Condition Test So Badly
+
+SPOF §1 set the test: a SPOF is a component that is **critical** *and* **alone**. DNS is the most critical thing in your architecture by a margin that's easy to miss:
+
+```mermaid
+flowchart LR
+    U["👤 User"] --> D["🌐 DNS"]
+    D -->|"🔴 fails here"| Stop["💥 Nothing else<br/>ever runs"]
+    D -->|"resolves"| CDN["CDN"] --> LB["⚖️ LB"] --> API["API"] --> DB["🗄️ DB"]
+    style Stop fill:#5c1a1a,color:#fff
+```
+
+Every box to the right can be perfect — multi-region, replicated, auto-scaling, nine nines of engineering — and reachable by **nobody**, because the user never got an address. DNS isn't on the critical path; it's *in front of* the critical path. Availability §6's series math is unforgiving here: DNS sits in series with your entire system, so its availability is a **hard ceiling** on everything downstream. No amount of redundancy to the right of that first box raises the ceiling.
+
+And DNS is a *hidden* SPOF for exactly the reason SPOF §4 gave — it isn't experienced as a component. It's experienced as a fact of the universe, like DHCP or gravity. Nobody puts it on the architecture diagram, nobody assigns it an owner, and so nobody notices it has exactly one of everything.
+
+### The Three DNS SPOFs You Actually Have
+
+"DNS" isn't one dependency. It's at least three, with wildly different reducibility — and conflating them is why teams think they've de-SPOFed DNS when they've addressed one third of it:
+
+| The SPOF | Why it's singular | Reducible? |
+|---|---|---|
+| **Your authoritative provider** | One vendor serves your zone | ✅ **Yes** — add a second provider. This is the cheap, high-value one |
+| **Your registrar / the domain itself** | One account, one renewal, one registry record | ⚠️ **Partly** — you can't have two registrars. Harden it |
+| **The resolution root** | Something must be the first thing asked | ❌ **No** — irreducible by construction (SPOF §7) |
+
+**The provider** is the one worth acting on, and §4 already told you how it's possible: `NS` records exist at both the parent and in your zone, and the parent can delegate to nameservers from two different vendors at once. Resolvers try them and use whichever answers. Both providers serve the same zone; either one dying is survivable. This is unusually cheap redundancy for unusually high value — which is precisely why the SPOF doc's Brimble hunt flagged it (§10).
+
+**The registrar** is the ugly one, because it's a SPOF you can't duplicate. There is exactly one registration for your domain, in one account, and if it lapses or is hijacked, nothing else matters — not your two providers, not your nine nines. The famous version of this failure is an expired domain: an unattended renewal card, a notification to someone who left the company, and a company that ceases to exist online while every server hums along perfectly. You can't make it redundant. You harden it: registry lock, auto-renew, a card that doesn't expire, alerts to a *team* alias rather than a person, and multi-year registration. This is SPOF §7's "harden what you can't remove," and it's also its **organizational** SPOF chapter wearing an infrastructure costume — the failure is a *process*, not a machine.
+
+**The root** is genuinely irreducible, and §2 already explained why it's survivable anyway: anycast. Something must be asked first, so structurally it's singular — but that singular logical entity is hundreds of machines. Critical, but not *alone*, so it fails SPOF §1's second condition. It's the rare irreducible SPOF that isn't a real risk to you, and the reason is worth internalizing: **an irreducible dependency is fine when someone has made it internally redundant.** You're not spared the dependency, only the failure.
+
+> 💡 **Key Insight**
+>
+> DNS is the purest hidden SPOF in the curriculum: **maximally critical** (in series with everything — Avail §6 makes it a hard ceiling on your entire system's availability) and **maximally invisible** (nobody diagrams it, owns it, or thinks of it as a component). Untangle it into three — **provider** (redundant it, cheaply), **registrar** (harden it, you can't duplicate it), **root** (already handled, by anycast). Fixing only the first and calling DNS solved is how the second one gets you.
+
+### Quick Recap — DNS as a SPOF
+
+- DNS sits **in series with everything** (Avail §6) — a hard ceiling on system availability that no downstream redundancy can raise.
+- It's the archetypal **hidden** SPOF (SPOF §4): not on the diagram, not owned, experienced as a fact of nature rather than a component.
+- It's really **three** SPOFs: provider (**reducible** — second provider via dual `NS`, §4), registrar (**harden only** — one account, one renewal), root (**irreducible** but anycast-redundant, §2).
+- An irreducible dependency is survivable when someone else made it redundant — the root proves it; your registrar proves the inverse.
+
+---
+
+## 9. How DNS Fails
+
+§8 covered the structural failure — DNS as SPOF. This section is the field guide: the specific ways DNS breaks, ordered roughly by how often they actually take companies down.
+
+### The Taxonomy
+
+| Failure | What happens | Why it hurts more than expected |
+|---|---|---|
+| **Misconfiguration** | Bad record, typo'd IP, wrong `NS` | Instantly cached everywhere. The fix is subject to TTL (§7) — **the rollback is as slow as the change** |
+| **Expired domain** | Registration lapses | Total, sudden, and a *billing* failure — no engineering signal precedes it (§8) |
+| **Resolver outage** | The recursive resolver dies | Not your fault, fully your outage. Users can't resolve *anything* (§2) |
+| **DDoS on authoritative** | Your nameservers are flooded | Cached users unaffected — cold users can't reach you. **A slow-motion outage as TTLs expire** |
+| **Split-horizon surprise** | Internal and external views diverge | Works in staging, fails in prod — or vice versa. Invisible to whoever's testing |
+| **Negative caching** | `NXDOMAIN` cached before the record existed | The record is live and correct; the *absence* is what's stuck (§3) |
+
+Three of these deserve elaboration, because they behave in ways the table can't convey.
+
+### Misconfiguration: The Rollback Is as Slow as the Change
+
+This is the most common DNS outage, and its signature cruelty is asymmetric time. Publishing a wrong record takes effect at the speed of your next cache miss — fast. Fixing it takes effect at the speed of TTL expiry — slow. **You can break DNS instantly and can only unbreak it eventually.**
+
+Every other layer of your stack has a fast rollback. Bad deploy? Roll back, thirty seconds. Bad config? Revert, restart. Bad DNS record with a 24-hour TTL? You get to watch. This is the single strongest argument for §7's discipline: the TTL you set on a *normal* day determines how fast you can recover on a *bad* one. Low TTLs aren't just for migrations — they're your DNS rollback speed, purchased in advance (§5 sends the bill).
+
+### DDoS on Authoritative: The Outage That Arrives in Slow Motion
+
+Attack the authoritative nameservers and something strange happens: **nothing**, at first. Everyone with a cached answer is fine. They resolve, they connect, they never notice.
+
+Then TTLs start expiring. One cache, then another. Each expiry converts a working user into a broken one, permanently, because there's no authoritative server left to re-ask. The outage doesn't *start* — it **accretes**, at a rate set by your TTL distribution, over hours.
+
+This is the one case where a **long** TTL is your friend — it's a buffer of stale-but-working answers absorbing the attack. Which puts long TTLs on both sides of the ledger: they slow your recovery from misconfiguration (above) and they cushion you against provider loss. There's no setting that's safe against both. That's the trade §11 records.
+
+### Correlated Failure: The One That Takes Down the Internet
+
+Availability §9 already described this shape and named DNS in it: a **shared control plane** letting go, and every "redundant" service depending on it going down together. DNS is the largest instance of that pattern in existence.
+
+The public record is consistent: when a major managed DNS provider has a bad day, thousands of independently-architected companies — different clouds, different languages, different teams, no relationship to each other — go dark **simultaneously**. Each one had redundant servers. Many were multi-region. It made no difference. They had all, independently and invisibly, chosen the same single DNS vendor, and discovered together that their redundancy shared a floor.
+
+That's Availability §9's lesson in its sharpest form: *redundancy across things that share a hidden dependency is one component with extra copies of its faces.* The correlated dependency wasn't in anyone's architecture diagram, because a vendor isn't a component — it's a decision made once, years ago, by someone who has since left.
+
+> ⚠️ **DNS failures are asymmetric in time, and that asymmetry is the whole danger.** Breaking is instant (a bad record caches immediately); fixing is bounded by TTL (§7). Meanwhile a provider outage does the reverse — invisible at first, then accreting into totality as caches expire. Long TTLs cushion provider loss and lengthen misconfiguration recovery. Short TTLs do the opposite and cost latency (§5). There is no safe number — only a chosen trade, made before you find out which failure you got.
+
+### Quick Recap — How DNS Fails
+
+- **Misconfiguration** is the most common failure, and it's time-asymmetric: instant to break, TTL-bounded to fix — your **rollback speed is the TTL you chose yesterday**.
+- **Authoritative DDoS** produces a slow-motion outage that *accretes* as TTLs expire — the one case where a long TTL is a buffer.
+- **Negative caching** (§3) and **split-horizon** failures are correctness-shaped, not availability-shaped — the record is right, but somebody's view of it isn't.
+- **Correlated provider failure** is the big one (Avail §9): thousands of unrelated companies share one DNS vendor and go dark together — redundancy with a shared floor.
