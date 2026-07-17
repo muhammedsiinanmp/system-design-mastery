@@ -90,7 +90,7 @@ Follow these every time you add a topic:
 
 | # | Topic | Status | File |
 |---|---|---|---|
-| 01 | DNS — Domain Name System | 🚧 In Progress | `03-networking/01-dns/README.md` |
+| 01 | DNS — Domain Name System | ✅ Done | `03-networking/01-dns/README.md` |
 | 02 | HTTP & HTTPS | 📋 Planned | `03-networking/02-http-https/README.md` |
 | 03 | TCP vs UDP | 📋 Planned | `03-networking/03-tcp-vs-udp/README.md` |
 | 04 | Proxy vs Reverse Proxy | 📋 Planned | `03-networking/04-proxy-vs-reverse-proxy/README.md` |
@@ -355,7 +355,7 @@ Follow these every time you add a topic:
 |---|---|---|---|---|---|---|
 | 01 | Introduction | 7 | 7 | 0 | 0 | 0 |
 | 02 | Core System Properties | 5 | 5 | 0 | 0 | 0 |
-| 03 | Networking | 7 | 0 | 1 | 5 | 1 |
+| 03 | Networking | 7 | 1 | 0 | 5 | 1 |
 | 04 | APIs & Communication | 15 | 0 | 0 | 14 | 1 |
 | 05 | Storage & Databases | 27 | 0 | 0 | 19 | 8 |
 | 06 | Scaling & Performance | 10 | 0 | 0 | 10 | 0 |
@@ -364,7 +364,7 @@ Follow these every time you add a topic:
 | 09 | Architecture & Microservices | 13 | 0 | 0 | 7 | 6 |
 | 10 | Observability & Security | 13 | 0 | 0 | 11 | 2 |
 | 11 | Interview Preparation | 21 | 0 | 0 | 4 | 17 |
-| **Total** | | **150** | **12** | **1** | **97** | **40** |
+| **Total** | | **150** | **13** | **0** | **97** | **40** |
 
 ---
 
