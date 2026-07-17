@@ -186,7 +186,6 @@ flowchart LR
     OS --> Rec["⚙️ Resolver cache<br/>🔑 the big one"]
     Rec --> Fwd["🏢 Forwarder"]
     Fwd --> Auth["🟢 Authoritative<br/>✅ the ONLY layer you own"]
-    style Auth fill:#1a4d2e,color:#fff
 ```
 
 ### TTL Is a Suggestion
@@ -381,7 +380,6 @@ flowchart TD
     Detect --> Pull["✏️ Bad IP withdrawn<br/>T+35s — you're 'done'"]
     Pull --> Wait["⏳ Caches still serving<br/>the dead IP<br/>for the full TTL"]
     Wait --> Real["🟢 Traffic actually moves<br/>T + 35s + TTL + the tail"]
-    style Wait fill:#5c1a1a,color:#fff
 ```
 
 Your provider detected the failure in 30 seconds and did its job perfectly. Users kept hitting the dead server anyway — because the answer was already in caches you can't reach, and health checks can't retract an answer that's already been given. **DNS failover doesn't redirect traffic. It stops handing out a bad answer to people who haven't asked yet.**
@@ -482,7 +480,6 @@ flowchart LR
     U["👤 User"] --> D["🌐 DNS"]
     D -->|"🔴 fails here"| Stop["💥 Nothing else<br/>ever runs"]
     D -->|"resolves"| CDN["CDN"] --> LB["⚖️ LB"] --> API["API"] --> DB["🗄️ DB"]
-    style Stop fill:#5c1a1a,color:#fff
 ```
 
 Every box to the right can be perfect — multi-region, replicated, auto-scaling, nine nines of engineering — and reachable by **nobody**, because the user never got an address. DNS isn't on the critical path; it's *in front of* the critical path. Availability §6's series math is unforgiving here: DNS sits in series with your entire system, so its availability is a **hard ceiling** on everything downstream. No amount of redundancy to the right of that first box raises the ceiling.
