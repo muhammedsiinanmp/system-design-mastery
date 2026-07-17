@@ -270,3 +270,72 @@ The industry's answer is **ALIAS** / **ANAME** / **CNAME flattening**: a non-sta
 - `SOA` carries the **negative-cache TTL** — the field that decides how long `NXDOMAIN` sticks (§3).
 - `MX` **priorities** are DNS's only native failover — evidence that everything else in DNS wasn't built to fail over (§6).
 - A `CNAME` **cannot coexist with other records**, so the apex can never be one — forcing the non-standard ALIAS/ANAME workaround and a quiet provider dependency (§8).
+
+---
+
+## 5. DNS as a Latency Cost
+
+Foundations §7 made DNS **Step 1** of the request walkthrough, and the Latency doc broke a request's time into its components (Latency §2). Put those together and you get the fact this section is about:
+
+> **DNS latency is time the user waits before your system has received a single byte — and it is invisible in every metric your servers produce.**
+
+Your p99 can be immaculate. Your dashboards can be entirely green. And users can still be waiting, because the wait happened before the request existed.
+
+### Cold and Warm Are Different Systems
+
+The spread between a cached lookup and an uncached one is not a detail — it's two orders of magnitude:
+
+| | **Warm** (cached) | **Cold** (full walk) |
+|---|---|---|
+| Who answers | Resolver, from memory | Root → TLD → authoritative (§2) |
+| Round trips | 1 | 4+ |
+| Typical | **~1–5 ms** | **~50–300 ms** |
+| How often | The overwhelming majority | The unlucky minority |
+
+Foundations §3's "single-digit milliseconds" describes the *warm* case, and it's right — most lookups are warm, because the resolver absorbs the walk for millions of clients (§2). But "most" is doing heavy lifting there, and the Latency doc already taught you to distrust it.
+
+### This Is a Tail Story, and the Tail Is Where Users Live
+
+Latency §5 said it: judge by percentiles, not averages. DNS is the purest instance of that lesson in the entire curriculum.
+
+The *average* DNS lookup is nearly free — cache hit, a millisecond, gone. So the average tells you DNS costs nothing, and the average is useless. The distribution is **bimodal**: a huge spike at ~1ms and a second, distant hump at 50–300ms. Nobody experiences the mean. You either hit cache or you take the walk.
+
+And the cold path isn't randomly distributed — it lands disproportionately on the users you least want to lose: the **first-time visitor**, the user on a mobile network whose resolver is far away, the one arriving after a TTL expiry. Your most important request — someone's first impression of your product — is the one most likely to pay full price.
+
+```mermaid
+flowchart LR
+    U["👤 User"] --> D{"Cached<br/>anywhere?"}
+    D -->|"hit (most)"| W["🟢 ~1-5ms<br/>invisible"]
+    D -->|"miss"| C["⚠️ Full walk (§2)<br/>~50-300ms"]
+    W --> R["Request finally starts"]
+    C --> R
+    R --> S["Your server<br/>📊 metrics start HERE"]
+```
+
+Note where the metrics start in that diagram. Everything to the left of `S` is real user-perceived latency that your monitoring never sees — which is exactly the component-versus-user-perceived gap Availability §9 warned about. Every internal component reports green while users wait.
+
+### Chains Multiply the Bill
+
+§4's `CNAME` has a latency cost that compounds. A `CNAME` isn't an answer — it's a redirection to *another* name, which must itself be resolved. So `www.brimble.com` → `CNAME` → `lb.provider.net` → `CNAME` → `edge.provider-cdn.net` → `A` is **three** resolutions deep, each with its own chance of a cold miss.
+
+This is how architecturally reasonable decisions — put the CDN in front, let the provider indirect — silently stack milliseconds onto the front of every cold request. Each link is defensible. The chain is what costs.
+
+### What You Can Actually Do
+
+The lever inventory here is short and honest, because §3 already established you control one layer:
+
+- **`dns-prefetch` / `preconnect`** — resolve names during idle time, before the user clicks. The most effective tool available, because it moves the cost off the critical path rather than reducing it.
+- **Fewer distinct domains** on the critical path — every extra hostname is a separate lookup with its own cold-miss chance. Sharding assets across four subdomains is four potential cold walks.
+- **Flatten `CNAME` chains** where a provider allows it (§4's ALIAS does exactly this).
+- **Longer TTLs** — fewer cold misses. But this is the trade, not a free win: §6 and §7 are about what long TTLs cost you.
+
+> 💡 **Key Insight**
+>
+> DNS latency is **structurally invisible**: it's paid before your server sees the request, so it never appears in your p99, and it's *bimodal*, so the average says it's free. It isn't free — it's concentrated on first-time and mobile users, the ones forming a first impression. The only durable fix isn't making the lookup faster; it's **making it happen earlier** (prefetch) or **less often** (longer TTLs, fewer domains, flatter chains) — and that last one is a loan you repay in §7.
+
+### Quick Recap — DNS as a Latency Cost
+
+- DNS is paid **before byte one** reaches your system — invisible to server metrics, visible to users (Avail §9).
+- The distribution is **bimodal**: ~1–5ms warm, ~50–300ms cold. Nobody experiences the average (Latency §5).
+- Cold misses concentrate on **first-time and mobile users** — your worst-priced request is someone's first impression.
+- `CNAME` chains **multiply** lookups; prefetch moves the cost off the critical path; longer TTLs reduce misses but mortgage §7.
