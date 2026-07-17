@@ -563,3 +563,133 @@ That's Availability §9's lesson in its sharpest form: *redundancy across things
 - **Authoritative DDoS** produces a slow-motion outage that *accretes* as TTLs expire — the one case where a long TTL is a buffer.
 - **Negative caching** (§3) and **split-horizon** failures are correctness-shaped, not availability-shaped — the record is right, but somebody's view of it isn't.
 - **Correlated provider failure** is the big one (Avail §9): thousands of unrelated companies share one DNS vendor and go dark together — redundancy with a shared floor.
+
+---
+
+## 10. Putting It All Together — Brimble's DNS Migration
+
+**Brimble** left this document a ticket.
+
+When their SPOF audit closed out Phase 02, the team triaged every single point of failure they'd found and assigned each an action. Most got done. One line item didn't:
+
+> **DNS → eliminate** (SPOF §6): add a second DNS provider. Cheap, high-value.
+
+It was the *easiest* item on the list, which is exactly why it survived four quarters of neglect — nothing was on fire, DNS "just worked" (SPOF §4's whole point), and no incident ever made it urgent. Then a major managed DNS provider had a bad morning, thousands of unrelated companies went dark together (§9), and Brimble's provider — by luck, not design — wasn't the one. The ticket stopped being cheap and started being obvious.
+
+Here's them finally doing it. Watch every section of this document become a step.
+
+### Step 1 — Separate the Three SPOFs (§8)
+
+Before touching anything, they split "DNS" into what it actually is (§8), because the audit line said "add a second provider" and that only addresses one third:
+
+| Their DNS SPOF | Status | Action |
+|---|---|---|
+| **Authoritative provider** | 🔴 One vendor | Add a second — *this is the ticket* |
+| **Registrar** | 🔴 One account, card expiring in 4 months, alerts to one ex-employee's inbox | Can't duplicate — **harden** (§8) |
+| **Root** | 🟢 Anycast (§2) | Nothing to do |
+
+The registrar finding is the one that rattles them: it wasn't on the ticket, it can't be made redundant, and it would have taken them down *harder* than the provider — a lapsed domain doesn't degrade, it deletes you. They fix it the same afternoon: auto-renew, registry lock, a corporate card with no expiry, and alerts to a **team alias** rather than a person. That's SPOF §9's organizational SPOF, found wearing an infrastructure costume.
+
+### Step 2 — Lower the TTL First, and Wait a Full Old TTL (§7)
+
+Their apex TTL is **86400** — 24 hours. Somebody proposes making the change tonight. §7 says no.
+
+Lowering the TTL is *itself* gated by the old TTL: resolvers holding a 24-hour answer won't learn about a 300-second TTL for up to 24 hours. So the sequence has a mandatory wait built into it:
+
+```
+T-48h   TTL 86400 (24h) — steady state
+T-24h   ✏️ Lower TTL to 300 ...and WAIT a full 24h
+        └── old-TTL holders must expire before the new TTL is true anywhere
+T+0     🚀 The actual change — the world now forgets in ~5 min, not ~24h
+T+24h   ⬆️ Raise TTL back to 86400 (§5's bill)
+```
+
+The team's instinct — "it's a config change, we can do it tonight" — is precisely the instinct §7 exists to kill. **The migration started 24 hours before the migration.** Anyone planning it the day before has already lost the only lever DNS gives you.
+
+### Step 3 — Run Both Providers at Once (§4, §8)
+
+Now the actual redundancy, and it works because of a `NS` detail from §4: nameserver records live in **two places** — at the parent TLD and in the zone itself — and the parent can delegate to nameservers from *two different vendors simultaneously*.
+
+```mermaid
+flowchart TD
+    TLD["🌐 .com TLD<br/>NS records point to BOTH"]
+    TLD --> P1["🟢 Provider A<br/>ns1/ns2.provider-a.net"]
+    TLD --> P2["🟢 Provider B<br/>ns1/ns2.provider-b.net"]
+    P1 --> Z["📋 Identical zone data"]
+    P2 --> Z
+    Z --> Ans["✅ Either provider can answer<br/>Either can die<br/>Not a SPOF (SPOF §1)"]
+```
+
+Both providers serve the same zone. Resolvers pick whichever answers. Neither is critical *and* alone anymore — which is exactly SPOF §1's two-condition test failing, on purpose, for the first time.
+
+They don't cut over. They **overlap**: Provider B goes live alongside A, both authoritative, for two weeks. If B is misconfigured, A is still answering. The dual-provider end state *is* the goal, so the "migration" is really just a redundancy addition that never ends.
+
+### Step 4 — The Record They Forgot (§3, §4)
+
+They copy the zone to Provider B: apex `A`, `www`, the ALIAS for the CDN (§4), a dozen subdomains. They diff the two zones. It matches. They go live.
+
+Four days later, sales notices nobody has emailed them back.
+
+**The `MX` records didn't get copied.** They were created years ago by someone in a different tool and never lived in the file the team diffed. So: resolvers that happened to ask Provider A got mail routing fine. Resolvers that happened to ask Provider B got **`NXDOMAIN`** — no `MX` here — and sending mail servers concluded Brimble doesn't accept mail. Roughly half the internet's mail to them bounced, at random, for four days, while every dashboard stayed green (§5 — DNS failures don't appear in your metrics).
+
+Then it gets worse in the specific way §3 promised. They add the `MX` records to Provider B and mail *stays* broken for hours — because the **negative** answer was cached, governed by the `SOA`'s negative-cache TTL, not by any record's TTL. The record is live. The record is correct. The **absence** is what's stuck. You cannot fix a cached "no" by creating the thing; you can only wait for the "no" to expire (§7 — nothing propagates).
+
+Two lessons the team writes down:
+
+- **Diff what the *provider* answers, not what your file says.** Query both providers for every record type and compare the responses. Zone files lie by omission; `MX` and `TXT` (SPF, domain verification) are the classic omissions because nobody who works on the website thinks about mail.
+- **Partial DNS redundancy is worse than none.** With one provider, a missing record fails for everyone, immediately, loudly. With two, it fails for *half* of everyone, *at random*, silently — a coin flip per resolver. They'd accidentally built the hardest possible failure to reproduce.
+
+### Step 5 — Verify From Where Users Are, Not From Your Laptop (§1, §6)
+
+"Works for me" is meaningless here, and §1 says why: the world is *supposed* to disagree during the window. Both answers are legitimate. Your laptop's resolver is one sample of millions, and it's the least representative one — it's the one you just flushed.
+
+So they check from many vantage points and both providers explicitly, and they watch for the §6 trap too: GeoDNS answers depend on where the **resolver** is, not the user, so verifying from one location tells you almost nothing about what a user in another region receives.
+
+### Step 6 — Raise the TTL Back (§5)
+
+Two weeks later, stable, they raise the apex TTL to 86400 — because §5's bill is real. A 300-second TTL means **288× more lookups** than a 24-hour one, and every extra cold walk (50–300ms) lands on a first-time or mobile user (§5).
+
+But they don't raise it blindly. §9 taught them the TTL number *is* their rollback speed: a 24-hour TTL means a bad record takes a day to un-break. So they settle on **3600** — one hour — as a deliberate compromise: cheap enough on lookups, fast enough to recover, and the number is now written in the runbook with the reasoning attached, so the next person doesn't "optimize" it without knowing what they're selling.
+
+### The Payoff
+
+Eight months later, Provider A has a multi-hour outage. Thousands of companies go dark. Brimble's traffic doesn't move — resolvers that can't reach A ask B, get an answer, and connect. Nobody pages anyone. The incident channel has one message in it, posted the next morning, linking the news.
+
+The ticket had been open for four quarters and would have taken an afternoon. What made it finally get done wasn't discipline — it was watching it happen to somebody else. **That's the honest lesson of the whole document: DNS is the thing you fix after you get scared, and the scare is optional but the fixing isn't.**
+
+---
+
+## 11. Final Recap
+
+| Concept | Core Insight | Biggest Tradeoff |
+|---|---|---|
+| **What DNS is** | A distributed, delegated, cached, **eventually consistent** database — not a lookup (Dist §4) | Always up, sometimes stale — every hard DNS problem is this bill |
+| **Delegation** | Nobody holds the database; each level knows only *who to ask next* | Scales infinitely; makes *authority* the thing that matters |
+| **Resolution path** | Your device asks **one** recursive question; the resolver does **all** the iterative walking | The resolver's cache is load-bearing — and it isn't yours |
+| **Caching layers** | Five layers can answer; **you control exactly one** — the last one asked | You can't push a change, only wait it out |
+| **TTL** | Advisory, not binding — clamped, ignored, sometimes cached forever | It's the *earliest* update, never the actual one |
+| **Negative caching** | `NXDOMAIN` is cached too, governed by the `SOA` | A name can stay "nonexistent" after it exists |
+| **Record types** | `NS` **is** delegation; `MX` priorities are DNS's only native failover | Apex can't be a `CNAME` → non-standard ALIAS → provider lock-in |
+| **Latency** | Bimodal: ~1–5ms warm, ~50–300ms cold — paid **before** your server sees anything | Invisible in your metrics; concentrated on first-time users |
+| **Traffic control** | The only layer that steers across regions/providers (Scaling §5) | Advisory, not authoritative — influence with a lag |
+| **Propagation** | **Doesn't exist.** Caches expire; nothing is ever sent | The only lever (TTL) works only *in advance* |
+| **DNS as SPOF** | In series with everything → a hard ceiling on availability (Avail §6) | It's *three* SPOFs: provider (fix), registrar (harden), root (fine) |
+| **Failure modes** | Time-asymmetric: instant to break, TTL-bounded to fix | Long TTL cushions provider loss *and* slows recovery — no safe number |
+
+### The One Thing to Remember
+
+> **DNS is not a lookup that returns an address — it's a globally replicated cache you can write to but never invalidate. You don't change what a name means; you publish a new answer and wait for the world to forget the old one, at a pace set by caches you don't own, honoring a TTL they may ignore. Everything follows from that: failover is slow because you can't retract an answer, migrations start a day early because TTL is the only lever and it works in advance, and DNS is the deadliest hidden SPOF you have because it sits in series with everything while appearing on no diagram. The question is never "how fast can I change DNS?" — it's "what did I set the TTL to, yesterday?"**
+
+---
+
+## What's Next
+
+> **Topic 02 — HTTP & HTTPS**
+
+DNS answered *where*. It handed you an address and stepped out of the way — and everything it taught you was about a system that speaks once, briefly, before the real conversation starts.
+
+Now that conversation. **HTTP** is the language your request is actually written in, and it has been quietly rewritten three times — HTTP/1.1's head-of-line blocking, HTTP/2's multiplexing, HTTP/3 abandoning TCP entirely — each revision an attack on a latency cost you met in Foundations §7 and priced in Latency §2. **HTTPS** is what wraps it, and the wrapping isn't free: TLS adds round trips before a single byte of your request moves, and a certificate is the SPOF that took down the competitor whose outage started Brimble's entire audit (SPOF §10).
+
+You've priced the lookup. Next you price the handshake — and find out what "just add HTTPS" actually costs.
+
+---
