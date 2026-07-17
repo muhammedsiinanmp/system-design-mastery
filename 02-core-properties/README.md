@@ -44,3 +44,6 @@ Every later phase spends this vocabulary; this is where you earn it.
 ---
 
 Progress and the full curriculum live in [ROADMAP.md](../ROADMAP.md).
+When you're through this phase, continue to
+[Phase 03 — Networking Deep Dives](../03-networking/README.md), where the
+yardsticks meet the wire they all depend on.
