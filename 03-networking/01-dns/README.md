@@ -394,3 +394,69 @@ That's the entire difference between DNS-level failover and a load balancer pull
 - The four mechanisms — **round-robin, weighted, GeoDNS, health-checked failover** — are all advisory, because the answer lands in caches you don't control (§3).
 - Round-robin balances **answers, not load**; GeoDNS locates the **resolver, not the user** — both are right in aggregate, wrong at the edges.
 - Health-checked failover **stops giving out a bad answer** — it can't retract answers already given, so real failover takes TTL + tail (§7).
+
+---
+
+## 7. Propagation Is a Myth
+
+Foundations §3 warned that *"just update DNS" is never instant*. Here's the payoff — and it's blunter than a warning about delay:
+
+> **Nothing propagates. There is no propagation. The word describes a process that does not occur.**
+
+"DNS propagation" implies a wave — your change spreading outward, sweeping across the internet, arriving at resolvers over some hours. Every part of that picture is false. **Your change goes nowhere.** It sits on your authoritative server, doing nothing, being told to nobody.
+
+What actually happens is the opposite of a push. Caches **expire**, independently, on their own schedules, and each one — long after you've forgotten you made the change — asks again and *happens to hear the new answer*. There's no wave. There's a scatter of unrelated timers, each running down, each triggering one incurious re-query.
+
+This is §1's eventual consistency, arrived at from the operational side. DNS is AP (Dist §4): it stays up and tolerates disagreement. The "propagation window" is just the **disagreement window** — the period where the world holds two answers and both are legitimate. You're not waiting for delivery. **You're waiting for the world to forget.**
+
+```mermaid
+flowchart TD
+    You["✏️ You change the record<br/>T+0"] --> Sits["😴 It sits there.<br/>Nobody is told.<br/>Nothing is sent."]
+    Sits --> R1["Resolver A's TTL expires<br/>→ asks → learns"]
+    Sits --> R2["Resolver B's TTL expires<br/>→ asks → learns"]
+    Sits --> R3["Resolver C cached 24h ago<br/>→ still serving the old IP<br/>→ still correct"]
+    R1 --> Done["🟢 Converged — eventually,<br/>at each cache's own pace"]
+    R2 --> Done
+    R3 -.->|"much later"| Done
+```
+
+### Why the Myth Is Expensive
+
+This isn't pedantry about a word. The wrong model produces the wrong action every time:
+
+| If you believe *propagation* | You do this | What actually happens |
+|---|---|---|
+| It's a wave arriving over hours | Change the record, then wait | The wait is uncontrolled — you had one lever and didn't pull it |
+| It'll finish when the wave passes | Decommission the old server "after propagation" | The stragglers were still on it. You broke them |
+| You can push it faster | Flush caches, contact support, re-save the record | **Nothing** — you cannot reach caches you don't own (§3) |
+| Someone else has the same view | "It works for me" ends the debate | Both of you are right; you're on different timers |
+
+That third row is the cruel one. When a DNS change is going badly, there is **no emergency lever**. You can't force it. The only lever DNS ever gave you had to be pulled *before* the change — and if you didn't, you wait.
+
+### The Only Real Lever, and It's a Time Machine
+
+Since nothing can be pushed, the entire discipline reduces to one move made in advance: **lower the TTL before you need it.**
+
+```
+T-48h   TTL is 86400 (24h)  ← the steady state
+T-24h   Lower TTL to 300     ← the actual migration step
+        └── caches still holding the 24h TTL keep it for up to 24h more
+T+0     Make the real change  ← now the world forgets in ~5 minutes
+T+1h    Verify from many vantage points
+T+24h+  Raise TTL back to 86400 (§5's latency bill)
+```
+
+The subtlety that catches people: **lowering the TTL is itself subject to the old TTL**. A resolver holding a 24-hour answer will not learn about your new 300-second TTL for up to 24 hours. The TTL change has to *outlive* the old TTL before it's true everywhere. That's why the lowering happens at least one full old-TTL ahead of the change — and why a migration planned the day before is already too late to plan.
+
+Then §5 sends its bill. A 300-second TTL means 288× more lookups than a 24-hour one, and far more cold walks landing on real users. So low TTLs aren't free agility — they're **paid agility**, which is why you lower them for a window and raise them after.
+
+> 💡 **Key Insight**
+>
+> Stop saying propagation. Say **expiry**. Your change is never delivered to anyone — it sits still while millions of independent timers run down and each cache incuriously re-asks. That reframe hands you the only correct operational instinct DNS has: since you can't push, the lever is **TTL, and it only works in advance**. "How fast can I change DNS?" is the wrong question. The right one is **"what did I set the TTL to, yesterday?"**
+
+### Quick Recap — Propagation Is a Myth
+
+- **Nothing propagates.** Your change sits on the authoritative server; caches **expire** independently and re-ask on their own timers (§3).
+- The "propagation window" is the **disagreement window** — §1's eventual consistency (Dist §4) seen from operations. You're waiting for the world to *forget*, not to receive.
+- There is **no emergency lever** — you cannot flush caches you don't own. Believing otherwise costs you the stragglers when you decommission early.
+- The only lever is **lowering TTL in advance**, and it's itself gated by the old TTL — so it must be pulled at least one full old-TTL before the change (§10).
