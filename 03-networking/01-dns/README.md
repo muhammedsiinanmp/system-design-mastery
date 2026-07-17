@@ -155,3 +155,118 @@ This matters for §8. "The root" sounds like a catastrophic SPOF, and structural
 - Your **stub resolver** is deliberately dumb — one question, one wait. The **recursive resolver** does all the real walking and absorbs it for millions of clients.
 - **Glue records** solve the bootstrap loop when a zone's nameserver lives inside the zone it serves.
 - The **13 root addresses** are hundreds of machines behind **anycast** — critical, but not alone, and therefore not a SPOF (SPOF §1).
+
+---
+
+## 3. Caching, TTL, and the Layers
+
+Foundations §3 said answers are cached "at every level — browser, OS, resolver." True, and far too gentle. That sentence describes the single most consequential fact about operating DNS, and it deserves to be stated as what it is:
+
+> **When you publish a DNS record, you are writing to millions of caches you do not own, cannot list, cannot reach, and cannot invalidate. Your only control is a number attached to the answer — the TTL — which is a *request*, not a command.**
+
+Everything in §6 and §7 falls out of that.
+
+### The Stack Is Deeper Than You Think
+
+A single lookup can be served — and *stopped* — at any of these:
+
+| Layer | Lives in | Do you control it? | Notes |
+|---|---|---|---|
+| **Application** | Browser, JVM, runtime | ❌ | Browsers cache ~60s regardless of TTL; some JVMs historically cached **forever** |
+| **OS** | `nscd`, `systemd-resolved`, Windows client | ❌ | Survives your app restarting |
+| **Recursive resolver** | ISP / `8.8.8.8` | ❌ | The big one — serves millions, absorbs the whole walk (§2) |
+| **Forwarders** | Corporate/campus middle boxes | ❌ | Where TTLs go to be reinterpreted |
+| **Authoritative** | Your provider | ✅ | The *only* layer you actually control |
+
+Read that column of ❌s again. **You control exactly one layer**, and it's the one furthest from the user — the one that only gets consulted when every cache above it has already given up. That's the operational reality of DNS, and it's why "I changed the record" and "users see the change" are separated by hours.
+
+```mermaid
+flowchart LR
+    App["📱 App cache<br/>~60s, ignores TTL"] --> OS["💻 OS cache"]
+    OS --> Rec["⚙️ Resolver cache<br/>🔑 the big one"]
+    Rec --> Fwd["🏢 Forwarder"]
+    Fwd --> Auth["🟢 Authoritative<br/>✅ the ONLY layer you own"]
+    style Auth fill:#1a4d2e,color:#fff
+```
+
+### TTL Is a Suggestion
+
+Here's the part that surprises people who've only read the spec. **TTL is advisory.** Nothing forces a cache to honor it, and in practice plenty don't:
+
+- Resolvers commonly **clamp** TTLs — enforcing a floor (ignoring your aggressive 30s, using 300s) to protect themselves from load, or a ceiling to avoid serving ancient data.
+- Browsers cache on their **own** schedule, often ~60 seconds, largely independent of what you published.
+- Some runtimes have historically cached DNS **for the life of the process** — the classic "our app kept hammering the dead IP for three days until we restarted it."
+
+So the honest mental model is not "my TTL is 300s, therefore the world updates in 300 seconds." It's **"300 seconds is the *earliest* the world may start updating, and the long tail is somebody else's decision."** Plan for the tail, not the number.
+
+### Negative Caching — The Failure That Sticks Around
+
+One layer of this that bites hard and gets skipped everywhere: **failures are cached too.**
+
+When a name doesn't exist, the authoritative server returns `NXDOMAIN` — and that "no" gets cached like any other answer. Its lifetime is governed not by the record's TTL (there is no record) but by a field in the zone's **`SOA` record** (§4).
+
+The operational consequence is nasty and counterintuitive: **publish a name *after* someone has already looked it up, and they may keep getting "doesn't exist" long after it exists.** The classic version is a deploy where DNS is created a few seconds late — the health check fires early, gets `NXDOMAIN`, caches the "no," and the service stays invisible for the full negative-cache window even though the record is live. The record is fine. The *absence* is what's cached.
+
+> ⚠️ **The layer you control is the layer that matters least.** You own the authoritative server, and it's the last thing anyone asks. Every layer above it — resolver, forwarder, OS, browser — is a cache belonging to someone else, honoring your TTL at their discretion. This is why DNS changes cannot be *pushed*, only *waited out*, and why the only real lever you have is one you must pull **before** you need it (§7).
+
+### Quick Recap — Caching, TTL, and the Layers
+
+- A lookup can be answered at **five layers**, and you control exactly **one** — the authoritative server, the last one anyone asks.
+- **TTL is advisory, not binding** — resolvers clamp it, browsers ignore it, some runtimes cache forever. It's the *earliest* update time, not the actual one.
+- **Negative answers are cached too** (`NXDOMAIN`, governed by the `SOA`), so a name can stay "nonexistent" after it exists.
+- DNS changes are never *pushed* — they're **waited out**, which makes TTL a lever you must pull in advance (§7).
+
+---
+
+## 4. The Record Types That Matter
+
+Foundations §3 gave you `A`, `AAAA`, and `CNAME` — enough to point a domain somewhere. This section covers the ones that carry the *system* behavior: who's authoritative, how delegation is written down, how negative caching is configured, and the one constraint that has shaped more real architectures than any other DNS detail.
+
+### The Working Set
+
+| Record | Answers | Why it matters here |
+|---|---|---|
+| `A` / `AAAA` | Name → IPv4 / IPv6 | The actual answer. Multiple `A` records = the crude load balancing of §6 |
+| `CNAME` | Name → **another name** | Alias. Costs an extra resolution; constrained at the apex (below) |
+| `NS` | Who is authoritative for this zone | **Delegation itself** (§1) — this is how the hierarchy is written down |
+| `SOA` | Zone metadata: serial, primary, **negative-cache TTL** | Governs `NXDOMAIN` lifetime (§3); the serial drives replication |
+| `MX` | Where mail goes | Has **priorities** — DNS's one native failover mechanism |
+| `TXT` | Arbitrary strings | Domain-ownership proofs, SPF/DKIM — the "misc" slot, load-bearing in practice |
+
+Two of these deserve more than a table row.
+
+**`NS` is not a pointer — it *is* the delegation.** When §1 said each level knows only who to ask next, `NS` records are that knowledge, physically. And they exist in **two places at once**: at the parent (the `.com` TLD's referral) and in your own zone. When those disagree, resolution gets non-deterministic in ways that are genuinely miserable to debug — and this exact split is the mechanism that makes the dual-provider migration of §10 possible.
+
+**`MX` quietly has what the rest of DNS lacks.** `MX` records carry a **priority**: try 10 first, fall back to 20. That's real, native, in-protocol failover — and it exists for mail and essentially nowhere else. `A` records have no such thing. This asymmetry is worth noticing, because it's the clearest evidence for §6's central claim: DNS was never designed as a failover mechanism, and the one place it *does* do failover properly is a special case built for email in the 1980s.
+
+### The CNAME-at-Apex Problem
+
+This is the DNS constraint most likely to shape your architecture, and it starts from a rule that sounds like trivia:
+
+> **A `CNAME` cannot coexist with any other record for the same name.**
+
+The reason is coherence. `CNAME` means "this name *is* another name — go ask about that one instead." If `brimble.com` were a `CNAME`, that instruction would apply to *every* query for `brimble.com`, including its `NS` and `SOA`. But the apex **must** have `NS` and `SOA` — that's what makes it a zone at all (§1). So the apex can never be a `CNAME`. Not by convention. By construction.
+
+```mermaid
+flowchart TD
+    Apex["brimble.com<br/>(the apex)"] --> Must["MUST have NS + SOA<br/>— it's a zone"]
+    Apex --> Want["Wants: CNAME → cdn.provider.net"]
+    Must --> Clash["💥 CNAME excludes all<br/>other records"]
+    Want --> Clash
+    Clash --> Fix["🟢 ALIAS / ANAME / flattening<br/>provider resolves it and<br/>serves an A record"]
+```
+
+Now the practical bite. Your CDN or load balancer hands you a *name*, never an IP — deliberately, because that's the indirection that lets them move infrastructure without telling you (Foundations §3's "change the mapping, not the callers"). So `www.brimble.com` → `CNAME` → the provider's name works fine. But `brimble.com` — the bare domain, the one on the business card — **cannot** be a `CNAME`. And hardcoding the provider's IP in an `A` record forfeits the entire reason they gave you a name.
+
+The industry's answer is **ALIAS** / **ANAME** / **CNAME flattening**: a non-standard, provider-specific record that *looks* like a `CNAME` at the apex but is resolved by the provider at query time and served as a plain `A`. The resolver never sees a `CNAME`; the rule is never violated. It works — and it quietly locks you to a provider that implements it, which is exactly the kind of dependency §8 teaches you to notice.
+
+> 💡 **Key Insight**
+>
+> Record types aren't a vocabulary list — they encode the system's structure. `NS` **is** delegation. `SOA` governs how long "no" lasts. And the apex `CNAME` rule isn't trivia: it's a coherence constraint that forces every organization wanting a bare domain on a CDN into a **non-standard, provider-specific** feature. The most consequential DNS rules are the ones that quietly narrow your options long before you notice you were choosing.
+
+### Quick Recap — The Record Types That Matter
+
+- `NS` **is** delegation written down (§1) — and it lives in two places (parent and zone), which is what makes dual-provider migration work (§10).
+- `SOA` carries the **negative-cache TTL** — the field that decides how long `NXDOMAIN` sticks (§3).
+- `MX` **priorities** are DNS's only native failover — evidence that everything else in DNS wasn't built to fail over (§6).
+- A `CNAME` **cannot coexist with other records**, so the apex can never be one — forcing the non-standard ALIAS/ANAME workaround and a quiet provider dependency (§8).
