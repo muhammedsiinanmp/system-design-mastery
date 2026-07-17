@@ -339,3 +339,58 @@ The lever inventory here is short and honest, because §3 already established yo
 - The distribution is **bimodal**: ~1–5ms warm, ~50–300ms cold. Nobody experiences the average (Latency §5).
 - Cold misses concentrate on **first-time and mobile users** — your worst-priced request is someone's first impression.
 - `CNAME` chains **multiply** lookups; prefetch moves the cost off the critical path; longer TTLs reduce misses but mortgage §7.
+
+---
+
+## 6. DNS as Traffic Control
+
+The Scaling doc left an IOU here. It warned that a single load balancer is a SPOF, noted that production systems "often run **DNS-level balancing** in front of them," and promised the mechanism would be covered fully in the networking deep-dives (Scaling §5). This is that coverage — and the honest version of it has two halves: *DNS really is a load balancer*, and *DNS is a bad one*.
+
+### The Superpower, Restated
+
+Foundations §3 named it: DNS is a **control plane**, not just a lookup. Change what a name resolves to and you redirect users globally without touching a line of application code. It's the naming-layer superpower — change the mapping, not the callers.
+
+And it's genuinely load-bearing. DNS-level steering is what sits *in front of* your load balancers, which means it's the only layer that can distribute across things that don't share a data center. Your load balancer can't balance across regions; it's *in* one. DNS can.
+
+### The Four Mechanisms
+
+| Mechanism | How it works | Real use |
+|---|---|---|
+| **Round-robin** | Multiple `A` records; resolver rotates the order | Crude spread across a few IPs |
+| **Weighted** | Provider returns IPs at configured ratios | Canary deploys, gradual migration (§10) |
+| **GeoDNS** | Answer depends on where the *resolver* is | Send users to their nearest region |
+| **Health-checked failover** | Provider probes targets; withdraws dead IPs | The closest DNS gets to real failover |
+
+Each is a legitimate tool. Then reality intervenes.
+
+### Why It's Crude — Four Reasons
+
+**1. You aren't steering users. You're answering resolvers.** Everything §3 established applies: your answer is cached at five layers by parties who owe you nothing. You don't decide where traffic goes — you *suggest*, and the suggestion persists for as long as somebody else's cache decides it should.
+
+**2. Round-robin balances *answers*, not *load*.** The rotation is blind. It doesn't know one IP is a 64-core box and another is struggling; it doesn't know one client is a corporate resolver fronting 50,000 users and another is one laptop. It distributes *responses* evenly and hopes that correlates with distributing *work* evenly. A real load balancer knows connection counts and health (§05–§06 of this phase). DNS knows a list. This is exactly why Scaling §5 said DNS balancing goes *in front of* load balancers rather than replacing them.
+
+**3. GeoDNS locates the *resolver*, not the user.** The provider sees where the query came from — and it came from the resolver, not the human. A user in Mumbai on a corporate VPN egressing through Frankfurt gets sent to Europe. Someone using a centralized public resolver may be geolocated to wherever that resolver's infrastructure answered from. GeoDNS is good in aggregate and confidently wrong for exactly the users whose setups are unusual.
+
+**4. Health-checked failover is fast to *detect* and slow to *matter*.** This is the big one, and it's the §7 bridge:
+
+```mermaid
+flowchart TD
+    Dead["💥 Server dies<br/>T+0s"] --> Detect["🔍 Provider probe fails<br/>T+30s"]
+    Detect --> Pull["✏️ Bad IP withdrawn<br/>T+35s — you're 'done'"]
+    Pull --> Wait["⏳ Caches still serving<br/>the dead IP<br/>for the full TTL"]
+    Wait --> Real["🟢 Traffic actually moves<br/>T + 35s + TTL + the tail"]
+    style Wait fill:#5c1a1a,color:#fff
+```
+
+Your provider detected the failure in 30 seconds and did its job perfectly. Users kept hitting the dead server anyway — because the answer was already in caches you can't reach, and health checks can't retract an answer that's already been given. **DNS failover doesn't redirect traffic. It stops handing out a bad answer to people who haven't asked yet.**
+
+That's the entire difference between DNS-level failover and a load balancer pulling a node from its pool. The load balancer *has the connection*, so it acts. DNS only ever spoke to whoever asked, and it can't call them back.
+
+> ⚠️ **DNS steering is advisory, not authoritative.** A load balancer decides where a request goes. DNS *suggests* where the next request might start, to whoever asks next, honored at the discretion of caches you don't own. It's the only tool that steers across regions and providers — so you will use it — but never model it as control. Model it as **influence with a lag**, and the lag is your TTL plus a tail you don't set (§3).
+
+### Quick Recap — DNS as Traffic Control
+
+- DNS steering is real and irreplaceable: it's the only layer that balances **across regions and providers**, which is why it sits *in front of* load balancers (Scaling §5).
+- The four mechanisms — **round-robin, weighted, GeoDNS, health-checked failover** — are all advisory, because the answer lands in caches you don't control (§3).
+- Round-robin balances **answers, not load**; GeoDNS locates the **resolver, not the user** — both are right in aggregate, wrong at the edges.
+- Health-checked failover **stops giving out a bad answer** — it can't retract answers already given, so real failover takes TTL + tail (§7).
