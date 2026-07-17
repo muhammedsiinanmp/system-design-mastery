@@ -141,7 +141,7 @@ DNS breaks the loop with **glue records**: when a TLD hands back a referral to a
 
 ### The Root Is Not Thirteen Machines
 
-The hierarchy has exactly **13 root server addresses** — a number fixed by an old packet-size constraint — and this fact routinely misleads people into thinking the internet's naming layer rests on thirteen computers. It doesn't. Those 13 *addresses* are served by **hundreds of physical servers** across the globe using **anycast**: many machines announce the same IP, and the network routes you to the topologically nearest one.
+The hierarchy has exactly **13 root server addresses** — a number fixed by an old packet-size constraint, back when a response had to fit in a single 512-byte UDP packet — and this fact routinely misleads people into thinking the internet's naming layer rests on thirteen computers. It doesn't. Those 13 *addresses* are served by **well over a thousand physical servers** in hundreds of locations worldwide, using **anycast**: many machines announce the same IP, and the network routes you to the topologically nearest one. Thirteen is a count of *addresses*, not machines — the operators behind them run large, independent, globally distributed fleets.
 
 This matters for §8. "The root" sounds like a catastrophic SPOF, and structurally it is a single logical entity — but anycast means the failure of any given root instance is invisible; traffic simply routes to another. It's the clearest example in this document of the SPOF doc's distinction (SPOF §1): critical, yes — but *not alone*, and therefore not a SPOF.
 
@@ -313,6 +313,8 @@ flowchart LR
 ```
 
 Note where the metrics start in that diagram. Everything to the left of `S` is real user-perceived latency that your monitoring never sees — which is exactly the component-versus-user-perceived gap Availability §9 warned about. Every internal component reports green while users wait.
+
+It's also a bottleneck you can't optimize your way out of, which makes it an unusual case of Scalability §7's shifting constraint: scale your fleet all you like, and the constraint sits *upstream of your system entirely*, in infrastructure you don't own. Scale §7 taught that fixing one bottleneck reveals the next — DNS is the one that was always there, in front of the first one, and never moves.
 
 ### Chains Multiply the Bill
 
@@ -499,7 +501,7 @@ And DNS is a *hidden* SPOF for exactly the reason SPOF §4 gave — it isn't exp
 
 **The provider** is the one worth acting on, and §4 already told you how it's possible: `NS` records exist at both the parent and in your zone, and the parent can delegate to nameservers from two different vendors at once. Resolvers try them and use whichever answers. Both providers serve the same zone; either one dying is survivable. This is unusually cheap redundancy for unusually high value — which is precisely why the SPOF doc's Brimble hunt flagged it (§10).
 
-**The registrar** is the ugly one, because it's a SPOF you can't duplicate. There is exactly one registration for your domain, in one account, and if it lapses or is hijacked, nothing else matters — not your two providers, not your nine nines. The famous version of this failure is an expired domain: an unattended renewal card, a notification to someone who left the company, and a company that ceases to exist online while every server hums along perfectly. You can't make it redundant. You harden it: registry lock, auto-renew, a card that doesn't expire, alerts to a *team* alias rather than a person, and multi-year registration. This is SPOF §7's "harden what you can't remove," and it's also its **organizational** SPOF chapter wearing an infrastructure costume — the failure is a *process*, not a machine.
+**The registrar** is the ugly one, because it's a SPOF you can't duplicate. There is exactly one registration for your domain, in one account, and if it lapses or is hijacked, nothing else matters — not your two providers, not your nine nines. The famous version of this failure is an expired domain: an unattended renewal card, a notification to someone who left the company, and a company that ceases to exist online while every server hums along perfectly. You can't make it redundant. You harden it: registry lock, auto-renew, a card that doesn't expire, alerts to a *team* alias rather than a person, and multi-year registration. This is SPOF §7's "harden what you can't remove," and it's also its **organizational** SPOF chapter wearing an infrastructure costume — the failure is a *process*, not a machine. Rel §9 named this category precisely: the operational and human layer, where the fault isn't in any system but in the procedure wrapped around it. No amount of infrastructure work protects a domain whose renewal notice goes to someone who left two years ago.
 
 **The root** is genuinely irreducible, and §2 already explained why it's survivable anyway: anycast. Something must be asked first, so structurally it's singular — but that singular logical entity is hundreds of machines. Critical, but not *alone*, so it fails SPOF §1's second condition. It's the rare irreducible SPOF that isn't a real risk to you, and the reason is worth internalizing: **an irreducible dependency is fine when someone has made it internally redundant.** You're not spared the dependency, only the failure.
 
@@ -552,6 +554,12 @@ This is the one case where a **long** TTL is your friend — it's a buffer of st
 Availability §9 already described this shape and named DNS in it: a **shared control plane** letting go, and every "redundant" service depending on it going down together. DNS is the largest instance of that pattern in existence.
 
 The public record is consistent: when a major managed DNS provider has a bad day, thousands of independently-architected companies — different clouds, different languages, different teams, no relationship to each other — go dark **simultaneously**. Each one had redundant servers. Many were multi-region. It made no difference. They had all, independently and invisibly, chosen the same single DNS vendor, and discovered together that their redundancy shared a floor.
+
+The canonical instance is a 2016 DDoS against one managed DNS provider, which made a long list of household-name platforms unreachable across the US and Europe for the better part of a day. The affected companies had **nothing** in common — not their stack, not their cloud, not their architecture — except one vendor none of them had thought about since the day they picked it. Note what the attackers did *not* do: they never touched a single one of those companies' systems. Every server stayed healthy the whole time.
+
+There's a second flavor worth knowing, because it's self-inflicted. In a well-documented 2021 outage, a large platform's authoritative nameservers became unreachable through a network misconfiguration on their own side — their name simply stopped resolving. Everything they ran was fine; nobody could look up where it was. It's §8's ceiling made literal: the entire company's availability was capped by a naming layer that nobody thinks of as a component.
+
+Both cases carry a Reliability-doc tail (Rel §5): when resolution fails, clients don't fail quietly — they **retry**, and every retry is another lookup against an already-drowning nameserver. The failure feeds itself, exactly the fault-chain shape Rel §5 described, and it's why DNS outages recover slowly even after the original cause is fixed.
 
 That's Availability §9's lesson in its sharpest form: *redundancy across things that share a hidden dependency is one component with extra copies of its faces.* The correlated dependency wasn't in anyone's architecture diagram, because a vendor isn't a component — it's a decision made once, years ago, by someone who has since left.
 
