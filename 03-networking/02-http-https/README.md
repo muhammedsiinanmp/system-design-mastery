@@ -725,3 +725,87 @@ One header worth knowing: **HSTS** (`Strict-Transport-Security`) tells the brows
 - The handshake costs **1 RTT (TLS 1.3)** on top of TCP's 1 RTT — **2 round trips before your request exists**, which is ~300 ms on a cross-ocean link.
 - **Session resumption** cuts repeat connections to 1 RTT; **0-RTT** removes it entirely but is **replay-vulnerable**, so it's only safe for idempotent requests.
 - **TLS termination** at a proxy or CDN centralises the cryptographic work — which is also what turns the certificate into one shared, critical dependency (§9).
+
+---
+
+## 9. Certificates — Chain of Trust and the Expiry Trap
+
+§8 established that authentication is TLS's critical guarantee. This section is how it's actually delivered — and how the mechanism that delivers it becomes one of the most reliable causes of total outage in the industry.
+
+### The Problem Certificates Solve
+
+Your browser has never met `shop.example.com`. Some server claims that name. Anyone can *claim* a name.
+
+Solving this by having browsers know every site is impossible. So the web delegates: a small set of **Certificate Authorities** (CAs) — organisations browsers and operating systems ship with built-in trust — vouch for identities. A CA verifies you control a domain and issues a **certificate**: your public key plus your domain name, signed by the CA.
+
+Your browser trusts the CA. The CA vouches for the site. Therefore the browser trusts the site.
+
+### The Chain
+
+In practice there's an intermediate step. Root CA keys are so valuable they're kept offline in physical vaults, so they sign **intermediate** certificates, which do the day-to-day issuing:
+
+```mermaid
+flowchart TD
+    Root["🏛️ Root CA<br/>offline, in a vault<br/>pre-installed in your browser/OS"]
+    Root -->|signs| Inter["📜 Intermediate CA<br/>does the actual issuing"]
+    Inter -->|signs| Leaf["🔒 shop.example.com<br/>your certificate"]
+    Leaf --> V{"Browser verifies<br/>the whole chain"}
+    V -->|"every link valid<br/>+ unexpired + name matches"| OK["🟢 Padlock"]
+    V -->|"any link fails"| Bad["🔴 Full-page warning —<br/>connection refused"]
+```
+
+The browser walks the chain from your certificate up to a root it already trusts. Every link must be valid, unexpired, and correctly signed. **Any** failure and the connection is refused.
+
+A common deployment mistake lives here: servers must send the intermediate certificate along with their own. Forget it and the chain is broken — yet it often *appears* to work, because browsers that previously cached that intermediate can complete the chain themselves. It fails on fresh clients and passes on the developer's machine, which is the worst possible failure signature.
+
+### What Validation Actually Checks
+
+| Check | Failure looks like |
+|---|---|
+| Signed by a trusted chain | "Issuer not trusted" — common with self-signed certs |
+| **Not expired** | "Certificate expired" — the subject of the rest of this section |
+| Domain matches | "Doesn't match this address" — often a missing `www` variant |
+| Not revoked | Revocation checking is genuinely unreliable in practice |
+
+Note that certificates prove **domain control**, not trustworthiness. A phishing site can hold a perfectly valid certificate for its own lookalike domain. The padlock means "this is really the domain in the address bar" — not "this site is honest." That distinction is worth teaching to anyone who treats the padlock as a safety verdict.
+
+### The Expiry Trap
+
+Certificates expire. That is deliberate — it bounds the damage from a stolen key. It also creates one of the most reliably catastrophic failure modes in production systems, and it's worth being precise about **why** it's so much worse than it sounds.
+
+First, a definition, since this is the concept the failure demonstrates:
+
+> **A single point of failure (SPOF) is a component that is *both* on the critical path — everything depends on it — *and* has no redundancy. Two conditions. Miss either and it isn't a SPOF: a critical component with three copies is fine, and a lone component nothing depends on is fine. It's the intersection that's lethal.**
+
+A TLS certificate sits precisely in that intersection, and §8's termination architecture is what puts it there. One certificate, installed at the termination point, in front of everything. Every connection validates it. There is exactly one, and there is no second certificate standing by.
+
+Now compare its failure to an ordinary one:
+
+| Ordinary component failure | Certificate expiry |
+|---|---|
+| Some users, some features | **Every user, every feature** |
+| Degrades gradually | **Binary** — works, then nothing |
+| Servers are unhealthy | **Every server is perfectly healthy** |
+| Monitoring catches it | Uptime checks may pass; nothing *crashed* |
+| Gradual onset | **A specific timestamp** |
+
+The distinguishing horror is the third row. Nothing is broken. Every server is up, healthy, serving correctly — and every browser on earth refuses to talk to them. There's no crash to find, no error in the logs, no resource exhausted. The system is fine; it is simply no longer trusted.
+
+And this is not a beginner's mistake. It has taken down **major mobile networks — dropping millions of subscribers for the better part of a day** — and widely used platforms operated by extremely sophisticated teams. The victims are typically excellent at redundancy: multiple regions, replicated databases, automated failover. None of it helps, because the certificate was never modelled as a component. It's a *file*, with a date in it, that someone installed years ago.
+
+> ⚠️ **The expiry trap is a process failure wearing an infrastructure costume.** The renewal reminder goes to an individual who has since left, or a calendar nobody reads, or a ticket that gets deferred because nothing is wrong yet. So the fix is procedural, not architectural: **automate renewal** (ACME clients like Let's Encrypt make this routine), **alert on days-remaining** rather than on expiry, route those alerts to a **team alias, never a person**, and keep an **inventory** — the certificate that expires is almost always one nobody remembered existed, on an internal service or a forgotten subdomain.
+
+### Adjacent Mechanisms
+
+Two worth naming. **Wildcard certificates** (`*.example.com`) cover all subdomains — convenient, and they concentrate risk further: one key, one expiry, everything. **mTLS** (mutual TLS) has *both* sides present certificates, so the server authenticates the client too; it's common for service-to-service traffic inside a system where you want cryptographic proof of caller identity rather than a shared secret.
+
+> 💡 **Key Insight**
+>
+> A certificate is the mechanism that makes encryption meaningful — without proven identity you're just encrypting to whoever answered. But that same centrality makes it a textbook SPOF: **critical to every connection, and there's exactly one of it.** What makes expiry uniquely dangerous among outages is that **nothing fails** — every server stays healthy while every client refuses to connect, so instinct sends you hunting for a broken component that doesn't exist. It's the rare outage where the correct first question is *"what date is it?"*
+
+### Quick Recap — Certificates
+
+- Certificates deliver §8's authentication guarantee via a **chain of trust**: a pre-trusted root CA signs an intermediate, which signs your certificate; every link must validate or the connection is refused.
+- They prove **domain control, not honesty** — a phishing site can hold a perfectly valid certificate, so the padlock means "really this domain," not "trustworthy."
+- A certificate is a textbook **SPOF** — critical to every connection **and** un-redundant — and its failure is **binary and total** while every server remains perfectly healthy.
+- Expiry is a **process failure**, so the fixes are procedural: automated renewal, days-remaining alerts to a **team alias**, and an inventory — because the cert that expires is the one nobody remembered.
