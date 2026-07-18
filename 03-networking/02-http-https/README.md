@@ -809,3 +809,115 @@ Two worth naming. **Wildcard certificates** (`*.example.com`) cover all subdomai
 - They prove **domain control, not honesty** — a phishing site can hold a perfectly valid certificate, so the padlock means "really this domain," not "trustworthy."
 - A certificate is a textbook **SPOF** — critical to every connection **and** un-redundant — and its failure is **binary and total** while every server remains perfectly healthy.
 - Expiry is a **process failure**, so the fixes are procedural: automated renewal, days-remaining alerts to a **team alias**, and an inventory — because the cert that expires is the one nobody remembered.
+
+---
+
+## 10. Putting It All Together — A Commerce Team Goes HTTPS-Only
+
+A mid-size commerce company runs a storefront on HTTP/1.1, with HTTPS only on the checkout pages — the arrangement countless sites had for years, on the reasoning that encryption is for payment forms and the catalogue is public anyway. Pages feel sluggish, mobile users complain, and the browser now labels the site "Not Secure."
+
+They decide to go HTTPS-only and modernise the protocol. Every section of this document becomes a step.
+
+### Step 1 — Understand What "Only Checkout Is Encrypted" Actually Means (§2, §8)
+
+Before planning, they audit what plain HTTP exposes, and it's worse than assumed.
+
+The session cookie (§2) is sent on **every** request — including the unencrypted catalogue pages. Anyone sharing a network with a customer can read it, and a session cookie is a bearer token: whoever holds it *is* that user. They don't need the password, and they don't need to touch the checkout page — they can lift the session from a request for a product photo and then walk into checkout as that customer.
+
+Encrypting only the checkout page protected the form and left the identity in the open. The `Secure` flag (§2) — which would have prevented the cookie ever being sent over plain HTTP — was not set, because setting it would have broken the HTTP pages.
+
+### Step 2 — Count the Round Trips They're Paying (§4, §5)
+
+They measure what a first-time visit costs on a typical mobile connection at 100 ms RTT:
+
+| Cost | Round trips | Time |
+|---|---|---|
+| TCP handshake (§4) | 1 | 100 ms |
+| TLS handshake, TLS 1.2 (§8) | 2 | 200 ms |
+| …repeated across 6 parallel connections (§5) | — | overlapping, but repeated per connection |
+| First byte of HTML | — | ~300 ms before anything |
+
+Then the page itself: 80 resources over HTTP/1.1's ~6 connections (§5), with a slow recommendations API near the front of one queue blocking everything behind it (head-of-line blocking).
+
+They also find the 2010-era workarounds (§5): assets sharded across three subdomains and a single 900 KB JavaScript bundle. Both were correct once.
+
+### Step 3 — Enable TLS 1.3 and HTTP/2 Together (§6, §8)
+
+The upgrade is one change with two payoffs, because HTTP/2 requires encryption in every browser (§8) — so going HTTPS-only *is* the prerequisite for the faster protocol.
+
+- **TLS 1.2 → 1.3**: handshake drops from 2 RTT to **1 RTT** (§8). 100 ms saved per new connection.
+- **HTTP/1.1 → HTTP/2**: one connection, multiplexed (§6). The slow recommendations API no longer blocks the 79 other resources.
+- **Session resumption** (§8): returning visitors reconnect at 1 RTT instead of 2.
+
+### Step 4 — Undo the Old Workarounds (§3, §5, §6)
+
+This is the counterintuitive step, and the one teams usually skip.
+
+**Remove the domain sharding.** Under HTTP/2, three subdomains force three connections where one would multiplex fine — and each costs its own DNS lookup and TLS handshake. The optimisation is now a tax.
+
+**Split the 900 KB bundle.** With cheap requests, bundling everything means a one-line change invalidates the entire file for every user (§3). They split by change frequency — volatile app code separate from stable dependencies — and adopt versioned URLs with `max-age=31536000, immutable` (§3), so repeat visitors re-download only what actually changed.
+
+They keep HTTP/1.1 fallback for old clients. Both protocols are served; clients negotiate.
+
+### Step 5 — Set the Security Headers (§2, §8)
+
+- `Secure`, `HttpOnly`, and `SameSite` on the session cookie (§2) — now possible, since there are no plain-HTTP pages left to break.
+- Permanent redirects from `http://` to `https://`.
+- **HSTS** (§8), so browsers refuse plain HTTP for the domain, closing the window where that first pre-redirect request could be hijacked.
+
+### Step 6 — The Part They Get Wrong (§9)
+
+Launch goes well. Pages are visibly faster, mobile complaints drop, the "Not Secure" label is gone.
+
+Ten months later, at 04:00 on a Sunday, the entire site becomes unreachable. Every browser shows a full-page security warning. No alert fires — because nothing is down. Every server is healthy, every health check passes, CPU and memory are normal, the database is fine. Uptime monitoring stays green throughout, because it was checking whether servers respond, not whether browsers trust them.
+
+The certificate expired (§9).
+
+It had been issued manually during the migration, with a two-year lifetime, by an engineer who left eight months later. The renewal reminder went to that person's individual inbox. Nobody inherited it, because nobody knew it existed — it was a file with a date in it, installed once, never thought about again.
+
+They lose most of a Sunday's revenue. The fix takes twenty minutes once someone finally thinks to check the certificate; the outage lasts five hours because five hours is how long it takes a team to consider a component that never appeared on any diagram.
+
+Afterwards they apply §9's procedural fixes: automated renewal via an ACME client, alerts at 30/14/7 days remaining routed to a **team alias**, a certificate inventory covering internal services and forgotten subdomains, and — the one that would have caught it — external monitoring that validates the TLS chain the way a browser does, rather than merely checking that the server responds.
+
+### The Payoff
+
+The performance work was the visible project and the certificate was the invisible one. Six months on, the numbers hold: faster pages, no session-hijacking exposure, and a renewal that now happens automatically without anyone noticing.
+
+The honest lesson is in the asymmetry. **The protocol upgrade was planned, measured, and celebrated. The outage came from a file with a date in it that nobody owned** — and it cost more than the upgrade gained that quarter. HTTPS isn't a feature you turn on; it's a dependency you now have to keep alive.
+
+---
+
+## 11. Final Recap
+
+| Concept | Core Insight | Biggest Tradeoff |
+|---|---|---|
+| **What HTTP is** | A turn-taking conversation the **client always starts** | The server can't speak first — real-time needs other mechanisms |
+| **Methods** | **Safe** (`GET`) → cacheable; **idempotent** → retry-safe | `POST` is neither, which is why retries can double-charge |
+| **Status codes** | The first digit is the information; `4xx`/`5xx` assigns blame | Treating them alike wakes you for typos or hides real outages |
+| **Statelessness** | Servers remember nothing → servers are **interchangeable** | State doesn't vanish, it **relocates** — to a cookie, store, or token |
+| **Sessions vs tokens** | Sessions cost a lookup; tokens skip it | Tokens **cannot be revoked** before they expire |
+| **Caching** | **Freshness** skips the request; **validation** skips the body | `no-cache` ≠ `no-store` — confusing them leaks data or kills performance |
+| **Round trips** | RTT is physics — **only the count** is negotiable | Everything below is an attack on that count |
+| **HTTP/1.1** | Text without request IDs → order is the only bookkeeping | **Head-of-line blocking**: one slow response stalls all behind it |
+| **HTTP/2** | Binary frames with **stream IDs** → multiplexing | Fixed HTTP-layer blocking; **TCP's blocking got worse** on one connection |
+| **HTTP/3** | Left TCP for **UDP + QUIC**; ordering is per-stream | Ossification made fixing TCP impossible — so build on something dumber |
+| **TLS** | Three guarantees; **authentication** is the load-bearing one | 2 RTT before your request exists — ~300 ms cross-ocean |
+| **Certificates** | Chain of trust from a pre-installed root | A textbook **SPOF**: total, binary failure while every server is healthy |
+
+### The One Thing to Remember
+
+> **HTTP is not a format — it's a negotiation whose price is measured in round trips, paid before your server does anything useful. That single frame explains the whole history: HTTP/1.1 blocked because responses had no identity, HTTP/2 gave them identity but inherited TCP's ordering, HTTP/3 abandoned TCP entirely to escape it — three protocols, one enemy. HTTPS is the same story with a twist: TLS costs more round trips, and its real guarantee isn't encryption but *identity*, because a perfectly encrypted channel to an impostor only feels safe. Which is why the deadliest failure in this document isn't slow — it's a certificate expiring at a specific timestamp, taking down every user at once while every server stays perfectly, uselessly healthy.**
+
+---
+
+## What's Next
+
+> **Topic 03 — TCP vs UDP**
+
+This document kept reaching a floor it couldn't dig past. HTTP/1.1's blocking was solved at the HTTP layer, and TCP's version of it survived. HTTP/3's answer was to abandon TCP for UDP and rebuild — but *why* one guarantees ordered delivery, what that guarantee costs when a packet is lost, and why the other guarantees nothing at all were taken here as given.
+
+Next, that floor becomes the subject. **TCP** and its reliability machinery — handshakes, acknowledgments, retransmission, congestion control, and the ordered delivery that caused head-of-line blocking. **UDP** and what you gain by giving all of it up. When each is the right instrument, and why the answer changed enough that the web's own protocol switched sides.
+
+You've priced the conversation. Next you look at the wire it runs on.
+
+---
