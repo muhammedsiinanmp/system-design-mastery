@@ -355,3 +355,83 @@ The `private` directive exists precisely because of the middle two. Mark a perso
 - **`no-cache` means "revalidate every time," not "don't cache."** `no-store` is the one that refuses to write anything down.
 - **Versioned URLs** (`app.7f3a9c.js` + `max-age=31536000, immutable`) make content immutable by construction, so invalidation never has to happen.
 - `private` vs `public` controls which caches may store a response — getting it wrong on a personalised page can serve one user's data to another.
+
+---
+
+## 4. The Connection Underneath
+
+Everything so far treated an HTTP request as if it simply *arrives*. It doesn't. HTTP is carried by a lower-level protocol that must establish a connection first, and that establishment has a price. Sections 5 through 8 are all, in one way or another, arguments about that price — so we need to name it precisely.
+
+### The Round Trip — The Unit of Everything
+
+> **A round trip is one message travelling from client to server plus the reply coming back. The time it takes is the round-trip time — RTT.**
+
+RTT is set by physics and geography, not by your server's speed. Light in fibre covers roughly 200,000 km per second, and real paths are indirect, so:
+
+| Path | Typical RTT |
+|---|---|
+| Same data centre | < 1 ms |
+| Same city | ~5 ms |
+| Across a continent | ~40–70 ms |
+| Across an ocean | ~120–200 ms |
+| Satellite / poor mobile | 300–600 ms+ |
+
+Here is why this dominates the rest of the document. **You cannot optimise RTT.** You can't make a server faster than the speed of light, you can't out-engineer the Atlantic. A user in Sydney talking to a server in London pays ~250 ms per round trip no matter how good your code is.
+
+So the only lever is **how many round trips you need**. A page requiring 6 sequential round trips at 100 ms RTT costs 600 ms before the server has done any work at all. Cut it to 2 and you've saved 400 ms without touching a line of application logic. This is the whole game, and every HTTP version is a move in it.
+
+A related idea you'll meet in performance discussions: measure this at the **tail**, not the average. The p99 — the value 99% of requests come in under, meaning the worst 1% — is where connection setup costs concentrate, because that 1% is disproportionately first-time visitors and people on slow mobile networks who pay full setup price. An average hides them; they're the ones forming a first impression.
+
+### Connections Cost Round Trips to Open
+
+Before HTTP says a word, a **TCP** connection is established via a three-way handshake — a "hello," an acknowledgment, and a confirmation:
+
+```mermaid
+sequenceDiagram
+    participant C as 👤 Client
+    participant S as 🖥️ Server
+    Note over C,S: TCP handshake — 1 RTT, before any HTTP
+    C->>S: SYN
+    S->>C: SYN-ACK
+    C->>S: ACK
+    Note over C,S: NOW HTTP may speak
+    C->>S: GET /index.html
+    S->>C: 200 OK
+```
+
+That's **1 RTT spent before your request exists**. Add encryption and it gets worse — TLS needs its own handshake on top, which §8 counts precisely.
+
+TCP's own mechanics — how it guarantees delivery, retransmits losses, and controls congestion — are Topic 03 of this phase. What matters here is only the bill: **a connection is not free, and it is priced in round trips.**
+
+### Keep-Alive — Stop Rebuilding What You Just Built
+
+The obvious response is to reuse the connection. **Persistent connections** (`keep-alive`) do exactly that: after a response, the connection stays open for the next request instead of closing.
+
+Consider ten resources — an HTML page, some CSS, images:
+
+| | Without keep-alive | With keep-alive |
+|---|---|---|
+| TCP handshakes | 10 | **1** |
+| Round trips on setup | 10 RTT | **1 RTT** |
+| At 100 ms RTT | 1000 ms wasted | **100 ms** |
+
+Ninety percent of setup cost, deleted by reusing a connection. This became the default in HTTP/1.1 and it's the single biggest performance difference between it and its predecessor — which closed the connection after every single response.
+
+### Connection Pooling — The Server-Side Mirror
+
+The same logic applies inside your infrastructure. When your application server talks to a database or another service, opening a fresh connection per request pays the same handshake tax, plus authentication.
+
+A **connection pool** keeps a set of established connections open and lends them out. A request borrows one, uses it, returns it. The handshake happens once at startup rather than thousands of times per second.
+
+Pools have their own failure mode worth knowing: **pool exhaustion.** If every connection is checked out and none is returned — typically because something downstream got slow — new requests queue waiting for one. The symptom is a service that appears to hang under load while its CPU sits idle, and the cause is almost never where people look first. It's usually a slow dependency propagating backwards, which is why "the database got slow" and "the API stopped responding" are so often the same incident.
+
+> 💡 **Key Insight**
+>
+> **Round trips are the currency of web performance, and you can't devalue them** — RTT is physics. That reframes optimisation entirely: stop asking "how do I make this faster?" and start asking **"how many times must these two machines talk before the user sees anything?"** Reusing connections is the highest-return answer, because a connection you don't open is a full round trip you don't pay. Every remaining section of this document is a different attempt to reduce that count.
+
+### Quick Recap — The Connection Underneath
+
+- A **round trip** is one message out and its reply back; **RTT** is set by distance and physics — typically 40–70 ms cross-continent, 120–200 ms cross-ocean — and **cannot be optimised**.
+- The only available lever is the **number** of round trips, which is why a page needing 6 sequential trips is slow before the server does anything.
+- Opening a **TCP connection costs 1 RTT** before HTTP speaks at all; encryption adds more (§8).
+- **Keep-alive** and **connection pools** amortise that cost by reusing established connections — and pool exhaustion is why a service can hang while looking completely idle.
