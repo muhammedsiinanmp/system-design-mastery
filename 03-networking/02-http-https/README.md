@@ -640,3 +640,88 @@ HTTP/3 is widely deployed — most major browsers and CDNs support it. It isn't 
 - UDP was chosen for **guaranteeing nothing**: a blank slate on which **QUIC** rebuilds reliability and ordering in user space, where it can evolve.
 - QUIC orders **per stream, not per connection**, which finally eliminates transport-level head-of-line blocking; it also merges the transport and encryption handshakes into ~1 RTT (0-RTT on repeat visits).
 - **Connection migration** by connection ID lets a session survive a Wi-Fi-to-cellular switch — often the biggest practical gain for mobile users.
+
+---
+
+## 8. HTTPS — What TLS Guarantees, and What It Costs
+
+Everything so far described HTTP in the clear: readable text (or readable binary frames) crossing networks you don't own. Between a user's laptop and your server sits their router, their ISP, several backbone operators, and whoever else shares their coffee-shop Wi-Fi. Plain HTTP is legible to **all** of them.
+
+**HTTPS** is HTTP carried inside **TLS** (Transport Layer Security — the successor to SSL, a name that persists in tooling long after the protocol was retired).
+
+### Three Guarantees, Not One
+
+People summarise TLS as "it encrypts things." Encryption is one of three guarantees, and it is arguably the least interesting:
+
+| Guarantee | Means | Without it |
+|---|---|---|
+| **Encryption** | Only the two endpoints can read the traffic | Anyone on the path reads passwords, cookies (§2), everything |
+| **Authentication** | The server is provably who it claims to be | You encrypt perfectly — to an impostor |
+| **Integrity** | Tampering in transit is detectable | Content can be modified mid-flight without either side noticing |
+
+**Authentication is the one that carries the weight**, and it's the one people forget. Encryption alone is nearly worthless: if an attacker can convince your browser that *they* are `bank.example.com`, you'll establish a beautifully encrypted channel directly to them. That's a **man-in-the-middle** attack, and the only defence is proving identity — which is what certificates do (§9).
+
+Integrity matters more than it sounds too. Without it, an intermediary can alter content in flight — and this isn't hypothetical: injecting ads into unencrypted pages was, for years, a real practice by some networks. Encryption stops reading; integrity stops writing.
+
+### The Handshake — Counting the Round Trips
+
+Before a single byte of your HTTP request moves, client and server must negotiate: agree on cryptographic algorithms, verify the server's certificate, and derive a shared key. That negotiation costs round trips (§4) — and this is the number that matters:
+
+```mermaid
+sequenceDiagram
+    participant C as 👤 Client
+    participant S as 🔒 Server
+    Note over C,S: TCP handshake — 1 RTT
+    C->>S: SYN
+    S->>C: SYN-ACK
+    C->>S: ACK
+    Note over C,S: TLS 1.3 handshake — 1 RTT
+    C->>S: ClientHello + key share
+    S->>C: ServerHello + certificate + Finished
+    C->>S: Finished
+    Note over C,S: 2 RTT spent. NOW the request may go.
+    C->>S: GET /checkout
+    S->>C: 200 OK
+```
+
+**TLS 1.3 costs 1 RTT.** Plus TCP's 1 RTT, that's **2 round trips before your request exists**. At the RTT figures from §4:
+
+| Path | RTT | Setup cost before the request |
+|---|---|---|
+| Same city | 5 ms | 10 ms |
+| Cross-continent | 60 ms | **120 ms** |
+| Cross-ocean | 150 ms | **300 ms** |
+| Poor mobile | 400 ms | **800 ms** |
+
+Older **TLS 1.2 needs 2 RTT**, making it 3 round trips total — one of the strongest arguments for upgrading, and a reason to check what your servers actually negotiate rather than what they support.
+
+### Making It Cheaper
+
+Three mechanisms reduce that bill:
+
+**Session resumption.** Having handshaked once, client and server keep material allowing a shortcut. Reconnecting costs **1 RTT** instead of 2 — the full negotiation is skipped.
+
+**0-RTT (TLS 1.3).** On a repeat connection, the client sends application data *in its very first packet*. Zero handshake round trips. The catch is real and worth stating plainly: 0-RTT data is vulnerable to **replay attacks** — an attacker who captures that first packet can resend it, and the server may process it twice. So 0-RTT is safe for idempotent requests (§1) and dangerous for anything that changes state. "Replay this `GET`" is harmless; "replay this payment" is not.
+
+**TLS termination.** In most production systems, TLS isn't decrypted by your application server. A dedicated component in front — a reverse proxy, load balancer, or CDN edge — terminates the encrypted connection, does the cryptographic work, and forwards plain HTTP inside your trusted network:
+
+> **TLS termination** = the point where the encrypted connection ends and traffic continues unencrypted (or re-encrypted) behind it.
+
+This concentrates certificates and cipher configuration in one managed place instead of on every application server. Where that component sits and how it's deployed is Topics 04 and 05 of this phase; what matters here is that termination is why most application code never touches TLS at all — and why the certificate becomes one shared, central dependency (§9).
+
+### Encryption Is No Longer Optional
+
+Beyond security, HTTPS became a practical requirement: browsers mark plain HTTP as "Not Secure," search engines favour HTTPS, and modern browser APIs — service workers, geolocation, camera access — simply refuse to run without it. HTTP/2 is encryption-only in every browser implementation, and HTTP/3 builds encryption into the protocol (§7). **You cannot adopt the fast protocols without TLS.**
+
+One header worth knowing: **HSTS** (`Strict-Transport-Security`) tells the browser to use HTTPS for this domain always, refusing plain HTTP even if the user types it. It closes the gap where a first request to `http://` could be hijacked before the redirect to `https://` happens.
+
+> 💡 **Key Insight**
+>
+> TLS's most important guarantee isn't encryption — it's **authentication**. A perfectly encrypted channel to an impostor is worse than useless, because it *feels* safe. And the cost of all three guarantees is measured in round trips paid **before your request exists**: 2 RTT with TLS 1.3 over TCP, which is 300 ms of nothing on a transoceanic link. That's the real reason session resumption, 0-RTT, and HTTP/3's merged handshake exist — they're not micro-optimisations, they're attacks on a cost that is otherwise paid by every user on every new connection.
+
+### Quick Recap — HTTPS and TLS
+
+- TLS provides **three** guarantees — encryption, **authentication**, integrity — and authentication is the load-bearing one: encrypting to an impostor is worse than not encrypting.
+- The handshake costs **1 RTT (TLS 1.3)** on top of TCP's 1 RTT — **2 round trips before your request exists**, which is ~300 ms on a cross-ocean link.
+- **Session resumption** cuts repeat connections to 1 RTT; **0-RTT** removes it entirely but is **replay-vulnerable**, so it's only safe for idempotent requests.
+- **TLS termination** at a proxy or CDN centralises the cryptographic work — which is also what turns the certificate into one shared, critical dependency (§9).
