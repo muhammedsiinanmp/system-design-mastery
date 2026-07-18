@@ -30,7 +30,7 @@ mechanisms below are only interesting because of the properties they threaten.
 | # | Topic | The question it answers |
 |---|---|---|
 | 1 | [DNS — Domain Name System](01-dns/README.md) | How does a name become an address — and why is the lookup in front of every request also a SPOF, a load balancer, and a latency tax? |
-| 2 | HTTP & HTTPS *(coming)* | What the request is actually written in, how the protocol evolved, and what TLS costs you |
+| 2 | [HTTP & HTTPS](02-http-https/README.md) | What is the request actually written in, why has it been rewritten three times — and what does "just add HTTPS" really cost? *(standalone — assumes no prior reading)* |
 | 3 | TCP vs UDP *(coming)* | Reliable-but-slow or fast-but-lossy — what each guarantees, and when the guarantee is the problem |
 | 4 | Proxy vs Reverse Proxy *(coming)* | Two things with the same name pointing opposite directions — who they serve and what they hide |
 | 5 | Load Balancers *(coming)* | The box everything flows through: how it distributes, how it health-checks, and how it fails |
