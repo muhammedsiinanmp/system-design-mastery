@@ -137,3 +137,115 @@ flowchart LR
 - The **client always speaks first** and the server never initiates — which is why server-push features need separate mechanisms.
 - Methods carry two properties that the rest of the protocol builds on: **safe** (`GET` changes nothing → cacheable) and **idempotent** (repeatable safely — `POST` is neither).
 - Status codes matter mostly by **first digit**, and the `4xx`/`5xx` split assigns blame: client error versus server failure.
+
+---
+
+## 2. Statelessness — and How the Web Fakes State
+
+Here is the most consequential design decision in HTTP, and it sounds at first like a limitation:
+
+> **HTTP is stateless. The server remembers nothing between requests. Every request arrives as if it were the first one that client has ever sent.**
+
+Log in, then request your profile: as far as the protocol is concerned, those are two unrelated events from two strangers. The server has no memory that the first one happened.
+
+That seems obviously bad. It's the reason the web scales.
+
+### Why Amnesia Is a Feature
+
+Imagine the alternative. If a server remembered who you were, then *that specific server* would have to handle all your subsequent requests — your session lives in its memory and nowhere else. Which means:
+
+- You cannot freely add servers, because a new one knows nothing about existing users.
+- You cannot remove one, because its memory dies with it and its users are logged out.
+- A crash doesn't degrade the system, it *evicts* everyone it was serving.
+- Traffic can't be spread evenly, because each request must return to its own server.
+
+Statelessness deletes all four problems at once. If every request carries everything needed to process it, then **any server can handle any request**, and servers become interchangeable — add them, kill them, replace them, and no user notices:
+
+```mermaid
+flowchart TD
+    subgraph Stateful["🔴 If HTTP remembered you"]
+        U1["👤 User A"] -->|"must always return<br/>to the same box"| S1["Server 1<br/>holds A's session"]
+        U1 -.->|"❌ can't be served by"| S2["Server 2<br/>knows nothing"]
+    end
+    subgraph Stateless["🟢 Stateless HTTP"]
+        U2["👤 User A"] --> Any{"any server<br/>will do"}
+        Any --> T1["Server 1"]
+        Any --> T2["Server 2"]
+        Any --> T3["Server 3"]
+    end
+```
+
+This is the foundation the entire scaling toolkit is built on — putting many identical servers behind a distributor that sprays requests across them. That machinery (load balancers, the algorithms they use, health checking) is Topics 05 and 06 of this phase. The point here is that **it's only possible because HTTP forgets.**
+
+### But Applications Need Memory
+
+A shopping cart that empties between clicks is useless. So the web needs state on top of a protocol that refuses to keep it — and the resolution is elegant: **the server stays stateless by making the client carry the state, and present it every time.**
+
+Three mechanisms, in increasing order of how much they let you forget.
+
+### Cookies — The Original Trick
+
+A **cookie** is a small piece of data the server asks the browser to store and send back on every subsequent request. The server sets it:
+
+```
+HTTP/1.1 200 OK
+Set-Cookie: session=a1b2c3; HttpOnly; Secure; SameSite=Lax; Max-Age=3600
+```
+
+and the browser then attaches it automatically to every request to that site:
+
+```
+GET /profile HTTP/1.1
+Cookie: session=a1b2c3
+```
+
+The protocol is still stateless — the server *is* being told who you are on every single request. It just isn't the server doing the remembering.
+
+Those flags after the value are not decoration; they're the difference between a session mechanism and a vulnerability:
+
+| Flag | Effect | Why it matters |
+|---|---|---|
+| `HttpOnly` | JavaScript can't read the cookie | A script injected into your page can't steal the session |
+| `Secure` | Only sent over HTTPS | Prevents the cookie crossing the network in the clear (§8) |
+| `SameSite` | Restricts sending on cross-site requests | Blocks a hostile site from riding your logged-in session |
+| `Max-Age` / `Expires` | Lifetime | An eternal session cookie is an eternal stolen session |
+
+> ⚠️ **A session cookie is a bearer token: whoever holds it *is* you.** The server doesn't verify a person, it verifies a string. This is why the flags above are mandatory rather than advisable, and why cookies must never travel unencrypted — anyone who reads one in transit gains the account without ever knowing the password. §8 is the reason HTTPS is not optional.
+
+### Sessions — Cookie as Claim Ticket
+
+The cookie above holds an opaque ID, not your data. The actual session — who you are, what's in your cart — lives server-side in a shared store, and the cookie is the claim ticket that retrieves it.
+
+This keeps the *application servers* stateless while the state moves to a database or cache that all of them share. Note what happened, though: the state didn't disappear, it **relocated**. Every request now costs a lookup in that shared store, and the store is a dependency every server needs. That trade — stateless servers, stateful store — is the standard architecture for good reason, but it isn't free.
+
+### Tokens — Carrying the Claim Itself
+
+The third approach removes the lookup. Instead of an ID pointing at server-side data, the client carries a **token** containing the data itself, cryptographically signed so the server can verify it wasn't tampered with:
+
+```
+GET /profile HTTP/1.1
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9...
+```
+
+The server validates the signature and trusts the contents. No lookup, no shared store — genuinely stateless.
+
+The catch is the mirror image of the benefit: **you can't un-issue it.** A session ID is revoked by deleting one row. A signed token is valid until it expires, because validity is a mathematical property of the token, not a fact in your database. Log someone out, ban an account, revoke a compromised credential — the token keeps working. The usual mitigations (short lifetimes, refresh tokens, a revocation list) all amount to reintroducing some state, which is to say: paying back part of what you saved.
+
+| | **Session (ID + store)** | **Token (signed, self-contained)** |
+|---|---|---|
+| Server lookup per request | Yes | No |
+| Shared store needed | Yes | No |
+| Revoke instantly | ✅ Delete the record | ❌ Valid until expiry |
+| Scales across services | Needs shared access | Any service with the key |
+| Size on the wire | Tiny | Larger, on every request |
+
+> 💡 **Key Insight**
+>
+> HTTP's amnesia is not a gap that cookies patch — it's the **property that makes horizontal scaling possible**, and every "stateful" web feature is an illusion built by making the client re-present its identity on every single request. So state never vanishes; it *moves*. Into a cookie, into a shared session store, into a signed token — each choice trading lookup cost against revocation power. When someone says a service is "stateless," the honest question is **"where did you put the state, and what did that cost you?"**
+
+### Quick Recap — Statelessness
+
+- HTTP servers **remember nothing between requests** — every request must carry everything needed to process it.
+- That amnesia is what makes servers **interchangeable**, which is the precondition for scaling horizontally and surviving individual failures.
+- Applications fake memory by making the **client** re-present state each time: **cookies** (browser-stored, auto-sent, and security-critical via `HttpOnly`/`Secure`/`SameSite`), **sessions** (cookie as claim ticket to a shared store), **tokens** (signed, self-contained, no lookup).
+- State is never eliminated, only **relocated** — sessions cost a lookup and gain instant revocation; tokens skip the lookup and **cannot be revoked** before expiry.
