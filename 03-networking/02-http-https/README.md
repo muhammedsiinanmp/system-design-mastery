@@ -249,3 +249,109 @@ The catch is the mirror image of the benefit: **you can't un-issue it.** A sessi
 - That amnesia is what makes servers **interchangeable**, which is the precondition for scaling horizontally and surviving individual failures.
 - Applications fake memory by making the **client** re-present state each time: **cookies** (browser-stored, auto-sent, and security-critical via `HttpOnly`/`Secure`/`SameSite`), **sessions** (cookie as claim ticket to a shared store), **tokens** (signed, self-contained, no lookup).
 - State is never eliminated, only **relocated** — sessions cost a lookup and gain instant revocation; tokens skip the lookup and **cannot be revoked** before expiry.
+
+---
+
+## 3. HTTP Caching
+
+Caching is the highest-leverage feature in HTTP, and the one most likely to be misconfigured in a codebase you inherit. The premise is simple arithmetic:
+
+> **The fastest request is the one that never happens. The second fastest is the one that returns without a body.**
+
+HTTP gives you both, through headers, with no application code involved. Get this right and a repeat visit costs nearly nothing; get it wrong and you either serve stale content for a year or throw away every optimisation the protocol offers.
+
+### Two Different Mechanisms
+
+People say "caching" for two distinct things, and conflating them is the source of most confusion:
+
+| | **Freshness** | **Validation** |
+|---|---|---|
+| Question | "Can I skip asking entirely?" | "Has it changed since I last asked?" |
+| Network cost | **Zero** — nothing is sent | One round trip, tiny response |
+| Governed by | `Cache-Control: max-age` | `ETag` / `Last-Modified` |
+| Result | Serve from local copy | `304 Not Modified`, or a fresh body |
+
+Freshness is the big win — the request doesn't happen at all. Validation is the fallback: you must ask, but if nothing changed the server replies with an empty `304` instead of resending a megabyte.
+
+```mermaid
+flowchart TD
+    Need["👤 Browser needs a resource"] --> Have{"Cached copy?"}
+    Have -->|no| Fetch["🌐 Full request<br/>full response"]
+    Have -->|yes| Fresh{"Still fresh?<br/>(max-age not expired)"}
+    Fresh -->|"🟢 yes"| Local["⚡ Use local copy<br/>ZERO network"]
+    Fresh -->|"no — but we have an ETag"| Ask["🌐 Conditional request<br/>If-None-Match: abc123"]
+    Ask --> Changed{"Changed?"}
+    Changed -->|"no"| NM["✅ 304 Not Modified<br/>no body — cheap"]
+    Changed -->|"yes"| Full["📦 200 + new body"]
+```
+
+### `Cache-Control` — The Header That Decides
+
+Nearly all caching behaviour is one header. The directives that carry real weight:
+
+| Directive | Meaning |
+|---|---|
+| `max-age=N` | Fresh for N seconds. During that window, **no request is made at all** |
+| `no-cache` | Store it, but **always revalidate** before use. Misleadingly named — it does *not* mean "don't cache" |
+| `no-store` | Genuinely don't store it anywhere. For sensitive data |
+| `private` | Only the user's browser may cache it — not shared caches in between |
+| `public` | Shared caches may store it too |
+| `immutable` | This will never change; don't even revalidate on reload |
+
+The `no-cache` / `no-store` naming trap is worth stopping on, because the two are routinely swapped in real codebases. **`no-cache` means "cache it, but check with me first."** **`no-store` means "never write this down."** Using `no-cache` for a bank statement stores it on disk; using `no-store` for your CSS throws away every performance gain on the site. The names are backwards from intuition and have been for decades.
+
+### `ETag` — Fingerprinting a Response
+
+An **`ETag`** is an opaque identifier the server attaches to a response — usually a hash of the content:
+
+```
+HTTP/1.1 200 OK
+ETag: "a1b2c3"
+Cache-Control: max-age=60
+```
+
+When freshness expires, the browser doesn't ask for the resource. It asks *whether it changed*:
+
+```
+GET /style.css HTTP/1.1
+If-None-Match: "a1b2c3"
+```
+
+If the content still hashes to `a1b2c3`, the server sends back a bodiless `304 Not Modified` — a response measured in bytes instead of kilobytes. If it changed, you get a normal `200` with the new content and a new `ETag`.
+
+`Last-Modified` / `If-Modified-Since` does the same dance with timestamps instead of hashes. It's weaker — one-second resolution, and it can't tell "edited then reverted" from "never touched" — but it's cheaper for the server to produce.
+
+### The Versioned-URL Pattern
+
+The strongest caching strategy sidesteps the freshness/staleness dilemma entirely, and you have seen its fingerprints without necessarily noticing: filenames like `app.7f3a9c.js`.
+
+The trick is to make the URL change whenever the content changes. Then the content at any given URL is *immutable by construction*, so it can be cached essentially forever:
+
+```
+Cache-Control: max-age=31536000, immutable
+```
+
+A year. No revalidation, ever. And deploying a new version doesn't require expiring anything — it produces a *different URL*, which simply isn't in anyone's cache. The HTML that references those files stays uncached or short-cached, so it always points at current filenames.
+
+This inverts the usual problem. Instead of asking "how do I invalidate a cache I don't control?", you arrange never to need to. Anything with a content-hashed name gets a year; anything without gets seconds.
+
+### Where Caches Live
+
+Your response may be stored in several places, and `private` versus `public` decides which:
+
+- **Browser cache** — per user, on their disk.
+- **Shared/proxy caches** — corporate proxies, ISP caches, anything between.
+- **CDN edge caches** — geographically distributed copies. Strategy for these is Phase 06; the *headers* controlling them are the ones above.
+
+The `private` directive exists precisely because of the middle two. Mark a personalised page `public` and a shared cache may hand one user's page to another — a real and recurring class of data-leak incident, caused by a single wrong word in a header.
+
+> 💡 **Key Insight**
+>
+> Caching has two gears and they aren't interchangeable: **freshness** (`max-age`) eliminates the request; **validation** (`ETag` → `304`) eliminates the *body* when the request must happen. Reach for freshness first — a round trip you never make cannot be slow. And note that the highest-performing setup isn't clever expiry tuning, it's **making content immutable by versioning its URL**, so the invalidation problem stops existing. The one thing to never guess at is `no-cache` versus `no-store`: one caches and revalidates, the other refuses to write to disk, and swapping them either leaks sensitive data or destroys your performance.
+
+### Quick Recap — HTTP Caching
+
+- Two mechanisms: **freshness** (`Cache-Control: max-age` — no request at all) and **validation** (`ETag` + `If-None-Match` → a bodiless `304`).
+- **`no-cache` means "revalidate every time," not "don't cache."** `no-store` is the one that refuses to write anything down.
+- **Versioned URLs** (`app.7f3a9c.js` + `max-age=31536000, immutable`) make content immutable by construction, so invalidation never has to happen.
+- `private` vs `public` controls which caches may store a response — getting it wrong on a personalised page can serve one user's data to another.
