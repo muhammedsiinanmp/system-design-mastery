@@ -573,3 +573,70 @@ That's the trap: HTTP/2 solved head-of-line blocking one layer up, and by consol
 - **Multiplexing** lets many requests share one connection concurrently — a slow response no longer blocks fast ones (§5's problem, solved at the HTTP layer).
 - **HPACK** compresses repetitive headers; **server push** failed and was removed, because the server can't see the client's cache and guessed wrong too often.
 - **TCP-level head-of-line blocking survived** — one lost packet stalls *every* stream on the shared connection, which can make HTTP/2 worse than HTTP/1.1 on lossy networks.
+
+---
+
+## 7. HTTP/3 and QUIC — Abandoning TCP
+
+§6 ended at a wall: head-of-line blocking can't be fixed above a transport that enforces ordering. HTTP/2 did everything possible at its own layer, and TCP still stalled every stream over one lost packet.
+
+There were two ways forward. Fix TCP — or leave it.
+
+Fixing TCP is effectively impossible. It's implemented in operating system kernels and burned into middleboxes, routers, firewalls, and load balancers worldwide. A change would need adoption by every one of them; boxes built a decade ago will never be updated. This is **protocol ossification**: TCP is not frozen because it's perfect, but because too much hardware assumes its exact current shape.
+
+So HTTP/3 left. It runs on **UDP**.
+
+### Why UDP, of All Things
+
+UDP is TCP's minimal sibling: it sends packets with no ordering guarantee, no retransmission, no connection concept. It is, on paper, everything you don't want.
+
+That's precisely why it was chosen. UDP is a **blank slate** — it does so little that middleboxes have no assumptions to break. HTTP/3 doesn't want UDP's absence of features; it wants somewhere to build its own, in user space where it can actually be deployed and updated. Those features are **QUIC**.
+
+QUIC reimplements what TCP provided — reliable delivery, ordering, congestion control — with one decisive difference: **ordering is per-stream, not per-connection.**
+
+```mermaid
+flowchart TD
+    subgraph T["🔴 HTTP/2 over TCP"]
+        L1["📦❌ packet lost"] --> B1["ALL streams stall<br/>— one ordered byte stream"]
+    end
+    subgraph Q["🟢 HTTP/3 over QUIC"]
+        L2["📦❌ packet lost<br/>on stream 1"] --> B2["Only stream 1 waits.<br/>Streams 2, 3, 4 keep flowing —<br/>independently ordered"]
+    end
+```
+
+That's the fix §6 couldn't reach. A lost packet affects only the stream it belonged to; every other stream is untouched. Head-of-line blocking is finally gone at both layers.
+
+### The Handshake Gets Cheaper Too
+
+QUIC folds the transport and encryption handshakes together. Where TCP + TLS require separate negotiations stacked on each other, QUIC establishes both at once — typically **1 RTT**, and for a server you've connected to before, **0-RTT**: the very first packet can carry real request data (§8 covers what 0-RTT costs in security).
+
+### Connection Migration — The Mobile Win
+
+A TCP connection is identified by four things: source IP, source port, destination IP, destination port. Change any one and it's a different connection. So when your phone moves from Wi-Fi to cellular, its IP changes and **every connection dies** — that stutter when a video pauses on leaving the house is exactly this.
+
+QUIC identifies connections by a **connection ID** independent of IP address. Change networks, keep the connection. The download continues, the call survives, nothing re-handshakes. For mobile users this is often a bigger practical win than the head-of-line fix.
+
+### Where It Stands
+
+| | HTTP/1.1 | HTTP/2 | HTTP/3 |
+|---|---|---|---|
+| Transport | TCP | TCP | **UDP + QUIC** |
+| Format | Text | Binary frames | Binary frames |
+| Concurrency | ~6 connections | Multiplexed, 1 connection | Multiplexed, 1 connection |
+| HTTP-layer HOL | 🔴 Yes | 🟢 Fixed | 🟢 Fixed |
+| Transport HOL | 🟡 Per-connection | 🔴 **All streams** | 🟢 **Fixed** |
+| Encryption | Optional | Optional in spec, required in practice | **Built in, mandatory** |
+| Survives network change | ❌ | ❌ | ✅ |
+
+HTTP/3 is widely deployed — most major browsers and CDNs support it. It isn't universal: some corporate networks block or throttle UDP, so clients keep a TCP fallback. The gains are largest exactly where the old problems hurt most — lossy mobile networks, high-latency links, users who move between networks.
+
+> 💡 **Key Insight**
+>
+> HTTP/3's headline is "it uses UDP," which sounds reckless and is actually the opposite. UDP was chosen **because it guarantees nothing** — a protocol that does almost nothing gives middleboxes nothing to assume, so QUIC can rebuild TCP's guarantees in user space where they can be *changed*. The lesson generalises past networking: when a layer is too ossified to fix, the move is to **build on something dumber and reimplement above it**. Note what actually changed — HTTP/3 isn't faster because UDP is fast. It's faster because ordering became per-stream instead of per-connection.
+
+### Quick Recap — HTTP/3 and QUIC
+
+- TCP couldn't be fixed — **ossification** means kernels and middleboxes worldwide assume its exact shape — so HTTP/3 moved to **UDP**.
+- UDP was chosen for **guaranteeing nothing**: a blank slate on which **QUIC** rebuilds reliability and ordering in user space, where it can evolve.
+- QUIC orders **per stream, not per connection**, which finally eliminates transport-level head-of-line blocking; it also merges the transport and encryption handshakes into ~1 RTT (0-RTT on repeat visits).
+- **Connection migration** by connection ID lets a session survive a Wi-Fi-to-cellular switch — often the biggest practical gain for mobile users.
