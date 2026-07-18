@@ -435,3 +435,69 @@ Pools have their own failure mode worth knowing: **pool exhaustion.** If every c
 - The only available lever is the **number** of round trips, which is why a page needing 6 sequential trips is slow before the server does anything.
 - Opening a **TCP connection costs 1 RTT** before HTTP speaks at all; encryption adds more (§8).
 - **Keep-alive** and **connection pools** amortise that cost by reusing established connections — and pool exhaustion is why a service can hang while looking completely idle.
+
+---
+
+## 5. HTTP/1.1 and Head-of-Line Blocking
+
+HTTP/1.1 arrived in 1997, when a web page was a document with a few images. It is still, decades later, spoken by an enormous amount of the internet. It also contains a flaw so structural that fixing it required two more protocol versions — and the workarounds engineers invented to live with it defined front-end practice for fifteen years.
+
+### One Connection, One Request at a Time
+
+Keep-alive (§4) let a connection be *reused*. It did not let it be *shared*. On an HTTP/1.1 connection, requests are strictly serial: send a request, wait for the entire response, then send the next.
+
+The reason is the format itself. HTTP/1.1 messages are plain text with no request identifiers — responses have no way to say which request they belong to. So the only way to know is ordering: the first response answers the first request. Break the ordering and the conversation is gibberish.
+
+That constraint has a name:
+
+> **Head-of-line blocking: the request at the front of the queue blocks every request behind it, no matter how fast those would have been.**
+
+```mermaid
+flowchart TD
+    subgraph Conn["🔴 One HTTP/1.1 connection"]
+        R1["1️⃣ GET /slow-api.json<br/>⏳ takes 2000ms"]
+        R2["2️⃣ GET /logo.png<br/>would take 5ms — ⛔ waiting"]
+        R3["3️⃣ GET /style.css<br/>would take 3ms — ⛔ waiting"]
+        R1 --> R2 --> R3
+    end
+```
+
+Two fast requests sit idle behind one slow one. Nothing is overloaded — the server is fine, the network is fine, the small files are ready. They simply aren't allowed to go first. **A single slow endpoint degrades everything queued behind it**, which is why one unoptimised API call can make an entire page feel broken.
+
+There was an attempted fix in the spec — **pipelining**, sending multiple requests without waiting — but responses still had to come back in order, so a slow first response blocked the rest anyway. It moved the queue without removing the blocking, broke on intermediary proxies, and was disabled by default nearly everywhere. It's a useful reminder that the blocking is caused by the *ordering requirement*, not by the waiting.
+
+### Six Connections, and the Hacks That Followed
+
+Browsers worked around this by opening **~6 parallel connections per domain**. Six lanes instead of one — genuinely helpful, and still not enough for a page with 80 resources. Each connection also costs its own handshake (§4), and they compete for the same bandwidth.
+
+So the workaround got a workaround. Since the limit is *per domain*, serve assets from several domains and multiply your lanes:
+
+```
+static1.example.com   →  6 connections
+static2.example.com   →  6 connections
+static3.example.com   →  6 connections
+```
+
+This is **domain sharding**, and for years it was standard practice. Alongside it came a family of techniques that were all, at heart, the same idea — *make fewer requests, because requests are expensive*:
+
+| Hack | What it did | What it cost |
+|---|---|---|
+| **Domain sharding** | More parallel connections | Extra DNS lookups, extra handshakes, split caching |
+| **Sprite sheets** | Many icons combined into one image | Change one icon, re-download all of them |
+| **Concatenation** | All JS into one bundle | Change one line, invalidate the whole bundle |
+| **Inlining** | Assets embedded in the HTML | Uncacheable — re-sent on every page load |
+
+Every one of these trades cache efficiency and maintainability for fewer round trips. That was the correct trade under HTTP/1.1, and it stopped being correct the moment HTTP/2 shipped — which is why some of this advice is still repeated today by people who learned it when it was true.
+
+> ⚠️ **These workarounds became actively harmful after HTTP/2.** Domain sharding on HTTP/2 forces multiple connections where one would do, discarding the multiplexing that made sharding unnecessary (§6). Bundling everything into one file means a one-line change invalidates a megabyte of cache (§3). If you inherit a codebase with heavy sharding and aggressive concatenation, you're likely looking at 2010-era optimisations that are now costing what they once saved.
+
+> 💡 **Key Insight**
+>
+> HTTP/1.1's flaw isn't slowness — it's **seriality**. Because plain-text responses can't identify which request they answer, order becomes the only bookkeeping available, and order means one slow response stalls everything behind it. Notice the shape of this: an apparently minor *format* decision (no request IDs) produced a *performance* ceiling that shaped fifteen years of web engineering practice. Protocol design has consequences that look nothing like protocol design.
+
+### Quick Recap — HTTP/1.1 and Head-of-Line Blocking
+
+- HTTP/1.1 sends **one request at a time per connection**, because plain-text responses carry no ID and must be matched by **order**.
+- **Head-of-line blocking**: one slow response stalls every fast request queued behind it — nothing is overloaded, they're just not allowed to pass.
+- Browsers opened **~6 connections per domain**, and engineers piled on workarounds — **domain sharding, sprites, concatenation, inlining** — all trading cache efficiency for fewer requests.
+- Those workarounds became **counterproductive** under HTTP/2, so they persist in old codebases as optimisations that now cost more than they save.
