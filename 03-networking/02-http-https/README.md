@@ -501,3 +501,75 @@ Every one of these trades cache efficiency and maintainability for fewer round t
 - **Head-of-line blocking**: one slow response stalls every fast request queued behind it — nothing is overloaded, they're just not allowed to pass.
 - Browsers opened **~6 connections per domain**, and engineers piled on workarounds — **domain sharding, sprites, concatenation, inlining** — all trading cache efficiency for fewer requests.
 - Those workarounds became **counterproductive** under HTTP/2, so they persist in old codebases as optimisations that now cost more than they save.
+
+---
+
+## 6. HTTP/2 — Multiplexing, and the Blocking It Didn't Fix
+
+HTTP/2 (2015) attacked §5's problem at its root. If responses can't be reordered because they carry no identity, then **give them identity** — and the ordering requirement disappears.
+
+### Binary Framing — The Enabling Change
+
+HTTP/2 stopped being a text protocol. Messages are split into **frames**: small binary units, each tagged with a **stream ID** saying which request/response it belongs to.
+
+That one change unlocks everything else. Frames from different streams can be interleaved on a single connection in any order, and the receiver reassembles them by ID. No ordering requirement, no blocking:
+
+```mermaid
+flowchart LR
+    subgraph One["🟢 ONE HTTP/2 connection"]
+        direction TB
+        S1["Stream 1 — /slow-api.json ⏳"]
+        S3["Stream 3 — /logo.png ✅ done"]
+        S5["Stream 5 — /style.css ✅ done"]
+    end
+    Note["Frames interleave freely.<br/>Fast streams finish first —<br/>they no longer wait in line."]
+    One --> Note
+```
+
+The slow API call from §5 no longer blocks anything. Its frames trickle in while the small files complete and render. Same connection, same server, dramatically different experience.
+
+Note the trade: HTTP/2 is no longer human-readable. You can't type it by hand or read it off the wire without tooling. The protocol became less transparent in exchange for becoming faster — a bargain the industry accepted, and the reason your debugging tools now do work that used to be unnecessary.
+
+### Header Compression
+
+A second win, less glamorous but substantial. HTTP headers are verbose and highly repetitive — the same `User-Agent`, `Accept`, and `Cookie` values re-sent in full on every request. On a page with 100 requests, that's the same few hundred bytes repeated 100 times.
+
+**HPACK** compresses them and, more importantly, maintains a shared table of headers already sent, so repeats become small references instead of full text. On header-heavy traffic — anything with large cookies — this alone is a serious reduction.
+
+### Server Push — The Feature That Failed
+
+HTTP/2 also let servers send resources the client hadn't yet asked for: you request `index.html`, and the server pushes the CSS it knows you'll need, saving a round trip.
+
+It sounded excellent and worked badly. Servers routinely pushed resources the browser **already had cached**, wasting bandwidth to deliver duplicates. The server can't see the client's cache, so it's guessing — and guessing wrong is worse than not guessing. Browsers eventually removed support. It's a genuinely instructive failure: *an optimisation that requires knowing something you cannot know will lose more often than it wins.*
+
+### The Blocking That Survived
+
+Here's the part usually left out, and it's the reason there is an HTTP/3.
+
+HTTP/2 eliminated head-of-line blocking **at the HTTP layer**. It could do nothing about the layer underneath — because TCP has the same problem, for the same reason.
+
+TCP guarantees ordered delivery. If packet #5 is lost, TCP holds packets #6, #7, #8 in a buffer — it has them, they arrived safely — and refuses to hand them to the application until #5 is retransmitted and arrives. That's TCP doing its job correctly.
+
+But now all your streams share one TCP connection:
+
+```mermaid
+flowchart TD
+    Loss["📦❌ One TCP packet lost"] --> TCP["TCP: must deliver in order<br/>→ holds ALL later packets"]
+    TCP --> Block["⛔ EVERY stream stalls —<br/>even streams whose data<br/>already arrived intact"]
+    Block --> Irony["😖 HTTP/2 fixed HTTP's blocking.<br/>TCP's blocking remained —<br/>and hits all streams at once."]
+```
+
+The irony is sharp. Under HTTP/1.1's six connections, one lost packet stalled *one* connection and the other five carried on. Under HTTP/2's single connection, one lost packet stalls **every stream on it**. On a clean network HTTP/2 is clearly faster; on a lossy one — patchy mobile, congested public Wi-Fi — it can be *worse* than what it replaced.
+
+That's the trap: HTTP/2 solved head-of-line blocking one layer up, and by consolidating onto a single connection it made the remaining layer's version of the problem hit harder.
+
+> 💡 **Key Insight**
+>
+> HTTP/2's real innovation is **identity**: binary frames tagged with stream IDs, so responses no longer need to arrive in order. Everything else follows from that. But it fixed blocking only at *its own* layer — TCP's in-order delivery guarantee reproduces the identical problem underneath, and consolidating to one connection means a single lost packet now stalls every stream instead of one-sixth of them. **You cannot fix head-of-line blocking at layer 7 while layer 4 still enforces ordering.** That realisation is what makes §7 necessary.
+
+### Quick Recap — HTTP/2
+
+- HTTP/2 replaced text with **binary frames carrying stream IDs**, giving responses identity so they no longer need to arrive in order.
+- **Multiplexing** lets many requests share one connection concurrently — a slow response no longer blocks fast ones (§5's problem, solved at the HTTP layer).
+- **HPACK** compresses repetitive headers; **server push** failed and was removed, because the server can't see the client's cache and guessed wrong too often.
+- **TCP-level head-of-line blocking survived** — one lost packet stalls *every* stream on the shared connection, which can make HTTP/2 worse than HTTP/1.1 on lossy networks.
