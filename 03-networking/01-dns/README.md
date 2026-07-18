@@ -693,7 +693,9 @@ The ticket had been open for four quarters and would have taken an afternoon. Wh
 
 DNS answered *where*. It handed you an address and stepped out of the way — and everything it taught you was about a system that speaks once, briefly, before the real conversation starts.
 
-Now that conversation. **HTTP** is the language your request is actually written in, and it has been quietly rewritten three times — HTTP/1.1's head-of-line blocking, HTTP/2's multiplexing, HTTP/3 abandoning TCP entirely — each revision an attack on a latency cost you met in Foundations §7 and priced in Latency §2. **HTTPS** is what wraps it, and the wrapping isn't free: TLS adds round trips before a single byte of your request moves, and a certificate is the SPOF that took down the competitor whose outage started Brimble's entire audit (SPOF §10).
+Now that conversation. **HTTP** is the language your request is actually written in, and it has been quietly rewritten three times — HTTP/1.1's head-of-line blocking, HTTP/2's multiplexing, HTTP/3 abandoning TCP entirely — each revision an attack on a latency cost you met in Foundations §5 and priced in Latency §2. **HTTPS** is what wraps it, and the wrapping isn't free: TLS adds round trips before a single byte of your request moves, and a certificate is the purest SPOF in the curriculum — the kind of lapsed cert that takes an entire company offline while every one of its servers stays perfectly healthy (SPOF §4).
+
+One note on that document: unlike this one, it is written to **stand alone**. It assumes no prior reading and builds HTTP and HTTPS from zero, so you can hand it to someone who has read nothing else here.
 
 You've priced the lookup. Next you price the handshake — and find out what "just add HTTPS" actually costs.
 
