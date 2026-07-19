@@ -560,3 +560,69 @@ The symptom is distinctive and widely experienced: a large download starts, and 
 - **Congestion collapse** — a saturated network delivering almost nothing because retransmissions became the load — nearly killed the early internet and forced congestion control into TCP.
 - **Slow start** doubles the window each round trip (so new connections are slow regardless of bandwidth); **AIMD** then grows by one segment and **halves on loss** — cautious up, sharp down, converging on a fair share.
 - The loss-means-congestion inference **breaks on wireless** (interference read as congestion) and is **defeated by bufferbloat** (huge buffers suppress the signal, trading ruinous latency for throughput).
+
+---
+
+## 7. The Connection Lifecycle
+
+A TCP connection is not an abstraction — it's **state**, held in kernel memory on both machines: sequence numbers, buffers, timers, window sizes. It's created, it lives, and it must be destroyed. Each of those transitions has failure modes that show up in production as symptoms nobody attributes to TCP.
+
+### Closing Takes Four Messages, Not Three
+
+Opening took three (§3). Closing takes four, and the reason is that a TCP connection is really **two independent streams** — one in each direction. Each must be shut down separately.
+
+```mermaid
+sequenceDiagram
+    participant A as 👤 Side A (closes first)
+    participant B as 🖥️ Side B
+    A->>B: FIN — "I'm done sending"
+    B->>A: ACK — "noted"
+    Note over B: B may still send data!<br/>Its direction is still open
+    B->>A: FIN — "now I'm done too"
+    A->>B: ACK — "noted"
+    Note over A: ⏳ A waits in TIME_WAIT
+```
+
+This is a **half-close**: after A sends `FIN`, it will send no more — but B can keep sending, and A must keep receiving. The connection is genuinely half-open, legitimately, and only fully closed once both directions have said `FIN` and been acknowledged.
+
+### TIME_WAIT — The State That Accumulates
+
+After the final ACK, the side that closed first doesn't free the connection. It enters **TIME_WAIT** and sits there — typically for one to four minutes.
+
+This looks like waste, and it is the single most commonly "optimised away" TCP behaviour by people who don't know what it prevents. It exists for two reasons:
+
+1. **The final ACK might be lost.** If it is, the other side retransmits its `FIN`, and something must remain alive to answer. Free the state immediately and that retransmission gets a confusing rejection instead of an acknowledgment.
+2. **Stray segments from this connection may still be wandering the network.** A delayed duplicate could arrive minutes late. If the same four-tuple (§1) were immediately reused, that ancient segment would be delivered into a *brand-new* connection — corrupting it with data from a dead one. TIME_WAIT holds the four-tuple hostage until any stragglers have certainly expired.
+
+The operational consequence bites at scale. **A server that closes many short connections accumulates TIME_WAIT entries** — tens or hundreds of thousands of them — each consuming a small amount of memory and, more importantly, occupying a four-tuple. Since the client side of that tuple draws from the ephemeral port range (§1), which holds only ~16,000 usable ports per destination, a machine making many rapid outbound connections to the *same* destination can genuinely run out.
+
+The symptom is memorable: connections start failing not because anything is down, but because the machine has no unused four-tuple left. It looks like a network outage and is actually an accounting limit.
+
+The correct fixes are architectural, not a shortened timer: **reuse connections** rather than opening and closing them (keep-alive and connection pooling), and note *which side closes first* — whoever closes first pays the TIME_WAIT cost, which is why having clients close is often preferable to having servers do it.
+
+### SYN Floods — Attacking the Half-Open State
+
+The handshake (§3) creates an asymmetry that can be weaponised.
+
+When a server receives a `SYN`, it must allocate state to remember the pending connection, then reply `SYN-ACK` and wait for the final `ACK`. That connection is now **half-open** — resources committed, handshake incomplete.
+
+An attacker sends `SYN` after `SYN`, never completing any of them, often from forged source addresses so the `SYN-ACK` goes nowhere. Each costs the attacker almost nothing — a single small packet — and costs the server a state allocation plus a timeout period. The queue of half-open connections fills, and legitimate handshakes are refused.
+
+This is a **SYN flood**, and its shape is worth generalising: *any protocol that commits resources before verifying the other party is real is vulnerable to this class of attack.*
+
+The clever defence, **SYN cookies**, turns the problem inside out. Instead of storing state on `SYN`, the server *encodes* the state into the sequence number it sends back — cryptographically, so it can be verified later. It keeps nothing. If a legitimate `ACK` returns, the server reconstructs the connection state from the number in that ACK. Half-open connections now cost the server **zero memory**, and the flood loses its leverage.
+
+### Connections as a Finite Resource
+
+Pulling these together: a TCP connection consumes memory for buffers, a slot in the kernel's connection table, and a four-tuple that stays reserved through TIME_WAIT after it closes. Servers hit limits on all three.
+
+This is the hidden cost behind UDP's "no connection state" from §2. A UDP server fielding a hundred thousand clients allocates nothing per client — no table entry, no buffers, no TIME_WAIT. There's no lifecycle to manage because there's no connection to have one. For services handling enormous volumes of brief, independent exchanges, that isn't a minor efficiency; it's the difference between feasible and not (§8).
+
+> ⚠️ **TIME_WAIT is not a bug, and disabling it is the classic dangerous "fix."** Every symptom it causes — accumulating sockets, ephemeral-port exhaustion, connection failures at high churn — is real, and the temptation is to shorten or bypass it. But it exists to stop delayed segments from a dead connection being delivered into a live one that reused the same four-tuple, which corrupts data in ways almost impossible to diagnose. The real fix is to **stop churning connections** — reuse them — not to remove the protection against the churn.
+
+### Quick Recap — The Connection Lifecycle
+
+- Closing takes **four messages** because each direction shuts down independently — a **half-close** lets one side finish sending while still receiving.
+- **TIME_WAIT** holds the four-tuple for minutes after close, so a lost final ACK can be answered and delayed segments can't poison a reused tuple.
+- At high connection churn it causes **socket accumulation and ephemeral-port exhaustion** — failures that mimic a network outage but are really an accounting limit. Fix by reusing connections, not by shortening the timer.
+- **SYN floods** exploit resources committed to half-open connections; **SYN cookies** defeat them by encoding state into the sequence number and storing nothing.
