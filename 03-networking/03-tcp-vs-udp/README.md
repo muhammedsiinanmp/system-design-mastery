@@ -626,3 +626,82 @@ This is the hidden cost behind UDP's "no connection state" from §2. A UDP serve
 - **TIME_WAIT** holds the four-tuple for minutes after close, so a lost final ACK can be answered and delayed segments can't poison a reused tuple.
 - At high connection churn it causes **socket accumulation and ephemeral-port exhaustion** — failures that mimic a network outage but are really an accounting limit. Fix by reusing connections, not by shortening the timer.
 - **SYN floods** exploit resources committed to half-open connections; **SYN cookies** defeat them by encoding state into the sequence number and storing nothing.
+
+---
+
+## 8. When UDP Wins
+
+Everything so far described TCP's machinery and what each piece costs. Now the payoff: the situations where those costs exceed the benefit, and giving up the guarantee is the *correct engineering decision* rather than a compromise.
+
+### The Deadline Principle
+
+One question decides it:
+
+> **Does this data still have value if it arrives late?**
+
+TCP's entire design assumes yes. Every mechanism — retransmission, in-order delivery, the stalling in §4 — is built on the premise that *correct but delayed* beats *missing*. For a bank transfer, a file download, a database write, that's obviously right. Delay is annoying; loss is unacceptable.
+
+Invert the premise and the whole apparatus becomes harmful. If data expires — if late delivery is worthless — then retransmission doesn't help you, it *hurts* you: you spend a round trip retrieving something useless, and §4's blocking stalls the fresh data behind it. **You pay a delay to receive garbage, and delay the good data to do it.**
+
+That inversion is the entire case for UDP.
+
+### Live Audio and Video
+
+A voice call sends audio in small time-stamped chunks. One is lost. TCP would retransmit — taking at minimum a round trip, say 100 ms.
+
+But that audio was meant to be played 100 ms ago. Its moment has passed. Playing it now is impossible; the conversation has moved on. Meanwhile §4's blocking means every packet *after* it — the audio being spoken right now — sits in the receive buffer, undeliverable, until the useless one arrives.
+
+The correct behaviour is to **conceal and continue**: interpolate over the gap, or accept a millisecond of imperfection nobody will consciously notice. That's what a UDP-based media protocol does. Users tolerate a brief crackle far better than the alternative, and the alternative is a call that pauses, then replays stale audio, then falls progressively further behind real time.
+
+This is why a video call degrades in *quality* under poor conditions while remaining live, instead of stalling. It's choosing a damaged present over a correct past.
+
+| Loss on a live call | TCP | UDP + application logic |
+|---|---|---|
+| Missing audio chunk | Retransmit (+1 RTT) | Conceal, move on |
+| Data behind it | ⛔ Blocked until gap fills | ✅ Plays immediately |
+| Result | Call falls behind real time | Momentary artifact, stays live |
+
+### DNS — The Definitive Case
+
+Name resolution is a single small question and a single small answer, and it runs on UDP for reasons that stack up decisively.
+
+A TCP exchange would need a handshake (§3) before the query, then a four-message teardown (§7) after — round trips of pure overhead wrapped around a transaction whose payload is a few dozen bytes. The setup costs more than the content.
+
+Over UDP: send the question, receive the answer. **One round trip, total.** And if it's lost, the client simply asks again — the retry is as cheap as the original, and the application handles it more simply than TCP would.
+
+The scaling argument is even stronger. A resolver fields enormous numbers of tiny, independent queries. Under TCP, each would need connection state (§7) — table entries, buffers, TIME_WAIT afterward. Under UDP, the server holds **nothing** per client. Each datagram arrives self-contained, is answered, and is forgotten.
+
+This constraint shaped the protocol permanently. DNS was designed so responses fit within a small datagram — a limit that still explains structural details of how the system is organised today, decades later.
+
+### Gaming and Telemetry
+
+**Multiplayer games** send frequent position updates. If one is lost, the right response is never to retransmit it — the next update, arriving milliseconds later, contains newer truth that supersedes it entirely. Retransmitting is asking for a stale snapshot you're about to overwrite. Games typically build selective reliability on UDP: guarantee the few things that must arrive (a player fired, an item was picked up) and let continuous state updates drop freely.
+
+**Metrics, logs, and telemetry** send high-volume streams where individual data points are near-worthless individually. Losing 0.1% of samples changes no dashboard. But a TCP connection per emitter, with congestion control (§6) throttling your application's own traffic and blocking on retransmits, imposes real cost to protect data whose value is entirely statistical. Fire-and-forget over UDP is the sane trade — and critically, it means **a slow metrics backend can't apply backpressure to production traffic.**
+
+**Multicast** — one sender, many receivers simultaneously — is only possible over UDP. TCP's model is inherently point-to-point: acknowledgments, windows, and sequence state all belong to *one* peer. There's no coherent way to acknowledge to a thousand receivers at once.
+
+### The Responsibility You Inherit
+
+Choosing UDP is not free, and this is the part often skipped.
+
+You are taking on everything §3 through §7 provided. Detecting loss, if you care. Reordering, if order matters. And most importantly **congestion control (§6)** — a UDP application has none unless its author writes it. An application that blasts UDP at maximum rate is precisely the antisocial behaviour that caused the congestion collapse of the 1980s. Well-built UDP protocols implement their own rate limiting; badly-built ones are a hazard to every other user of the network.
+
+```mermaid
+flowchart TD
+    Q{"Does this data still have<br/>value if it arrives late?"}
+    Q -->|"✅ yes — correctness<br/>over timeliness"| T["🔒 TCP<br/>files, payments, APIs,<br/>database writes"]
+    Q -->|"❌ no — it expires"| U["⚡ UDP<br/>live audio/video, gaming,<br/>DNS, telemetry, multicast"]
+    U --> R["⚠️ You now own:<br/>loss handling, ordering,<br/>and congestion control"]
+```
+
+> 💡 **Key Insight**
+>
+> UDP wins wherever **data has an expiry date** — where a late packet isn't merely delayed but *worthless*, and worse, delays fresher data behind it (§4). Live media, games, DNS, and telemetry all share that shape. The framing that makes this obvious: TCP optimises for **completeness**, UDP for **timeliness**, and no amount of tuning converts one into the other. But notice what UDP hands you along with the speed — the obligations from §3 to §7 don't disappear, they become *yours*, congestion control most of all.
+
+### Quick Recap — When UDP Wins
+
+- The deciding question is the **deadline principle**: does this data still have value if it arrives late? TCP assumes yes; UDP is correct when the answer is no.
+- **Live media** conceals loss rather than retransmitting it — a stale audio frame can't be played, and waiting for it blocks the audio being spoken now (§4).
+- **DNS** runs on UDP because a handshake would cost more than the payload, and because a resolver holds **zero state** per client (§7) — a constraint that shaped the protocol permanently.
+- Choosing UDP **inherits obligations**, not just speed: loss handling, ordering, and above all **congestion control (§6)** — without which an application is a hazard to the whole network.
