@@ -318,3 +318,76 @@ Also note the starting numbers are chosen *randomly*, not started at zero. Predi
 - **Cumulative ACKs** report the highest contiguous byte received, giving the sender the feedback IP never provides.
 - Loss is detected two ways: a **retransmission timer** (slow, adaptive) and **fast retransmit** on three duplicate ACKs (~1 RTT); **SACK** narrows resends to the actual gap.
 - The **three-way handshake synchronises starting sequence numbers** — three messages because each direction needs its own start *confirmed*, and the numbers are random to prevent forgery.
+
+---
+
+## 4. Ordered Delivery and Head-of-Line Blocking
+
+§3 built reliability and treated ordering as a pleasant side effect of numbering. It isn't a side effect. **In-order delivery is a promise TCP makes to the application**, and honouring it has a cost that nothing else in this document can work around.
+
+### The Promise Lives in the Read Call
+
+To see where the cost comes from, look at the interface TCP exposes. An application reads from a socket and receives *the next bytes in the stream*. There is no other option. The API has no way to express "give me whatever has arrived" or "skip ahead" — it hands over bytes in sequence order, always.
+
+So consider what the receiving TCP must do when a gap opens. Later segments have arrived. They are intact, verified, sitting in kernel memory. The application is asking for data. And TCP cannot hand any of it over, because doing so would deliver bytes out of order and break the one guarantee the application is relying on.
+
+Those later bytes go into the **receive buffer** — a holding area for data that has arrived but cannot yet be delivered:
+
+```mermaid
+flowchart TD
+    Arr["📦 Later segments arrive intact<br/>verified, complete, in memory"]
+    Gap["🕳️ But an earlier byte range is missing"]
+    Arr --> Buf["🗄️ Receive buffer<br/>holds them — cannot deliver"]
+    Gap --> Buf
+    Buf --> App["👤 Application calls read()<br/>⛔ gets nothing"]
+    Buf -->|"gap finally filled"| Rel["🟢 Entire buffered run<br/>delivered at once"]
+```
+
+The data is *there*. The application is *asking*. TCP says no — correctly. This is the protocol working exactly as designed.
+
+> **Head-of-line blocking: data that has already arrived cannot be used, because something that arrived earlier in the sequence has not.**
+
+### What It Costs, in Time
+
+The delay is not the loss — it's the *recovery*, and recovery is priced in round trips. A **round trip** is one message out plus its reply back; on a mobile network that's commonly 50–100 ms, cross-ocean 150 ms or more.
+
+| Recovery path | Cost |
+|---|---|
+| Fast retransmit (3 duplicate ACKs, §3) | ~1 round trip |
+| Retransmission timer | The full timeout — often several hundred ms |
+
+During that entire window, everything behind the gap is frozen. On a 100 ms link, a single lost segment recovered by fast retransmit stalls the stream for roughly 100 ms — and if the retransmission is *itself* lost, you wait again.
+
+Note the asymmetry that makes this painful: **the stall is caused by one segment, but paid by all of them.** A hundred segments may be sitting ready behind a single missing one, and none can be used.
+
+### The Guarantee Is Connection-Wide
+
+Here is the property that matters most, and the one that eventually forces a redesign.
+
+TCP's ordering guarantee applies to **the entire connection as a single sequence**. It has no concept of independent substreams. A TCP connection is one numbered stream of bytes, start to finish — and *any* gap blocks *everything* after it, regardless of whether the blocked data has any logical relationship to the missing data.
+
+If you multiplex several independent things over one TCP connection — several files, several requests, several logical channels — TCP cannot know they're independent. It sees one byte stream. A loss affecting one of them stalls all of them, because they share a sequence space:
+
+| | Data behind the gap | Blocked? |
+|---|---|---|
+| Same logical message | Yes | ✅ Correct — it genuinely depends on the missing bytes |
+| A *different*, unrelated message | Yes | ❌ Needless — nothing about it depends on the gap |
+
+That second row is pure waste, and it is unavoidable within TCP. The protocol lacks the vocabulary to say "these bytes are independent of those bytes."
+
+This is why the problem cannot be solved by any layer above TCP. A higher-level protocol can label its own messages as independent, but it hands everything to a transport that erases the distinction the moment it enters the byte stream. **You cannot restore independence above a layer that has already discarded it.** Fixing this requires a transport whose ordering is per-substream rather than per-connection — which is §9.
+
+### Why Not Just Turn Ordering Off
+
+You can't, and the reason is instructive: ordering isn't a separable feature. It's entangled with reliability itself. Detecting loss depends on noticing a gap in the sequence — which is the same mechanism that enforces order. Remove in-order delivery and you remove the machinery that knows something is missing.
+
+Which leaves exactly one alternative, and you already met it in §2: a transport that never promised ordering, so nothing is ever held back. UDP delivers each datagram the instant it arrives, gaps and all. Head-of-line blocking is structurally impossible there — not because UDP solved it, but because UDP never took on the obligation that creates it.
+
+> ⚠️ **Head-of-line blocking is not a TCP bug, and no amount of tuning removes it.** It is the direct, unavoidable cost of the in-order guarantee — the same guarantee that makes TCP worth using. Any transport that promises ordered delivery over a lossy network *must* stall on gaps; that's what the promise means. The only escapes are to drop the guarantee (UDP) or to make its scope narrower than the whole connection (§9). Everything else is rearranging where the stall happens.
+
+### Quick Recap — Ordered Delivery and Head-of-Line Blocking
+
+- The socket API can only hand the application **the next bytes in sequence** — so arrived-but-early data must wait in the **receive buffer**, unusable.
+- **Head-of-line blocking**: one missing range freezes everything behind it for a full recovery cycle — ~1 round trip via fast retransmit, far longer on a timeout.
+- TCP's ordering is **connection-wide**, with no notion of independent substreams — so multiplexing unrelated data over one connection makes them share each other's stalls needlessly.
+- Ordering **can't simply be disabled** — gap detection is how loss is detected. The only escapes are abandoning the guarantee (UDP, §2) or narrowing its scope (§9).
