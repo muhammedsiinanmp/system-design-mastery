@@ -140,3 +140,85 @@ UDP does the minimum required to be useful. TCP builds an entire reliability app
 - A **port** (0–65535) identifies *which program* on a machine gets the data; a **socket** is one address-plus-port endpoint.
 - A connection is identified by the **four-tuple** (source IP + source port + destination IP + destination port) — which is why thousands of clients share port 443 without collision, and why a changed IP kills a connection.
 - **UDP adds almost nothing** to IP; **TCP adds an entire reliability layer** — the same raw network underneath, two opposite decisions about how much to fix.
+
+---
+
+## 2. UDP — The Honest Minimum
+
+**UDP** — the User Datagram Protocol — is the smaller answer, and the easiest way to understand it is to look at everything it contains. The entire header is **8 bytes**, four fields:
+
+| Field | Size | Purpose |
+|---|---|---|
+| Source port | 2 bytes | Which program sent it |
+| Destination port | 2 bytes | Which program should receive it |
+| Length | 2 bytes | How big this datagram is |
+| Checksum | 2 bytes | Detect corruption in transit |
+
+That's the whole protocol. Compare it against what §1 said the network lacks, and notice how little UDP repairs: it adds ports so the right program gets the data, and a checksum so corrupted data can be *detected*. Everything else on that list of failures — loss, reordering, duplication — passes straight through, untouched and unmentioned.
+
+### "Unreliable" Is a Technical Term
+
+The word *unreliable* attached to UDP is precise, not derogatory. It means one specific thing:
+
+> **UDP makes no promise that data will arrive, and no promise about what order it arrives in. It does not retry, does not track what it sent, and does not tell you when something is lost.**
+
+It does not mean UDP is buggy, flaky, or low-quality. On a healthy network, UDP datagrams arrive reliably in practice — the protocol simply refuses to *guarantee* it. And that refusal is the feature, because guaranteeing it is what costs time (§4, §6).
+
+A **datagram** is UDP's unit of data, and it differs from TCP's model in a way that matters:
+
+| | UDP: datagrams | TCP: a byte stream |
+|---|---|---|
+| Boundaries | **Preserved** — send 3 datagrams, receive 3 | **Erased** — send 3 writes, may read 1 blob or 5 |
+| Receiver gets | Discrete messages | An undifferentiated flow of bytes |
+| Framing work | None — the message *is* the unit | You must delimit messages yourself |
+
+This is an underrated UDP advantage. If your data is naturally message-shaped — one sensor reading, one game state update, one DNS query — UDP hands you exactly the message you sent. TCP gives you a stream of bytes and leaves you to work out where one message ends and the next begins, which is why TCP-based protocols all carry length prefixes or delimiters.
+
+### What UDP Does Not Do — and What That Buys
+
+The absences are the point. Each one removes a cost:
+
+| Absent | The cost it removes |
+|---|---|
+| **No handshake** | No round trip before sending — the first datagram carries real data |
+| **No acknowledgments** | No return traffic, no waiting to confirm receipt |
+| **No retransmission** | Lost data stays lost — never delays what comes after |
+| **No ordering** | Data is delivered the instant it arrives, not when its predecessor does |
+| **No connection state** | A server holds no per-client memory — enormous scaling implications |
+| **No congestion control** | Sends at whatever rate you choose (a double-edged property — §6) |
+
+```mermaid
+flowchart LR
+    subgraph U["📨 UDP"]
+        US["Sender"] -->|"datagram — just send"| UR["Receiver"]
+    end
+    subgraph T["🤝 TCP"]
+        TS["Sender"] -->|"SYN"| TR["Receiver"]
+        TR -->|"SYN-ACK"| TS
+        TS -->|"ACK"| TR
+        TS -->|"...now data"| TR
+    end
+```
+
+That "no connection state" row deserves emphasis, because it's invisible until it matters. A TCP server maintains a data structure for every open connection — buffers, sequence numbers, timers, window sizes. Ten thousand connections means ten thousand of those. A UDP server can serve ten thousand clients holding **nothing** per client; each datagram arrives self-contained, is handled, and is forgotten. For services fielding enormous numbers of brief, independent interactions — DNS being the definitive case (§8) — that difference is decisive.
+
+### Building on UDP
+
+Because UDP is nearly nothing, it's a *foundation* rather than a finished product. Applications that need some guarantee but not all of TCP's build exactly what they need on top:
+
+- A game might retransmit *only* the player's own actions, letting other players' stale positions drop.
+- A video protocol might add sequence numbers for reordering but never retransmit — a late frame is useless anyway.
+- QUIC, as §9 shows, rebuilt nearly all of TCP's reliability on UDP, but with one crucial structural change TCP couldn't make.
+
+This is the real reason UDP endures. It isn't a worse TCP; it's an **unopinionated substrate**. TCP hands you a comprehensive policy about failure. UDP hands you a blank page.
+
+> 💡 **Key Insight**
+>
+> UDP's 8-byte header is the entire protocol, and its omissions are deliberate rather than unfinished. What it really provides is **the ability to decide for yourself what "failure" means** — because TCP's answer, *stop everything and retry until it arrives*, is a policy, and policies that are right for a file transfer are wrong for a live voice call. Choosing UDP isn't choosing unreliability. It's **declining a default** so you can define your own.
+
+### Quick Recap — UDP
+
+- UDP's entire header is **8 bytes** — source port, destination port, length, checksum. It adds addressing and corruption *detection* to IP, and nothing else.
+- **"Unreliable" is precise, not pejorative**: no delivery promise, no ordering promise, no retries, no notification of loss.
+- It preserves **message boundaries** (datagrams), holds **no per-client state**, and requires **no handshake** — so the first packet carries real data and servers scale without per-connection memory.
+- Its emptiness makes it a **substrate**: applications build exactly the guarantees they need on top, which is precisely what QUIC did (§9).
