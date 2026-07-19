@@ -110,7 +110,7 @@ Both tabs talk to the *same* server IP and the *same* server port. They don't co
 source IP  +  source port  +  destination IP  +  destination port
 ```
 
-Change any one of the four and it's a different connection. This is how one web server holds tens of thousands of simultaneous connections on port 443: every client contributes a distinct source IP and source port, so every four-tuple is unique.
+All four together form the identity — differ in any single field and the two are entirely separate connections as far as both machines are concerned. This is how one web server holds tens of thousands of simultaneous conversations on port 443: every client contributes a distinct source IP and source port, so every combination is unique.
 
 It also has a consequence worth filing away for §7 and §9. Your **source IP is part of your connection's identity** — so if it changes, the connection isn't "moved," it's *gone*. That's exactly what happens when a phone leaves Wi-Fi for cellular.
 
