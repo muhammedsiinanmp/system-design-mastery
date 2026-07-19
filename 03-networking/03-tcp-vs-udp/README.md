@@ -457,3 +457,106 @@ That distinction matters when something is slow. If windows are healthy but thro
 - The **receive window** is advertised in every ACK: "I can accept this many more bytes." The sender may never exceed it in unacknowledged data.
 - The **sliding window** also enables multiple segments in flight — without it, throughput would be capped at one segment per round trip.
 - A **zero window** halts the sender, protected from deadlock by periodic **window probes** — and a chronically small window is a direct signal that the *receiving application* is too slow, not the network.
+
+---
+
+## 6. Congestion Control — Don't Overwhelm the Network
+
+Flow control asked the receiver how much it could take. Now the harder question: **how much can the network in between take?**
+
+Nobody will tell you. The routers along the path have no channel to the sender, no window field, no way to report strain. They have exactly one way to express that they're overloaded, and it's brutally indirect: **they drop packets.**
+
+So the sender must infer the state of a network it cannot see, from the absence of acknowledgments, and adjust continuously — while millions of other senders do the same thing on the same shared links, each invisible to the others. That's the problem this section is about, and the internet once failed catastrophically for want of a solution.
+
+### The Collapse That Forced the Fix
+
+In the mid-1980s, a research network's throughput fell by roughly a thousandfold — from its normal capacity to a trickle — without any hardware failing. Nothing broke. The network simply stopped doing useful work.
+
+The mechanism is a feedback loop that turns congestion into more congestion:
+
+```mermaid
+flowchart TD
+    A["📈 Senders transmit<br/>as fast as they like"] --> B["🚦 Router queues fill"]
+    B --> C["📦❌ Packets dropped"]
+    C --> D["⏰ Senders time out<br/>and retransmit"]
+    D --> E["📈 MORE traffic —<br/>now duplicates too"]
+    E --> B
+    C --> F["💥 Congestion collapse:<br/>link saturated,<br/>almost nothing delivered"]
+```
+
+> **Congestion collapse: the network is fully occupied, yet almost nothing useful gets through — because most of what it carries is retransmissions of data already dropped.**
+
+The cruelty is that every participant is behaving reasonably. A sender that loses a packet *should* retransmit — that's reliability (§3). But when everyone retransmits into an already-saturated network, the retries become the load. The system does maximum work and delivers minimum value.
+
+The fix, added to TCP in the late 1980s, is one of the most consequential pieces of engineering in the internet's history: senders would voluntarily limit their own rate based on inferred network conditions. **TCP became a good citizen** — and because effectively everyone runs TCP, that voluntary restraint is what keeps the internet functioning.
+
+### The Congestion Window
+
+Alongside the receive window (§5), the sender maintains a second, private limit: the **congestion window**. It is the sender's own estimate of how much the *network* will tolerate.
+
+The actual amount in flight is governed by whichever is smaller:
+
+```
+in flight  ≤  min(receive window, congestion window)
+                     ↑                    ↑
+              receiver's stated       sender's guess about
+                capacity (§5)         the network — never told
+```
+
+The receive window is *known*. The congestion window is *estimated*, constantly, from evidence.
+
+### Slow Start — Probing Upward
+
+A new connection knows nothing about the path. Rather than guess, TCP starts small and doubles.
+
+The congestion window begins at a handful of segments and **doubles every round trip** as acknowledgments confirm data is getting through. That's exponential growth — "slow start" describes the starting point, not the rate, which is one of networking's more misleading names.
+
+This continues until something signals a limit: a loss, or a configured threshold. The connection has found roughly where the ceiling is by climbing until it hit one.
+
+Slow start has a visible consequence. **A new connection is slow at first, regardless of available bandwidth** — a gigabit link still starts at a few segments and needs several round trips to ramp up. On short transfers, the connection may finish before it ever reaches full speed. This is a large part of why connection reuse matters so much: a warm connection has already done its climbing.
+
+### AIMD — The Sawtooth
+
+After slow start, TCP switches to a more cautious rule, and its shape is worth recognising:
+
+- **Additive increase** — with each successful round trip, grow the window by *one* segment. Cautious, linear probing for more capacity.
+- **Multiplicative decrease** — on detecting loss, *halve* the window immediately.
+
+Grow slowly, back off hard. This is **AIMD**, and it produces the characteristic sawtooth of a TCP connection's sending rate — a gradual climb, a sharp drop, repeat.
+
+The asymmetry is deliberate. Being too aggressive risks collapse (the catastrophic outcome); being too conservative merely wastes some capacity (the recoverable one). AIMD is tuned to fail in the safe direction. It also has an elegant property: when multiple connections share a bottleneck, AIMD drives them toward an even split of the available bandwidth without any of them communicating.
+
+### Loss as a Signal, and Where That Breaks
+
+The whole scheme rests on one inference:
+
+> **TCP treats packet loss as evidence of congestion.**
+
+For decades that was sound — on wired links, packets were dropped almost exclusively because a queue overflowed.
+
+On wireless, it's wrong. Radio interference, a weak signal, a moment of physical obstruction — these lose packets for reasons having nothing to do with congestion. TCP sees the loss, concludes the network is overloaded, and halves its window. The link was perfectly capable; the sender throttled anyway. This is a real and persistent cause of poor throughput on mobile and Wi-Fi networks: **TCP misreading interference as congestion and punishing itself.**
+
+### Bufferbloat — When Bigger Buffers Made Things Worse
+
+A final failure mode, and a genuinely counterintuitive one.
+
+Memory got cheap, so network equipment shipped with large buffers — reasoning that a bigger queue drops fewer packets, and dropping packets is bad. It backfired.
+
+TCP's congestion signal *is* packet loss. A very large buffer absorbs the excess instead of dropping it, so the loss signal never arrives. TCP concludes there's room, keeps increasing its rate, and fills the enormous buffer. Everything is now delivered — after sitting in a queue for hundreds of milliseconds, sometimes seconds.
+
+> **Bufferbloat: oversized network buffers destroy latency by suppressing the loss signal that congestion control depends on.**
+
+The symptom is distinctive and widely experienced: a large download starts, and suddenly video calls stutter, games become unplayable, and typing in a terminal lags — while the download itself proceeds at full speed. Throughput is excellent. Latency is ruined. Nothing is "broken," and no packet was lost — which is precisely the problem. The mitigations (smarter queue management that drops or marks packets *early*, deliberately, to restore the signal) amount to reintroducing the loss that the buffers were added to prevent.
+
+> ⚠️ **The most common misdiagnosis in this area is blaming bandwidth for a latency problem.** Slow start means a new connection can't use available bandwidth immediately. Loss-based inference means wireless interference throttles you for no reason. Bufferbloat means a saturated link ruins interactive latency while reporting perfect throughput. In all three the pipe is big enough — the sender's *inference about the pipe* is what's wrong. Buying more bandwidth fixes none of them.
+
+> 💡 **Key Insight**
+>
+> Congestion control is TCP inferring the state of an invisible, shared network from a single crude signal — **missing acknowledgments** — and voluntarily restraining itself on that basis. It's the internet's most important piece of unenforced cooperation: nothing compels a sender to back off, and the network functions because essentially everyone's TCP does it anyway. That framing also exposes the risk in §2's freedom — **a UDP application has no congestion control unless its author writes some.** Choosing UDP means inheriting this responsibility, not escaping it.
+
+### Quick Recap — Congestion Control
+
+- Routers can't report overload; they only **drop packets**, so the sender must *infer* network state from missing ACKs.
+- **Congestion collapse** — a saturated network delivering almost nothing because retransmissions became the load — nearly killed the early internet and forced congestion control into TCP.
+- **Slow start** doubles the window each round trip (so new connections are slow regardless of bandwidth); **AIMD** then grows by one segment and **halves on loss** — cautious up, sharp down, converging on a fair share.
+- The loss-means-congestion inference **breaks on wireless** (interference read as congestion) and is **defeated by bufferbloat** (huge buffers suppress the signal, trading ruinous latency for throughput).
