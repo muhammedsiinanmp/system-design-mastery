@@ -795,3 +795,100 @@ That last one has a flip side: QUIC encrypts its transport headers *specifically
 - QUIC builds on **UDP precisely because UDP is too simple to have calcified**, and runs in **user space**, so it can be updated like any library.
 - It **rebuilt** reliability, ordering, flow control, congestion control, and connection management — changing only the *scope* of two: **ordering became per-stream** (fixing §4) and **identity became a connection ID** (fixing §1's four-tuple fragility).
 - The costs are real — higher CPU, networks that restrict UDP, and encrypted transport headers that defeat traditional tooling — the last being **deliberate**, to keep the protocol changeable.
+
+---
+
+## 10. Putting It All Together — A Mobile-First Team Meets the Transport Layer
+
+A mid-size team ships a mobile app with live features — a feed, in-app voice calls, and a dashboard fed by device telemetry. Everything runs over TCP, because everything ran over TCP; nobody chose it, it was the default in every library they used.
+
+Over one year they hit three incidents. Each is a section of this document arriving uninvited.
+
+### Incident 1 — "The App Is Slow, But Only Sometimes" (§4, §6)
+
+Support reports the app freezing for seconds at a time. It's unreproducible in the office, and the metrics are pristine: server p99 in single-digit milliseconds, no errors, no elevated CPU.
+
+The pattern in the complaints is geographic and behavioural — commuters, people on trains, users in buildings with poor signal. Their own testing, on office Wi-Fi three metres from an access point, never sees it.
+
+What's happening is §4. On a lossy mobile link, a single dropped segment stalls **everything** behind it in the receive buffer until retransmission completes — one full round trip on a good mobile connection, considerably more on a bad one. The server was never slow. The data had already arrived at the device and was sitting in kernel memory, undeliverable, waiting on a gap.
+
+§6 compounds it. TCP reads that interference-induced loss as congestion, halves its window, and throttles a connection whose bandwidth was never the constraint. The user's link was fine; TCP punished it anyway.
+
+The lesson they take: **server-side metrics cannot see this class of problem.** Every dashboard they owned measured time from request-arrival to response-sent, and the entire failure happened outside that window.
+
+### Incident 2 — The Outage That Wasn't (§7)
+
+A traffic spike. New connections start failing — but not with overload symptoms. CPU is moderate, memory fine, the database unbothered. The service simply can't accept connections, and no component reports being unhealthy.
+
+The cause is §7. Their API servers open a fresh connection to an internal service for every incoming request and close it immediately after. Under load that's thousands of connections per second, each closed by *their* side — so each parks a four-tuple in **TIME_WAIT** for minutes. Since all those connections target the same destination, they're drawing from one ephemeral port range of roughly 16,000 usable ports, and exhausting it.
+
+The machine hadn't run out of CPU or memory. It had run out of **unused four-tuples**.
+
+Someone proposes shortening the TIME_WAIT timer. The engineer who read §7 pushes back: that protection exists so a delayed segment from a dead connection can't be delivered into a new one reusing the same tuple, and the resulting corruption would be far harder to diagnose than this outage. They fix the actual cause — a **connection pool**, so connections are reused instead of churned. Connection count drops by three orders of magnitude and the problem disappears permanently.
+
+### Incident 3 — Fast Downloads, Broken Calls (§6)
+
+Users report that voice calls become unusable *specifically while the app is downloading content* — offline sync, a large media file. Not garbled: delayed, with talkover, both parties interrupting each other.
+
+This is **bufferbloat**. The download saturates the link, and the oversized buffers in consumer network equipment absorb the excess rather than dropping it. With no loss signal, TCP's congestion control (§6) concludes there's still room and keeps filling a queue that grows to hundreds of milliseconds deep. Every packet still arrives — after waiting in line behind the download.
+
+The download reports excellent throughput throughout. The call is ruined. Nothing is lost, nothing errors, and no monitoring system flags anything, because by every metric they collect the network is performing beautifully.
+
+### The Redesign — Split by Deadline (§8)
+
+Three incidents, one root cause: **a single transport policy applied to traffic with completely different requirements.** They re-sort every flow by §8's question — *does this data still have value if it arrives late?*
+
+| Traffic | Value if late? | Transport | Reasoning |
+|---|---|---|---|
+| Auth, payments, feed content | ✅ Yes | **TCP** — unchanged | Correctness over timeliness; delay is acceptable, loss is not |
+| Voice audio | ❌ No | **UDP** + concealment | A 200 ms-old frame is unplayable; retransmitting it stalls live audio (§4) |
+| Telemetry | ❌ No | **UDP**, fire-and-forget | Individually near-worthless; a slow backend must never backpressure the app |
+| Everything HTTP | ✅ Yes | **HTTP/3 (QUIC)** where available | Per-stream ordering removes the §4 stall on lossy links; connection ID survives Wi-Fi↔cellular (§9) |
+
+Two decisions deserve highlighting.
+
+**They wrote congestion control for the voice path.** §8's warning was taken seriously: moving audio to UDP inherited the obligation, and an application that transmits at an unregulated rate is the antisocial behaviour of §6. They implement their own rate adaptation rather than pretending the problem left with TCP.
+
+**They kept a TCP fallback.** Some corporate and public networks restrict UDP (§9), so QUIC isn't universally reachable. Detect and fall back rather than assume.
+
+### The Payoff
+
+Calls stay live on degraded connections, dropping quality briefly instead of falling behind real time. The Wi-Fi-to-cellular transition no longer kills in-flight requests. Connection exhaustion is structurally impossible with pooling. And the freeze reports largely stop — not because the servers got faster, but because per-stream ordering means one lost packet no longer holds an entire connection hostage.
+
+The durable lesson isn't any single fix. It's that **they had been making a transport decision all along by not making one.** TCP is an excellent default and the right answer for most traffic — but "the right answer for most traffic" is a claim about a distribution, and their voice path was in the tail. Every incident was the same mistake: paying for a guarantee that particular data didn't need, in the currency of the one thing it did.
+
+---
+
+## 11. Final Recap
+
+| Concept | Core Insight | Biggest Tradeoff |
+|---|---|---|
+| **IP's contract** | Best-effort — drops, reorders, duplicates, and reports none of it | Simplicity let the internet scale; every guarantee must be built at the endpoints |
+| **Ports and sockets** | A port picks the program; a **four-tuple** identifies a connection | Identity is tied to addresses — change one and the connection is dead, not moved |
+| **UDP** | 8-byte header: ports + checksum, nothing more | You decide what "failure" means — and you must implement that decision |
+| **TCP's reliability** | Number every byte, acknowledge, retain, retransmit | Bookkeeping the sender must remember and both sides must wait on |
+| **Handshake** | Three messages to *synchronise sequence numbers*, both directions confirmed | A round trip before any data moves |
+| **Ordered delivery** | Arrived-but-early data waits in the receive buffer, unusable | **Head-of-line blocking** — one gap stalls everything behind it |
+| **Flow control** | Receiver advertises its capacity in every ACK | Easy, because the constrained party can simply say so |
+| **Congestion control** | Infers an invisible network's state from missing ACKs; slow start, then AIMD | Loss ≠ congestion on wireless; **bufferbloat** suppresses the signal entirely |
+| **Connection lifecycle** | Four-message close; **TIME_WAIT** guards tuple reuse | Socket accumulation and port exhaustion at high churn — fix by reusing, not by disabling |
+| **When UDP wins** | Data with an expiry date: live media, DNS, gaming, telemetry | You inherit loss handling, ordering, **and congestion control** |
+| **QUIC** | Rebuilt TCP on UDP because TCP is **ossified** | Changed only the *scope* of two guarantees: per-stream ordering, address-independent identity |
+
+### The One Thing to Remember
+
+> **TCP and UDP are not a quality ranking — they are two answers to one question: what should happen when a packet goes missing? TCP says everything waits until it's recovered, and manufactures a flawless ordered stream out of a network that guarantees nothing. UDP says it's gone, keep going, and hands you a blank page. Neither is correct in general, because the right answer depends entirely on whether your data still has value once it's late. A payment can wait; the audio frame you should have heard 200 ms ago cannot, and waiting for it damages everything spoken since. Reliability is not a feature to want more of — it is time you agree to spend, and the engineering question is always whether this particular data is worth it.**
+
+---
+
+## What's Next
+
+> **Topic 04 — Proxy vs Reverse Proxy**
+
+You now have the full path: names resolve to addresses, transports carry bytes across an unreliable network, and protocols negotiate meaning on top. Every piece assumed the same simple picture — a client talking to a server.
+
+Almost nothing works that way. Real traffic passes through intermediaries that terminate connections, inspect requests, cache responses, and forward them onward — and the machine your client actually connected to is usually not the machine that answers. **Forward proxies** act for the client; **reverse proxies** act for the server. They share a name, sit in the same position on the wire, and point in opposite directions, which is why they're so consistently confused.
+
+You've followed the request to the server. Next you find out how many things it really passed through, and what each of them was doing to it.
+
+---
