@@ -241,6 +241,8 @@ Not every packet — every *byte*. If a segment carries 1,000 bytes starting at 
 
 (TCP's unit is called a **segment** rather than a packet, though people use the words interchangeably. A segment is the chunk of the byte stream TCP hands to IP.)
 
+Segment size isn't arbitrary. Every network link has an **MTU** — the maximum transmission unit, the largest packet it will carry in one piece, conventionally **1,500 bytes** on Ethernet. Exceed it and the packet must be fragmented and reassembled, which is slow and fragile; if any fragment is lost, the whole original packet is lost. TCP therefore sizes segments to fit the smallest MTU on the path, discovered by probing. This is also why the loss of one segment costs what §4 describes: a segment is roughly 1,500 bytes, so a single loss can stall a stream carrying far more data than that behind it.
+
 Numbering alone solves two of §1's three problems immediately:
 
 - **Reordering** — segments arriving out of order can simply be sorted, because their numbers say where they belong.
@@ -470,7 +472,7 @@ So the sender must infer the state of a network it cannot see, from the absence 
 
 ### The Collapse That Forced the Fix
 
-In the mid-1980s, a research network's throughput fell by roughly a thousandfold — from its normal capacity to a trickle — without any hardware failing. Nothing broke. The network simply stopped doing useful work.
+In October 1986, the link between two research institutions collapsed from its normal 32 kbit/s to **40 bit/s** — a factor of roughly 1,000 — without any hardware failing. Nothing broke. The network simply stopped doing useful work, and the investigation into why produced the algorithms still governing internet traffic today.
 
 The mechanism is a feedback loop that turns congestion into more congestion:
 
@@ -653,6 +655,8 @@ But that audio was meant to be played 100 ms ago. Its moment has passed. Playing
 
 The correct behaviour is to **conceal and continue**: interpolate over the gap, or accept a millisecond of imperfection nobody will consciously notice. That's what a UDP-based media protocol does. Users tolerate a brief crackle far better than the alternative, and the alternative is a call that pauses, then replays stale audio, then falls progressively further behind real time.
 
+The thresholds are well established. Conversation feels natural below about **150 ms** one-way, tolerable to roughly **400 ms**, and beyond that people start talking over each other because the natural turn-taking rhythm breaks down. Against that budget, spending a 100 ms round trip to recover an already-expired frame is indefensible — it consumes most of the tolerance for something unplayable. There's a related metric worth naming: **jitter**, the *variation* in packet arrival times. Steady 120 ms delivery is fine; delivery alternating between 20 ms and 200 ms is not, even though the average is better. This is why media applications maintain a small **jitter buffer**, deliberately delaying playback by a few tens of milliseconds to smooth out variation — accepting a fixed small delay to avoid an unpredictable one.
+
 This is why a video call degrades in *quality* under poor conditions while remaining live, instead of stalling. It's choosing a damaged present over a correct past.
 
 | Loss on a live call | TCP | UDP + application logic |
@@ -671,7 +675,7 @@ Over UDP: send the question, receive the answer. **One round trip, total.** And 
 
 The scaling argument is even stronger. A resolver fields enormous numbers of tiny, independent queries. Under TCP, each would need connection state (§7) — table entries, buffers, TIME_WAIT afterward. Under UDP, the server holds **nothing** per client. Each datagram arrives self-contained, is answered, and is forgotten.
 
-This constraint shaped the protocol permanently. DNS was designed so responses fit within a small datagram — a limit that still explains structural details of how the system is organised today, decades later.
+This constraint shaped the protocol permanently. DNS was designed so responses fit within a **512-byte** datagram — small enough to cross any network without fragmenting. That limit is why the internet's root nameservers number exactly **13**: it was the most that fit, with their addresses, inside a single 512-byte response. A packet-size constraint from the 1980s determined a structural fact about the internet that remains true today. (Modern extensions permit larger responses, and DNS falls back to TCP when an answer won't fit — but the 13 remain.)
 
 ### Gaming and Telemetry
 
