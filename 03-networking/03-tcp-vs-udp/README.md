@@ -222,3 +222,99 @@ This is the real reason UDP endures. It isn't a worse TCP; it's an **unopinionat
 - **"Unreliable" is precise, not pejorative**: no delivery promise, no ordering promise, no retries, no notification of loss.
 - It preserves **message boundaries** (datagrams), holds **no per-client state**, and requires **no handshake** — so the first packet carries real data and servers scale without per-connection memory.
 - Its emptiness makes it a **substrate**: applications build exactly the guarantees they need on top, which is precisely what QUIC did (§9).
+
+---
+
+## 3. TCP — Building Reliability Out of Nothing
+
+**TCP** — the Transmission Control Protocol — takes the opposite position. On top of the same lossy, unordered, silent network from §1, it presents the application with a guarantee that sounds impossible given what it has to work with:
+
+> **Every byte you send arrives, exactly once, in the order you sent it — or the connection fails and you are told.**
+
+No packet is lost, from the application's point of view. Nothing arrives twice. Nothing arrives out of order. That is a remarkable thing to construct on a foundation that promises none of it, and this section is how the construction works.
+
+### Sequence Numbers — Giving Every Byte an Address
+
+The foundational trick is numbering. **Every byte in a TCP connection has a sequence number**, assigned in order.
+
+Not every packet — every *byte*. If a segment carries 1,000 bytes starting at sequence 5,000, it covers bytes 5,000 through 5,999, and the next segment starts at 6,000.
+
+(TCP's unit is called a **segment** rather than a packet, though people use the words interchangeably. A segment is the chunk of the byte stream TCP hands to IP.)
+
+Numbering alone solves two of §1's three problems immediately:
+
+- **Reordering** — segments arriving out of order can simply be sorted, because their numbers say where they belong.
+- **Duplication** — a segment whose range has already been received is recognised and discarded.
+
+The third problem, loss, needs more.
+
+### Acknowledgments — Confirming What Arrived
+
+The receiver continuously tells the sender what it has. An **ACK** carries a number meaning *"I have everything up to here; send me this next."*
+
+This is **cumulative**: an ACK for 6,000 confirms every byte below 6,000 at once. A single ACK can therefore confirm many segments, and a lost ACK is often harmless — the next one covers the same ground.
+
+Now the sender has what the raw network refused to give it: **feedback**. It knows what arrived. Anything it sent but hasn't seen acknowledged is still in doubt, and it keeps a copy precisely so it can send it again.
+
+### Retransmission — Two Ways to Notice Loss
+
+**The timer.** Every segment sent starts a countdown. If no acknowledgment arrives before it expires, TCP assumes loss and resends. The timeout is derived from measured round-trip time and adapts continuously — too short and you flood the network with needless duplicates; too long and recovery crawls.
+
+**The duplicate-ACK trick.** Waiting for a timer is slow, so TCP watches for a distinctive pattern. Suppose segment 5 is lost but 6, 7, and 8 arrive. The receiver can only acknowledge through 4 — so it re-sends *the same ACK* each time something arrives out of order:
+
+```mermaid
+sequenceDiagram
+    participant S as 📤 Sender
+    participant R as 📥 Receiver
+    S->>R: seg 5 ❌ lost
+    S->>R: seg 6 ✅
+    R->>S: ACK 5 (again — still want 5)
+    S->>R: seg 7 ✅
+    R->>S: ACK 5 (again)
+    S->>R: seg 8 ✅
+    R->>S: ACK 5 (3rd duplicate)
+    Note over S: 3 duplicate ACKs → resend NOW,<br/>don't wait for the timer
+    S->>R: seg 5 (retransmitted) ✅
+    R->>S: ACK 9 — everything through 8
+```
+
+Three duplicate ACKs is treated as strong evidence of a specific loss, and TCP resends immediately. This is **fast retransmit**, and it recovers in roughly one round trip instead of waiting out a timeout.
+
+There's a refinement worth naming: with plain cumulative ACKs, the receiver can't say *"I got 6, 7, and 8 — just missing 5."* **SACK** (selective acknowledgment) adds exactly that, letting the sender retransmit only the genuine gap instead of guessing. Without it, a sender may resend data that already arrived.
+
+### The Handshake — What's Actually Being Exchanged
+
+TCP opens a connection with three messages. The count is famous; the *reason* usually isn't.
+
+```mermaid
+sequenceDiagram
+    participant C as 👤 Client
+    participant S as 🖥️ Server
+    C->>S: SYN — "my byte numbering starts at x"
+    S->>C: SYN-ACK — "got x. mine starts at y"
+    C->>S: ACK — "got y"
+    Note over C,S: both sides now know both<br/>starting numbers — connection open
+```
+
+The handshake exists to **synchronise sequence numbers** — that's what the SYN flag means, *synchronise*. Each side picks a starting number and must confirm it learned the other's, because every mechanism above depends on both parties agreeing where the numbering begins.
+
+So why three messages and not two? Because each direction needs its own confirmed starting point, and confirmation requires a reply:
+
+1. `SYN` — client states its start. *Server now knows it.*
+2. `SYN-ACK` — server confirms the client's **and** states its own. *Client now knows both.*
+3. `ACK` — client confirms the server's. *Server now knows the client knows.*
+
+Cut it to two and the server would be sending data while unsure whether the client ever received its starting number. Three is the minimum for **both** sides to have confirmed knowledge — and, incidentally, for the server to have evidence the client can genuinely receive at the address it claims, which matters in §7.
+
+Also note the starting numbers are chosen *randomly*, not started at zero. Predictable sequence numbers would let an attacker forge segments into someone else's connection.
+
+> 💡 **Key Insight**
+>
+> TCP's reliability is not a network property — it is **bookkeeping**. Number every byte, have the receiver report what arrived, keep a copy of anything unconfirmed, and resend on either a timer or a suspicious pattern of duplicate ACKs. Every guarantee follows from those four moves. This is worth internalising because it reveals the cost: reliability requires the sender to **remember**, the receiver to **report**, and both to **wait** — and §4 is what that waiting does to everything queued behind a loss.
+
+### Quick Recap — TCP's Reliability Machinery
+
+- **Every byte gets a sequence number**, which alone solves reordering (sort by number) and duplication (discard known ranges).
+- **Cumulative ACKs** report the highest contiguous byte received, giving the sender the feedback IP never provides.
+- Loss is detected two ways: a **retransmission timer** (slow, adaptive) and **fast retransmit** on three duplicate ACKs (~1 RTT); **SACK** narrows resends to the actual gap.
+- The **three-way handshake synchronises starting sequence numbers** — three messages because each direction needs its own start *confirmed*, and the numbers are random to prevent forgery.
