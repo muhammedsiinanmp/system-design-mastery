@@ -705,3 +705,93 @@ flowchart TD
 - **Live media** conceals loss rather than retransmitting it — a stale audio frame can't be played, and waiting for it blocks the audio being spoken now (§4).
 - **DNS** runs on UDP because a handshake would cost more than the payload, and because a resolver holds **zero state** per client (§7) — a constraint that shaped the protocol permanently.
 - Choosing UDP **inherits obligations**, not just speed: loss handling, ordering, and above all **congestion control (§6)** — without which an application is a hazard to the whole network.
+
+---
+
+## 9. QUIC — Rebuilding TCP on Top of UDP
+
+This document has presented a binary: take TCP's guarantees with their costs, or take UDP's freedom with its obligations. **QUIC** rejects the binary. It is a transport protocol built *on* UDP that provides nearly everything TCP does — and it now carries a large and growing share of the world's web traffic.
+
+Understanding why it exists, and what it had to rebuild, is the sharpest available lens on everything above.
+
+### Why Not Just Fix TCP
+
+The obvious response to §4's connection-wide blocking is to fix TCP. It can't realistically be done, for a reason that has nothing to do with protocol design.
+
+TCP lives in the **operating system kernel**. Changing it means shipping new kernels to every machine on Earth — servers, phones, laptops, embedded devices, equipment that hasn't been updated in a decade and never will be.
+
+Worse, the network itself has calcified around TCP's exact current shape. Firewalls, NAT devices, and traffic-inspecting middleboxes don't merely forward TCP; they *parse* it, track its state, and often rewrite parts of it. Many will drop a TCP segment using an unfamiliar option, having concluded it's malformed. So a new TCP feature must be deployed everywhere *and* tolerated by hardware built before it existed.
+
+> **Protocol ossification: a protocol becomes unchangeable not because it's finished, but because too much infrastructure depends on its precise current form.**
+
+TCP is ossified. New TCP features have taken well over a decade to reach broad usability, and some never arrive.
+
+### The Move — Build on Something Nobody Inspects
+
+QUIC's insight is a redirection. If the layer you need to change is frozen, don't change it — **build on a layer too simple to have been frozen.**
+
+UDP's near-emptiness (§2) turns out to be its greatest asset here. Because UDP promises almost nothing, middleboxes have almost nothing to assume about it. There is no connection state to track, no options to misparse, no sequencing to validate. It's a pipe for opaque datagrams.
+
+So QUIC puts its entire protocol *inside* UDP payloads. To the network, it's ordinary UDP traffic. To the endpoints, it's a full-featured transport. And critically, QUIC runs in **user space** — in the application or a library, not the kernel — so shipping a new version is a software update rather than an operating-system migration. A protocol that can be updated is a protocol that can improve.
+
+### What It Had To Rebuild
+
+Choosing UDP meant inheriting the obligations §8 warned about — all of them. QUIC's specification is essentially the bill for that decision:
+
+| From this document | QUIC's answer |
+|---|---|
+| Sequence numbers, ACKs, retransmission (§3) | Rebuilt — with clearer signals distinguishing retransmissions from originals |
+| Ordered delivery (§4) | Rebuilt — but **per-stream**, which is the whole point |
+| Flow control (§5) | Rebuilt — *twice*: per-stream **and** per-connection |
+| Congestion control (§6) | Rebuilt — pluggable, and upgradeable without kernel changes |
+| Connection lifecycle (§7) | Rebuilt — with a different notion of identity |
+
+That table is the real lesson. QUIC didn't discover TCP was wrong; it reimplemented nearly all of TCP's machinery, because that machinery solves genuine problems that don't disappear when you change layers. What it changed was **the shape of two specific guarantees.**
+
+### Change One — Ordering Per Stream
+
+§4 identified the flaw precisely: TCP's ordering guarantee covers the whole connection, so unrelated data shares a sequence space and therefore shares stalls.
+
+QUIC carries multiple independent **streams** in one connection, each with its own sequence numbering. Loss in one stream blocks *that stream* while the others continue delivering:
+
+```mermaid
+flowchart TD
+    subgraph TCP["🔒 TCP — one sequence space"]
+        L1["📦❌ loss"] --> B1["⛔ everything after it waits<br/>related or not"]
+    end
+    subgraph QUIC["⚡ QUIC — per-stream sequences"]
+        L2["📦❌ loss in stream A"] --> B2["⛔ stream A waits"]
+        L2 --> OK["✅ streams B, C, D<br/>keep delivering"]
+    end
+```
+
+This is the fix §4 said was impossible above TCP — and note *why* it was impossible there but achievable here. It isn't cleverness. QUIC simply has the vocabulary TCP lacks: it can be *told* which bytes are independent, because streams are a first-class concept in the protocol rather than an application-level idea erased on entry.
+
+### Change Two — Identity Without the Four-Tuple
+
+§1 established that a TCP connection *is* its four-tuple, and §7 that this identity is held in kernel state. Together they produce a fragility: change your IP address and the connection is not relocated but destroyed.
+
+That's a daily occurrence for mobile devices — leaving Wi-Fi for cellular changes the source IP, killing every open connection and forcing full re-establishment, handshakes and slow start (§6) included.
+
+QUIC identifies connections by an explicit **connection ID** carried inside the packet, independent of addresses. Change networks and the connection ID is unchanged, so the connection survives — it simply continues from a new address. Identity became a property of the protocol rather than of the network path.
+
+### The Costs
+
+QUIC isn't free, and the trades are real:
+
+- **CPU** — TCP's processing is deeply optimised in kernels and offloaded to hardware. QUIC's user-space handling is comparatively expensive, which matters at very high volume.
+- **Blocked or throttled UDP** — some networks restrict UDP, treating it as lower-priority or blocking it outright, so implementations keep a TCP fallback.
+- **Operational opacity** — decades of tooling parse TCP. QUIC is encrypted almost end to end, including most of its transport metadata, so familiar diagnostic techniques don't apply.
+
+That last one has a flip side: QUIC encrypts its transport headers *specifically* so middleboxes can't build assumptions on them. It's ossification resistance designed in deliberately — a protocol architected to remain changeable, having learned exactly what happened to the one it replaced.
+
+> 💡 **Key Insight**
+>
+> QUIC's real lesson isn't about performance — it's that **layering is a deployment strategy.** When the layer you need to evolve has calcified, you don't fight it; you build on a dumber layer beneath and reimplement above, accepting the work of rebuilding what you gave up. Notice that QUIC kept nearly every TCP mechanism in this document; it changed only the **scope** of two guarantees — ordering became per-stream, identity became address-independent. Decades of transport engineering were right about the mechanisms and wrong about their granularity, and that's a far more interesting outcome than "TCP was slow."
+
+### Quick Recap — QUIC
+
+- TCP is **ossified** — kernel-resident and parsed by middleboxes that reject unfamiliar variations — so it effectively cannot be evolved.
+- QUIC builds on **UDP precisely because UDP is too simple to have calcified**, and runs in **user space**, so it can be updated like any library.
+- It **rebuilt** reliability, ordering, flow control, congestion control, and connection management — changing only the *scope* of two: **ordering became per-stream** (fixing §4) and **identity became a connection ID** (fixing §1's four-tuple fragility).
+- The costs are real — higher CPU, networks that restrict UDP, and encrypted transport headers that defeat traditional tooling — the last being **deliberate**, to keep the protocol changeable.
