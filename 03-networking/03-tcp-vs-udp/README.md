@@ -391,3 +391,69 @@ Which leaves exactly one alternative, and you already met it in §2: a transport
 - **Head-of-line blocking**: one missing range freezes everything behind it for a full recovery cycle — ~1 round trip via fast retransmit, far longer on a timeout.
 - TCP's ordering is **connection-wide**, with no notion of independent substreams — so multiplexing unrelated data over one connection makes them share each other's stalls needlessly.
 - Ordering **can't simply be disabled** — gap detection is how loss is detected. The only escapes are abandoning the guarantee (UDP, §2) or narrowing its scope (§9).
+
+---
+
+## 5. Flow Control — Don't Overwhelm the Receiver
+
+TCP now delivers reliably and in order. One question remains unanswered: **how fast should it send?**
+
+There are two separate answers, and conflating them is the most common confusion in this subject. This section covers the first.
+
+| | **Flow control** (§5) | **Congestion control** (§6) |
+|---|---|---|
+| Protects | The **receiver** | The **network** in between |
+| Problem | A fast sender drowning a slow reader | Everyone collectively overloading shared links |
+| Signal | The receiver states its capacity explicitly | Inferred — nobody reports it |
+| Mechanism | Receive window | Congestion window |
+
+Flow control is the easy one, because the constrained party can simply *say so*.
+
+### The Receiver Has a Finite Buffer
+
+Data arriving at a machine lands in the receive buffer (§4) and waits for the application to read it. That buffer has a fixed size — and the application drains it at its own pace, which may be far slower than the network delivers.
+
+A server on a fast connection can transmit far faster than a phone with a busy CPU can consume. Without a brake, the buffer fills, and every subsequent segment is discarded — forcing retransmissions of data that *did* arrive, wasting bandwidth to re-send bytes the receiver already had but couldn't store.
+
+### The Receive Window — Advertised Capacity
+
+The fix is direct. Every TCP segment carries a **window** field, and the receiver uses it to state exactly how much buffer space remains:
+
+> **The receive window is the receiver telling the sender: "I can accept this many more bytes right now." The sender may never have more than that amount unacknowledged and in flight.**
+
+It updates continuously. As the application reads and frees space, the window grows; as data piles up unread, it shrinks.
+
+```mermaid
+flowchart LR
+    S["📤 Sender"] -->|"data"| R["📥 Receiver"]
+    R -->|"ACK + window = 64KB<br/>'plenty of room'"| S
+    R2["📥 Receiver — buffer filling<br/>app reading slowly"] -->|"ACK + window = 2KB<br/>'slow down'"| S2["📤 Sender throttles"]
+    R3["📥 Receiver — buffer FULL"] -->|"ACK + window = 0<br/>'stop'"| S3["📤 Sender halts"]
+```
+
+This is a **sliding window**: as bytes are acknowledged and space frees, the window advances over the stream. It also serves a second purpose worth noting — it lets the sender keep *multiple* segments in flight without waiting for each to be acknowledged individually. Sending one segment and waiting a full round trip before the next would cap throughput at one segment per RTT, which on a 100 ms link is catastrophically slow. The window is what allows a whole batch to be outstanding at once.
+
+### The Zero Window and Its Deadlock
+
+When the buffer is completely full, the receiver advertises a window of **zero** — *stop sending entirely*. The sender halts.
+
+Now a subtle problem appears. The sender is waiting for an update saying space is available. That update travels in an ACK. But the sender isn't transmitting anything, so the receiver has nothing to acknowledge — and if the window-update message is itself lost, both sides wait forever. The sender waits for permission; the receiver believes it already gave it.
+
+TCP breaks the deadlock with the **window probe**: a sender facing a zero window periodically sends a tiny segment purely to elicit a fresh reply. If the window has reopened, the reply says so. It's a small piece of paranoia guarding against a lost message causing a permanent stall — the kind of detail that distinguishes a protocol that works in a lab from one that works for decades.
+
+### What a Zero Window Actually Tells You
+
+Diagnostically, this is valuable. A persistently zero or tiny receive window means **the receiving application isn't reading fast enough** — the network is fine, TCP is fine, and the bottleneck is the code draining the socket.
+
+That distinction matters when something is slow. If windows are healthy but throughput is poor, look at the network or at congestion (§6). If the window is collapsing toward zero, the problem is on the receiving machine — a consumer that can't keep up, blocked on disk, or starved of CPU. It's one of the few places where a transport-layer number points directly at an application-layer bug.
+
+> 💡 **Key Insight**
+>
+> Flow control is the **easy** rate-limiting problem, and it's easy for exactly one reason: **the constrained party can announce its own capacity.** The receiver knows its buffer state and states it in every ACK, so the sender never has to guess. Hold onto that, because §6 tackles the same question — how fast to send — with that advantage removed. The network in between has no voice, no window field, and no way to tell you it's overloaded. Everything difficult about congestion control follows from that missing channel.
+
+### Quick Recap — Flow Control
+
+- **Flow control protects the receiver**; congestion control protects the network (§6) — same question, different constrained party.
+- The **receive window** is advertised in every ACK: "I can accept this many more bytes." The sender may never exceed it in unacknowledged data.
+- The **sliding window** also enables multiple segments in flight — without it, throughput would be capped at one segment per round trip.
+- A **zero window** halts the sender, protected from deadlock by periodic **window probes** — and a chronically small window is a direct signal that the *receiving application* is too slow, not the network.
