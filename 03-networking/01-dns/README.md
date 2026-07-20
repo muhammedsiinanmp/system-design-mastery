@@ -14,7 +14,7 @@ Because DNS is not a lookup. It's a **globally distributed, hierarchically deleg
 
 You've already met the consequences of that, scattered across four earlier documents, without meeting the cause:
 
-- The Scaling doc pointed at **DNS-level balancing** in front of your load balancers (Scaling §5) and promised the mechanism would come later. It comes here (§6).
+- The Scaling doc pointed at **DNS-level balancing** in front of your load balancers (Scaling §4) and promised the mechanism would come later. It comes here (§6).
 - The SPOF doc listed **DNS** as the archetypal *hidden* SPOF — "it just works," until nobody can find you however healthy your servers are (SPOF §4) — and called the resolution root **irreducible** (SPOF §7). Both are settled here (§8).
 - The Distributed Systems doc used **DNS as its worked example of an AP system** — the canonical case of "up ≫ perfectly correct." That's not a curiosity; it's the reason half this document exists (§1, §7).
 - Foundations §3 warned that **"just update DNS" is never instant**. §7 explains why the word everyone uses for it — *propagation* — describes something that does not happen.
@@ -274,7 +274,7 @@ The industry's answer is **ALIAS** / **ANAME** / **CNAME flattening**: a non-sta
 
 ## 5. DNS as a Latency Cost
 
-Foundations §7 made DNS **Step 1** of the request walkthrough, and the Latency doc broke a request's time into its components (Latency §2). Put those together and you get the fact this section is about:
+Foundations' request walkthrough made DNS **Step 1**, and the Latency doc broke a request's time into its components (Latency §2). Put those together and you get the fact this section is about:
 
 > **DNS latency is time the user waits before your system has received a single byte — and it is invisible in every metric your servers produce.**
 
@@ -345,7 +345,7 @@ The lever inventory here is short and honest, because §3 already established yo
 
 ## 6. DNS as Traffic Control
 
-The Scaling doc left an IOU here. It warned that a single load balancer is a SPOF, noted that production systems "often run **DNS-level balancing** in front of them," and promised the mechanism would be covered fully in the networking deep-dives (Scaling §5). This is that coverage — and the honest version of it has two halves: *DNS really is a load balancer*, and *DNS is a bad one*.
+The Scaling doc left an IOU here. It warned that a single load balancer is a SPOF, noted that production systems "often run **DNS-level balancing** in front of them," and promised the mechanism would be covered fully in the networking deep-dives (Scaling §4). This is that coverage — and the honest version of it has two halves: *DNS really is a load balancer*, and *DNS is a bad one*.
 
 ### The Superpower, Restated
 
@@ -368,7 +368,7 @@ Each is a legitimate tool. Then reality intervenes.
 
 **1. You aren't steering users. You're answering resolvers.** Everything §3 established applies: your answer is cached at five layers by parties who owe you nothing. You don't decide where traffic goes — you *suggest*, and the suggestion persists for as long as somebody else's cache decides it should.
 
-**2. Round-robin balances *answers*, not *load*.** The rotation is blind. It doesn't know one IP is a 64-core box and another is struggling; it doesn't know one client is a corporate resolver fronting 50,000 users and another is one laptop. It distributes *responses* evenly and hopes that correlates with distributing *work* evenly. A real load balancer knows connection counts and health (§05–§06 of this phase). DNS knows a list. This is exactly why Scaling §5 said DNS balancing goes *in front of* load balancers rather than replacing them.
+**2. Round-robin balances *answers*, not *load*.** The rotation is blind. It doesn't know one IP is a 64-core box and another is struggling; it doesn't know one client is a corporate resolver fronting 50,000 users and another is one laptop. It distributes *responses* evenly and hopes that correlates with distributing *work* evenly. A real load balancer knows connection counts and health (§05–§06 of this phase). DNS knows a list. This is exactly why Scaling §4 said DNS balancing goes *in front of* load balancers rather than replacing them.
 
 **3. GeoDNS locates the *resolver*, not the user.** The provider sees where the query came from — and it came from the resolver, not the human. A user in Mumbai on a corporate VPN egressing through Frankfurt gets sent to Europe. Someone using a centralized public resolver may be geolocated to wherever that resolver's infrastructure answered from. GeoDNS is good in aggregate and confidently wrong for exactly the users whose setups are unusual.
 
@@ -390,7 +390,7 @@ That's the entire difference between DNS-level failover and a load balancer pull
 
 ### Quick Recap — DNS as Traffic Control
 
-- DNS steering is real and irreplaceable: it's the only layer that balances **across regions and providers**, which is why it sits *in front of* load balancers (Scaling §5).
+- DNS steering is real and irreplaceable: it's the only layer that balances **across regions and providers**, which is why it sits *in front of* load balancers (Scaling §4).
 - The four mechanisms — **round-robin, weighted, GeoDNS, health-checked failover** — are all advisory, because the answer lands in caches you don't control (§3).
 - Round-robin balances **answers, not load**; GeoDNS locates the **resolver, not the user** — both are right in aggregate, wrong at the edges.
 - Health-checked failover **stops giving out a bad answer** — it can't retract answers already given, so real failover takes TTL + tail (§7).
@@ -676,7 +676,7 @@ The ticket had been open for four quarters and would have taken an afternoon. Wh
 | **Negative caching** | `NXDOMAIN` is cached too, governed by the `SOA` | A name can stay "nonexistent" after it exists |
 | **Record types** | `NS` **is** delegation; `MX` priorities are DNS's only native failover | Apex can't be a `CNAME` → non-standard ALIAS → provider lock-in |
 | **Latency** | Bimodal: ~1–5ms warm, ~50–300ms cold — paid **before** your server sees anything | Invisible in your metrics; concentrated on first-time users |
-| **Traffic control** | The only layer that steers across regions/providers (Scaling §5) | Advisory, not authoritative — influence with a lag |
+| **Traffic control** | The only layer that steers across regions/providers (Scaling §4) | Advisory, not authoritative — influence with a lag |
 | **Propagation** | **Doesn't exist.** Caches expire; nothing is ever sent | The only lever (TTL) works only *in advance* |
 | **DNS as SPOF** | In series with everything → a hard ceiling on availability (Avail §6) | It's *three* SPOFs: provider (fix), registrar (harden), root (fine) |
 | **Failure modes** | Time-asymmetric: instant to break, TTL-bounded to fix | Long TTL cushions provider loss *and* slows recovery — no safe number |
