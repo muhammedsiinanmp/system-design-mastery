@@ -64,16 +64,25 @@ def sections_of(relpath):
         return {int(n) for n in HEADING.findall(fh.read())}
 
 
-# CLAUDE.md deliberately quotes broken citations as counter-examples, so
-# scanning it would report its own documentation as defects.
-SKIP_FILES = {"CLAUDE.md"}
+INLINE_CODE = re.compile(r"`[^`]*`")
+
+
+def strip_mentions(line):
+    """Blank out inline-code spans before matching.
+
+    A citation in backticks is being *mentioned*, not *used* — the style guide
+    and the roadmap both quote `Foundations §7` as an example of a broken
+    citation, and flagging their own documentation would be noise. Replace with
+    spaces rather than deleting so column positions stay honest.
+    """
+    return INLINE_CODE.sub(lambda m: " " * len(m.group(0)), line)
 
 
 def markdown_files():
     for root, dirs, files in os.walk(REPO):
         dirs[:] = [d for d in dirs if d not in (".git", "tools")]
         for name in sorted(files):
-            if name.endswith(".md") and name not in SKIP_FILES:
+            if name.endswith(".md"):
                 yield os.path.join(root, name)
 
 
@@ -87,7 +96,8 @@ def main():
         with open(path, encoding="utf-8") as fh:
             lines = fh.readlines()
 
-        for lineno, line in enumerate(lines, 1):
+        for lineno, raw in enumerate(lines, 1):
+            line = strip_mentions(raw)
             for match in CITATION.finditer(line):
                 alias, first, rest = match.group(1), match.group(2), match.group(3)
 
