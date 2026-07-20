@@ -29,6 +29,23 @@ Follow these every time you add a topic:
 2. **Follow the folder naming convention** — `{phase}/{section}/{##-topic-name}/README.md`
 3. **Mark ✅ Done only after review** — not when first drafted
 4. **Never create a file without a row here** — this is the source of truth
+5. **Verify every `§` citation before shipping** — run `python3 tools/check-citations.py`
+
+### Citation Convention
+
+Documents cite each other as `(Doc §N)` — `(Avail §6)`, `(SPOF §4)`, `(Rel §5)`.
+`§` always means *a numbered section within a document*; for topics inside a
+phase write "Topic 04", never `§04`.
+
+Before writing any `§N`, **open the target and confirm `## N.` exists and holds
+what you're citing**. Two failures have shipped: citing a section that doesn't
+exist (`Foundations §7` — that doc ends at §6, and its request walkthrough is
+unnumbered), and citing one that exists but is wrong (`Scaling §5` five times
+for load-balancer content that lives in §4). The checker catches the first kind
+only; the second needs a human to read the target.
+
+Watch the name collision: **Scaling** is Phase 01's group doc, **Scalability**
+is Phase 02's topic.
 
 ### Folder Naming Convention
 
