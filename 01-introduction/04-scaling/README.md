@@ -270,7 +270,7 @@ Round robin is the sensible default. Least-connections shines when some requests
 
 ### L4 vs L7 — Two Layers of Balancing
 
-You'll hear load balancers described as "Layer 4" or "Layer 7" (from the networking layers in Group 1):
+You'll hear load balancers described as "Layer 4" or "Layer 7" (the transport and application layers — Phase 03's TCP vs UDP topic covers what lives at each):
 
 - **L4 (transport level)** — routes based on IP address and port. Fast, simple, doesn't look inside the request.
 - **L7 (application level)** — reads the actual HTTP request. Can route by URL path, headers, or cookies (e.g. send `/api/*` to one pool and `/images/*` to another). More powerful, slightly more overhead.

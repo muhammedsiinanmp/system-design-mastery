@@ -250,7 +250,7 @@ When engineers say "proxy" in a design discussion without qualification, they al
 
 > 💡 **Key Insight**
 >
-> The reverse proxy is the system's *front door*, and putting one there is one of the highest-leverage moves in architecture: it's a single, controlled place to terminate TLS, balance load, cache, rate-limit, and hide your fleet — all without touching application code. When you meet **load balancers** and **API gateways** in later groups, notice they're specialized reverse proxies. The pattern is the same; the job description changes.
+> The reverse proxy is the system's *front door*, and putting one there is one of the highest-leverage moves in architecture: it's a single, controlled place to terminate TLS, balance load, cache, rate-limit, and hide your fleet — all without touching application code. When you meet **load balancers** (Phase 03) and **API gateways** (Phase 04), notice they're specialized reverse proxies. The pattern is the same; the job description changes.
 
 ### Quick Recap — Proxy vs Reverse Proxy
 

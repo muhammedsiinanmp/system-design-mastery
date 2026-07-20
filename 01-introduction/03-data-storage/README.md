@@ -874,7 +874,7 @@ With 3 indexes:  1 write + 3 index updates = 4 operations
 >
 > An index is a trade: you pay more on every write to make reads faster. Engineers add indexes when reads are the bottleneck. They remove or avoid indexes when write throughput matters more.
 
-> ⚠️ We'll deep-dive into index internals (B-trees, hash indexes, composite indexes, partial indexes) in a later group. For now, the mental model is the important part: **indexes are like book indexes — they cost space and write effort, but make lookups dramatically faster**.
+> ⚠️ We'll deep-dive into index internals (B-trees, hash indexes, composite indexes, partial indexes) in Phase 05 — Storage & Databases. For now, the mental model is the important part: **indexes are like book indexes — they cost space and write effort, but make lookups dramatically faster**.
 
 ---
 
@@ -1001,7 +1001,7 @@ Now the biggest question of all:
 
 A single database server has limits. Eventually your data grows too large, your read traffic becomes too heavy, or your write rate exceeds what one machine can handle.
 
-Scaling storage is one of the hardest problems in distributed systems. We'll cover it deeply in Group 4. For now, let's build the intuition.
+Scaling storage is one of the hardest problems in distributed systems. Group 4 adds the scaling vocabulary, and Phase 05 — Storage & Databases covers replication, sharding, and partitioning at full depth. For now, let's build the intuition.
 
 ---
 
