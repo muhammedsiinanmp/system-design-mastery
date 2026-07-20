@@ -13,7 +13,7 @@ This is the **last** of the five core properties — and it's less a new idea th
 That component is a **Single Point of Failure** — a SPOF — and hunting them is one of the most valuable habits a systems engineer can build. It's the capstone the whole phase has been pointing toward. You've already met SPOFs in every prior document, by other names:
 
 - The **single load balancer** in front of a beautifully redundant server fleet (Availability §7) — one box whose death caps the entire system's availability.
-- The **shared config service** that all your "independent" replicas secretly depend on (Reliability §9) — where correlated failure is born.
+- The **shared config service** that all your "independent" replicas secretly depend on (Reliability §5) — where correlated failure is born.
 - The **write master** / single source of truth that both bottlenecks your scaling *and* has no backup (Scalability §6, §8).
 
 Each time, the same shape recurred: *one thing everything depends on, with no redundancy.* This document makes that shape the entire subject — how to define it, find it, reason about it, and decide what to do about each one.
@@ -69,7 +69,7 @@ The old proverb says a chain is only as strong as its weakest link. A SPOF is sh
 
 ### The Blast Radius Is Total
 
-What makes a SPOF categorically worse than an ordinary failure is the **blast radius** (Reliability §9). Most failures are *partial* — one shard, one feature, one region degrades, and the system lives in the availability spectrum's middle (Availability §1). A SPOF failure is *not* partial. It's the whole system, all users, all at once:
+What makes a SPOF categorically worse than an ordinary failure is the **blast radius** (Reliability §6). Most failures are *partial* — one shard, one feature, one region degrades, and the system lives in the availability spectrum's middle (Availability §1). A SPOF failure is *not* partial. It's the whole system, all users, all at once:
 
 | Ordinary component failure | SPOF failure |
 |---|---|

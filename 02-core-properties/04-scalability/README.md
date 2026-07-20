@@ -565,6 +565,6 @@ Scalability kept pointing at one thing: the **shared component everything depend
 
 > **Which single component, if it failed right now, would take the *whole system* down with it?**
 
-A Single Point of Failure is where scalability and availability collide in one place: the shared, stateful, hard-to-scale thing is *also* usually the thing with no redundancy, whose failure is total. You've met SPOFs in every doc so far — the single load balancer (Availability §7), the config service everyone shares (Reliability §9), the write master (this doc, §8). Topic 5 makes hunting and eliminating them the whole subject — the capstone that ties the five core properties together. One yardstick left.
+A Single Point of Failure is where scalability and availability collide in one place: the shared, stateful, hard-to-scale thing is *also* usually the thing with no redundancy, whose failure is total. You've met SPOFs in every doc so far — the single load balancer (Availability §7), the config service everyone shares (Reliability §5), the write master (this doc, §8). Topic 5 makes hunting and eliminating them the whole subject — the capstone that ties the five core properties together. One yardstick left.
 
 ---
