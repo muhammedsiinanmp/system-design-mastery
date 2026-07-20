@@ -54,3 +54,5 @@ exactly which question to ask next.
 ---
 
 Progress and the full curriculum live in [ROADMAP.md](../ROADMAP.md).
+When you're through this phase, **Phase 04 — APIs & Communication Deep Dives**
+is next, where the contracts riding on top of this wire get their own treatment.
