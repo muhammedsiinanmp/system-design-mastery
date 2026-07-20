@@ -131,22 +131,19 @@ The complete curriculum — all 150 topics, with per-topic status — lives in
 
 The curriculum covers:
 
-| Area                           | Focus                                                             |
-| ------------------------------ | ----------------------------------------------------------------- |
-| **Introduction & Foundations** | System design fundamentals and learning foundations               |
-| **Core Concepts**              | Scalability, reliability, consistency, latency, throughput, SPOF  |
-| **Networking**                 | DNS, HTTP/HTTPS, TCP/UDP, proxies, load balancing                 |
-| **APIs & Communication**       | REST, GraphQL, WebSockets, Webhooks, communication patterns       |
-| **Databases & Storage**        | SQL/NoSQL, data modeling, indexing, transactions, storage systems |
-| **Scaling**                    | Replication, partitioning, sharding, scaling strategies           |
-| **Caching**                    | CDN, distributed caching, eviction policies, cache strategies     |
-| **Asynchronous Systems**       | Queues, Pub/Sub, Kafka, event-driven systems                      |
-| **Distributed Systems**        | CAP theorem, consensus, leader election, coordination             |
-| **Microservices**              | Service discovery, SAGA, circuit breakers, service mesh           |
-| **Architecture Patterns**      | Monoliths, microservices, event-driven systems, serverless        |
-| **Observability**              | Logging, monitoring, tracing, chaos engineering                   |
-| **Security**                   | Authentication, authorization, OAuth, JWT, TLS, RBAC              |
-| **Interview Preparation**      | Frameworks, tradeoffs, real-world system design questions         |
+| # | Phase | Focus |
+| --- | ----- | ----- |
+| 01 | **Introduction & Foundations** | The 30 must-know concepts: networking, APIs, storage, scaling, distributed systems, architecture |
+| 02 | **Core System Properties** | Latency & throughput, availability, reliability, scalability, single points of failure |
+| 03 | **Networking Deep Dives** | DNS, HTTP/HTTPS, TCP/UDP, proxies, load balancers and their algorithms, checksums |
+| 04 | **APIs & Communication** | REST, GraphQL, gRPC, WebSockets, webhooks, data formats, API gateways, versioning |
+| 05 | **Storage & Databases** | SQL/NoSQL, data modeling, indexing, transactions, replication, sharding, search |
+| 06 | **Scaling & Performance** | Vertical vs horizontal, consistent hashing, caching strategies, CDNs, load shedding |
+| 07 | **Async & Events** | Queues, pub/sub, Kafka, event-driven architecture, streaming, backpressure |
+| 08 | **Distributed Systems** | CAP, consistency models, consensus, leader election, coordination, clocks |
+| 09 | **Architecture & Microservices** | Monoliths vs microservices, service discovery, SAGA, circuit breakers, service mesh |
+| 10 | **Observability & Security** | Logging, monitoring, tracing, chaos engineering, auth, OAuth, JWT, rate limiting |
+| 11 | **Interview Preparation** | Frameworks, estimation, tradeoffs, and full system design walkthroughs |
 
 ---
 
