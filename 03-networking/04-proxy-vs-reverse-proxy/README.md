@@ -40,3 +40,70 @@ The real subject is considerably more unsettling. Every request you have ever tr
 9. [The Front Door as Trust Boundary and Failure Point](#9-the-front-door-as-trust-boundary-and-failure-point)
 10. [Putting It All Together — Retiring a Monolith Behind a Reverse Proxy](#10-putting-it-all-together--retiring-a-monolith-behind-a-reverse-proxy)
 11. [Final Recap](#11-final-recap)
+
+---
+
+## 1. The Request Path Is Never Two Machines
+
+Every introduction to networking draws the same picture: a client on the left, a server on the right, an arrow between them. It's a useful fiction and it is almost never true.
+
+### The Fiction and the Reality
+
+A request from a laptop to a public web service typically passes through several machines that are not the destination. Each one accepts the traffic, does something with it, and passes it on:
+
+```mermaid
+flowchart LR
+    C["👤 Client"] --> H1["🏢 Corporate proxy"]
+    H1 --> H2["🌍 NAT gateway"]
+    H2 --> H3["🛡️ CDN / edge node"]
+    H3 --> H4["🚪 Reverse proxy"]
+    H4 --> S["🖥️ The actual server"]
+```
+
+The arrow in the textbook diagram is *five machines*, and only the last one runs the code anyone wrote on purpose. Everything in between is what this document is about.
+
+> **An intermediary is any machine that accepts a request not addressed to it in spirit, and forwards it toward something else — usually changing something along the way.**
+
+The phrase *"not addressed to it in spirit"* is doing real work there. A packet arriving at a proxy is genuinely addressed to that proxy at the network level — that's how it got there. But the *intent* is to reach something behind it. That gap between the address and the intent is the whole idea.
+
+### Upstream and Downstream
+
+Two words you'll meet constantly, and they trip people up because their meaning depends on where you stand:
+
+- **Upstream** — toward the origin, the thing that ultimately answers. From a proxy's view, its upstream is the server it forwards to.
+- **Downstream** — toward the client, the thing that asked.
+
+A proxy always sits between a downstream and an upstream. Chain several and each is upstream of the one before it. The **origin** (or origin server) is the machine at the very end that actually produces the response rather than relaying it.
+
+### Proxies You Already Use Without the Name
+
+Intermediaries are not exotic infrastructure. Several are so common they're rarely called proxies at all:
+
+| Thing | What it really is |
+|---|---|
+| **Home router** | Rewrites your private address to one public address for the whole household |
+| **Corporate network** | Forces outbound traffic through a filtering gateway |
+| **CDN** | Answers on behalf of a server that may be thousands of kilometres away |
+| **Firewall / middlebox** | Inspects and sometimes rewrites traffic in transit |
+| **VPN** | Relays all your traffic through an operator you chose |
+
+The router deserves a moment, because it's the intermediary nearly everyone owns. **NAT** — Network Address Translation — is what lets many devices share one public address: the router rewrites the source address on the way out, remembers the mapping, and reverses it on the way back. Every device in the house appears to the internet as the same single address.
+
+That's a proxy in every meaningful sense — it terminates, rewrites, forwards, and maintains state about who asked what. It also produces this document's central consequence in miniature: **a server receiving that traffic cannot distinguish the four people in the house from each other.** §7 is that problem at internet scale.
+
+### Why Put Anything in the Middle
+
+Every intermediary adds a hop, a failure point, and a machine to operate. They persist because a position between two parties lets you do things neither party can do alone — enforce a policy without modifying either side, cache an answer for many askers, hide what's behind you, or change where traffic goes without touching a line of application code.
+
+That last one is the deep reason. An intermediary is **a place to make decisions that would otherwise require changing software you may not control.** §10 is an extended example: a team rerouting traffic away from a monolith without editing the monolith.
+
+> 💡 **Key Insight**
+>
+> The client→server arrow is a teaching simplification, and treating it as literal is where confusion about proxies starts. Real requests pass through a sequence of machines that each terminate and re-originate the traffic — meaning **the connection your client opened is virtually never the connection your server accepts.** Once you internalise that, the questions in this document stop being abstract: something in the middle decrypted your request, and it had to, or it could not have decided where to send it.
+
+### Quick Recap — The Request Path
+
+- The client→server arrow is a fiction; real requests cross several **intermediaries** that accept traffic and forward it onward.
+- **Upstream** points toward the origin, **downstream** toward the client, and the **origin** is whatever finally produces a response instead of relaying one.
+- Many familiar things are proxies under other names — home routers doing **NAT**, corporate gateways, CDNs, VPNs.
+- Intermediaries earn their cost by being **a place to make decisions without modifying either endpoint** — the property everything else in this document builds on.
