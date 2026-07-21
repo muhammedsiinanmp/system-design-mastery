@@ -391,3 +391,85 @@ L4 isn't the primitive option — it's the correct one whenever you don't need t
 - An **L4 proxy decides once per connection** and forwards blindly; an **L7 proxy decides per request** and can route, rewrite, cache, or answer.
 - **L7 requires decryption** — you cannot route on a path you cannot read — which makes TLS termination (§6) a precondition, not an extra.
 - **L4 is the right choice** when you need protocol independence, minimal cost, or genuinely untouched end-to-end encryption.
+
+---
+
+## 6. TLS Termination — Where the Encryption Ends
+
+§5 ended on a dependency: Layer 7 routing requires reading the request, and encrypted requests can't be read. So something has to decrypt. Where that happens is one of the most consequential decisions in a system's architecture, and it's usually made by default rather than deliberately.
+
+### The Definition
+
+Encrypted web traffic uses **TLS** — a layer that encrypts everything between two parties so anyone in between sees only unintelligible bytes. Establishing it involves the server proving its identity with a **certificate** and both sides agreeing on keys.
+
+> **TLS termination is the point in the path where the encrypted connection ends and is decrypted. Whatever terminates TLS holds the certificate, holds the keys, and sees the plaintext.**
+
+The word *terminate* is precise and slightly counterintuitive: it doesn't mean the traffic stops, it means *this encrypted connection* stops. What continues onward is a different connection — possibly plaintext, possibly separately encrypted, but not the client's original one.
+
+### Three Arrangements
+
+```mermaid
+flowchart TD
+    subgraph PT["1️⃣ Passthrough — L4 only"]
+        A1["👤 Client"] -.->|"🔒 encrypted end to end"| A2["🖥️ Origin holds the cert"]
+    end
+    subgraph TERM["2️⃣ Terminate at the edge"]
+        B1["👤 Client"] -->|"🔒"| B2["🚪 Proxy decrypts"]
+        B2 -->|"📄 plaintext inside"| B3["🖥️ Origin"]
+    end
+    subgraph REENC["3️⃣ Terminate and re-encrypt"]
+        C1["👤 Client"] -->|"🔒"| C2["🚪 Proxy decrypts,<br/>reads, re-encrypts"]
+        C2 -->|"🔒 second connection"| C3["🖥️ Origin"]
+    end
+```
+
+| | Proxy sees plaintext | Encrypted to origin | L7 routing possible |
+|---|---|---|---|
+| **Passthrough** | ❌ Never | ✅ | ❌ |
+| **Terminate** | ✅ | ❌ | ✅ |
+| **Re-encrypt** | ✅ | ✅ | ✅ |
+
+**Passthrough** keeps the client's encryption genuinely end-to-end — the proxy can only forward bytes, so it's an L4 proxy by necessity. Maximum confidentiality, minimum capability.
+
+**Termination** is the common arrangement. The proxy decrypts, and everything §5 described becomes available. Traffic continues to the origin as plaintext across the internal network.
+
+**Re-encryption** decrypts to inspect and route, then encrypts again for the trip to the origin. Full L7 capability with no plaintext on the wire, at the cost of a second encryption operation on every request.
+
+### Why Terminate at the Edge at All
+
+Beyond enabling L7, centralising encryption solves a set of problems that are genuinely painful when distributed:
+
+- **Certificates live in one place.** Renewal, rotation, and expiry monitoring happen once instead of on every server. Certificates expire, and an expired one rejects every connection instantly and completely — a well-known and recurring cause of total outages at organisations that were otherwise excellent at redundancy. One renewal process is dramatically easier to get right than fifty.
+- **Cryptographic work is concentrated** where it can be optimised or hardware-accelerated, instead of consuming capacity in every application process.
+- **Policy is uniform.** Protocol versions and cipher choices are set once. No server drifts onto an outdated configuration because someone forgot it existed.
+- **Applications stop handling encryption.** They speak plain HTTP and never manage a key.
+
+### The Trust Boundary Moves
+
+Here's the consequence that deserves the most attention, and it's often noticed only after something goes wrong.
+
+Before termination, the encrypted channel ran from the client all the way to the origin. Everything in between was untrusted by construction — it couldn't read anything, so it didn't need to be trusted.
+
+After termination, that guarantee ends at the proxy. Beyond it, traffic travels in a network you have declared trustworthy:
+
+```mermaid
+flowchart LR
+    C["👤 Client"] -->|"🔒 untrusted path<br/>encryption protects you"| P["🚪 Proxy<br/>⚠️ boundary is HERE"]
+    P -->|"📄 plaintext<br/>you asserted this is safe"| O["🖥️ Origin"]
+```
+
+That assertion is a real security claim, and it's frequently made implicitly by whoever configured the proxy rather than deliberately by anyone weighing it. It holds up well inside a single tightly-controlled network segment. It holds up considerably less well when "inside" means a shared cloud network, traffic crossing between availability zones, or a path that grew over time to include hops nobody remembers adding.
+
+Two properties follow, and both matter:
+
+- **The proxy sees everything.** Passwords, tokens, personal data, payment details — all of it, in the clear, on one machine. That machine is now the highest-value target in the system, and §9 returns to what that means.
+- **"We use HTTPS" becomes ambiguous.** It's true at the edge and may be false everywhere behind it. The precise question is always *"encrypted to where?"*
+
+> ⚠️ **Terminating TLS is a security decision disguised as a performance configuration.** It is usually enabled because someone needed path-based routing or certificate management — both excellent reasons — and the trust boundary silently relocates as a side effect. The right time to ask *"what exactly am I asserting is trustworthy behind this point?"* is when you turn it on, not during the incident review. Re-encryption exists precisely for when the honest answer is "less than I'd like."
+
+### Quick Recap — TLS Termination
+
+- **TLS termination** is where the encrypted connection ends; whatever terminates it holds the certificate and **sees all plaintext**.
+- Three arrangements: **passthrough** (end-to-end, L4 only), **terminate** (plaintext inside, full L7), **re-encrypt** (L7 plus a protected internal hop).
+- Terminating at the edge centralises **certificates, cryptographic cost, and protocol policy** — and certificate expiry is a classic total-outage cause, so one renewal process beats fifty.
+- It **moves the trust boundary**: everything behind the proxy is now asserted trustworthy, and the proxy becomes the machine that sees every secret in the system (§9).
