@@ -102,15 +102,16 @@ is Phase 02's topic.
 
 ## Phase 03 — Networking Deep Dives
 
-> Goal: Full treatment of the wire-level concepts introduced in Group 1.
-> Each topic here expands on the intuition already built — no cold starts.
+> Goal: Full treatment of the wire-level concepts the earlier phases relied on.
+> Most topics expand on intuition Group 1 already built; some are written to
+> stand alone, where the foundation series named a concept without teaching it.
 
 | # | Topic | Status | File |
 |---|---|---|---|
 | 01 | DNS — Domain Name System | ✅ Done | `03-networking/01-dns/README.md` |
 | 02 | HTTP & HTTPS | ✅ Done | `03-networking/02-http-https/README.md` |
 | 03 | TCP vs UDP | ✅ Done | `03-networking/03-tcp-vs-udp/README.md` |
-| 04 | Proxy vs Reverse Proxy | 🚧 In Progress | `03-networking/04-proxy-vs-reverse-proxy/README.md` |
+| 04 | Proxy vs Reverse Proxy | ✅ Done | `03-networking/04-proxy-vs-reverse-proxy/README.md` |
 | 05 | Load Balancers | 📋 Planned | `03-networking/05-load-balancers/README.md` |
 | 06 | Load Balancing Algorithms | 📋 Planned | `03-networking/06-load-balancing-algorithms/README.md` |
 | 07 | Checksums | 💡 Idea | `03-networking/07-checksums/README.md` |
@@ -372,7 +373,7 @@ is Phase 02's topic.
 |---|---|---|---|---|---|---|
 | 01 | Introduction | 7 | 7 | 0 | 0 | 0 |
 | 02 | Core System Properties | 5 | 5 | 0 | 0 | 0 |
-| 03 | Networking | 7 | 3 | 1 | 2 | 1 |
+| 03 | Networking | 7 | 4 | 0 | 2 | 1 |
 | 04 | APIs & Communication | 15 | 0 | 0 | 14 | 1 |
 | 05 | Storage & Databases | 27 | 0 | 0 | 19 | 8 |
 | 06 | Scaling & Performance | 10 | 0 | 0 | 10 | 0 |
@@ -381,7 +382,7 @@ is Phase 02's topic.
 | 09 | Architecture & Microservices | 13 | 0 | 0 | 7 | 6 |
 | 10 | Observability & Security | 13 | 0 | 0 | 11 | 2 |
 | 11 | Interview Preparation | 21 | 0 | 0 | 4 | 17 |
-| **Total** | | **150** | **15** | **1** | **94** | **40** |
+| **Total** | | **150** | **16** | **0** | **94** | **40** |
 
 ---
 
