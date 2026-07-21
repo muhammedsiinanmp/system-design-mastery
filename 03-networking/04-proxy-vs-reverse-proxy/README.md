@@ -695,3 +695,114 @@ The accounting is simply this: you are **concentrating** risk in exchange for **
 - Its failure is **total, not partial**: every server behind it is healthy and simultaneously unreachable.
 - It terminates encryption, so **every secret in the system passes through it in plaintext** — making it the highest-value target and an ideal quiet foothold.
 - Its distinctive failures — **misrouting and trusted client headers** — return `200 OK`, so they're found by users and auditors rather than by monitoring.
+
+---
+
+## 10. Putting It All Together — Retiring a Monolith Behind a Reverse Proxy
+
+A team runs a single large application — six years old, one deployable unit, handling everything from the marketing site to checkout. It works. It is also increasingly difficult to change, and they want to move functionality out of it a piece at a time without a rewrite and without asking any client to change a URL.
+
+Their application is currently addressed directly: it holds the public address, terminates its own TLS, and serves every path.
+
+Watch each section of this document arrive as a step.
+
+### Step 1 — Put Something in Front (§3)
+
+Before moving anything, they place a reverse proxy at the entrance. The public address moves to the proxy; the application moves to a private address, reachable only from inside.
+
+Nothing changes for users — same hostname, same URLs, same responses. The proxy forwards everything to the one upstream it has. It looks pointless, and it's the step everything else depends on: **clients now hold a reference to the proxy rather than to the application.** What's behind it has become theirs to rearrange.
+
+### Step 2 — Terminate TLS at the Edge (§6)
+
+The certificate moves to the proxy. It decrypts incoming connections and forwards plaintext to the application inside the private network.
+
+Two things they gain immediately: the application stops managing certificates, and — the part that matters for what follows — **the proxy can now read requests.** Path routing is impossible without this (§5). They note explicitly that the trust boundary has moved to the proxy, and record that the internal segment is now assumed trustworthy.
+
+### Step 3 — Route by Path (§5)
+
+The first extraction: search functionality becomes a separate service. Rather than changing any client, they add one L7 routing rule:
+
+```mermaid
+flowchart LR
+    C["👤 Client<br/>same URLs as always"] --> P["🚪 Reverse proxy<br/>routes per request"]
+    P -->|"/search/*"| N["🆕 Search service"]
+    P -->|"everything else"| M["🏛️ Monolith"]
+```
+
+Requests to `/search/*` go to the new service; everything else continues to the monolith. From outside, nothing happened — same hostname, same paths, same responses.
+
+This is precisely what L4 could not do. An L4 proxy chooses an upstream per *connection*, and a browser sends many requests over one connection — a page load would need its search request and its checkout request on the same connection to reach different services. Only reading each request makes that possible.
+
+Over the following months they peel off more: `/api/orders/*`, then `/api/users/*`. Each is one routing rule. The monolith shrinks by attrition and no client ever learns anything changed.
+
+### Step 4 — The Incident (§7)
+
+Six weeks in, a customer reports being rate-limited while barely using the product. Then several more. Then the rate limiter starts rejecting traffic broadly, and the on-call engineer finds every log entry showing the same source address: `10.0.0.5`. The proxy.
+
+The application's rate limiter allows 100 requests per minute per address. Since Step 1, every request has arrived from the proxy — so **the entire customer base has been sharing one bucket.** It didn't fail immediately because traffic was below the limit; growth crossed it, and the limiter began throttling the company as though it were a single abusive user.
+
+Access logs have been useless for six weeks and nobody noticed, because nobody had reason to read them closely.
+
+They fix it with `X-Forwarded-For`: the proxy records the address it observed, the application reads that instead of the connection's source.
+
+### Step 5 — The Fix's Own Bug (§7)
+
+During review, someone asks what happens if a client sends its *own* `X-Forwarded-For`.
+
+The initial configuration appended to whatever arrived, and the application read the first entry. So any client could send `X-Forwarded-For: 1.2.3.4`, land in whatever bucket it liked, and evade the limit entirely by varying the value — a rate limiter defeated by a header the attacker controls. Worse, an internal tool used address allow-listing, which the same trick would defeat while looking completely normal in the logs.
+
+The correction follows §7's rule: **the edge overwrites rather than appends.** Whatever a client sends is discarded and replaced with the address the proxy actually observed. Internal hops append. The application is configured with the number of trusted hops and counts inward from the last entry, never trusting the first.
+
+Both bugs came from the same step, and the second was more dangerous: the first caused a visible outage that forced a fix, while the second would have failed silently and successfully (§9), returning `200 OK` to every forged request.
+
+### Step 6 — Notice What the Front Door Became (§9)
+
+A year later the picture has changed. The monolith handles a fraction of what it did. Six services sit behind the proxy. The proxy configuration holds the routing table for the entire system, terminates all TLS, enforces rate limits, and adds request IDs.
+
+It is now the most critical machine they operate — and nobody ever decided that. It happened one routing rule at a time.
+
+So they treat it accordingly: a second proxy so the entrance isn't singular (the mechanics are Topic 05), config changes reviewed like application code after a near-miss where a misrouting rule sent a fraction of traffic to the wrong service and returned confident, wrong `200 OK`s, certificate renewal automated with expiry alerting, and access to the proxy restricted more tightly than to any service behind it — because it sees every token and every payment detail in the clear.
+
+### The Payoff
+
+The monolith was retired incrementally with no rewrite, no client change, and no coordinated migration. Each extraction was a routing rule, reversible by removing it.
+
+What made it possible wasn't microservices or any particular technology. It was **a position on the wire.** Once something sits between clients and servers and can read requests, the mapping from URL to implementation becomes a configuration decision instead of an architectural commitment.
+
+And the incidents share one root: **the proxy was adopted for what it enabled, and its consequences arrived unbidden.** The identity problem, the trust boundary, the concentration of criticality — none were chosen, and all were inevitable from Step 1. Their real lesson is that the day you put something in front of your application, you have already accepted every consequence in this document; the only question is whether you find out on your terms or during an incident.
+
+---
+
+## 11. Final Recap
+
+| Concept | Core Insight | Biggest Tradeoff |
+|---|---|---|
+| **Intermediaries** | The client→server arrow is a fiction; real requests cross several machines that terminate and re-originate traffic | Every hop is a failure point and a machine to operate |
+| **Forward proxy** | Acts for **clients** — destinations see the proxy, not the user | Concentrates visibility: one operator sees every request everyone makes |
+| **Reverse proxy** | Acts for **servers** — holds the only public address, so the fleet is unreachable and replaceable | The one machine that must not fail |
+| **The distinction** | Same software, opposite directions; the only question is **whose agent is it** | The vocabulary confuses; the concept doesn't |
+| **The taxonomy** | Load balancers, API gateways, CDN edges, sidecars, ingress controllers are all **specialized reverse proxies** | Labels blur in practice — ask what it emphasises |
+| **L4** | Sees addresses and ports; forwards opaque bytes cheaply and protocol-agnostically | One decision per connection; can't route, rewrite, or cache |
+| **L7** | Reads the message; routes per request on path, header, or cookie | Costs parsing — and **requires decrypting first** |
+| **TLS termination** | Where encryption ends and plaintext begins; the precondition for all L7 routing | Moves the trust boundary and concentrates every secret on one machine |
+| **Client identity** | The origin's connection came from the proxy, so the client's address was never in it | `X-Forwarded-For` recovers it as **forgeable client input** |
+| **Front door duties** | Caching, rewriting, compression, rate limiting, auth — work otherwise duplicated in every service | Configuration accretes into untested business logic |
+| **Concentration** | One entrance means one place for policy, certificates, and control | Total failure, and the highest-value target you run |
+
+### The One Thing to Remember
+
+> **A proxy is not a kind of software — it is a position on the wire, and everything follows from two questions: whose agent is it, and how deep can it read? *Whose agent* separates forward from reverse and is the only distinction that matters. *How deep it reads* determines whether it can route on a URL, which in turn requires decrypting traffic the client encrypted end-to-end — so every Layer 7 capability is purchased by moving the trust boundary inward. That position is the highest-leverage place in a system: it makes servers hidden and replaceable, and turns the mapping from URL to implementation into a configuration decision. It is also the machine that sees every secret, cannot preserve the identity of the client that connected to it, and takes everything down when it stops. You will almost certainly want one. Decide what you are accepting before it decides for you.**
+
+---
+
+## What's Next
+
+> **Topic 05 — Load Balancers**
+
+This document kept stopping at the same edge. The reverse proxy makes servers hidden and interchangeable — and then something has to actually spread traffic across them, notice when one stops answering, and stop sending work to a machine that can no longer do it. Every time that came up, it was deferred.
+
+Next it's the subject. A **load balancer** is the specialization of the reverse proxy whose entire emphasis is distribution: how it tracks which upstreams are alive, what a health check really proves (and what it only appears to prove), how servers are added and drained without dropping requests, and how the front door itself is made redundant — the question §9 raised and left open.
+
+You've learned what the position on the wire *is*. Next you find out how it handles many servers instead of one.
+
+---
