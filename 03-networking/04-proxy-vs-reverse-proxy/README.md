@@ -313,3 +313,81 @@ Real deployments blur them further: one component often plays several of these r
 - One question settles it: **whose agent is it** — the clients in front, or the servers behind?
 - A reverse proxy is **indistinguishable from the origin** to any outside client, by design.
 - **Load balancers, API gateways, CDN edges, sidecars, and ingress controllers are all specialized reverse proxies** — one position, different emphases, each covered in its own topic.
+
+---
+
+## 5. L4 vs L7 — What the Proxy Can See
+
+We've established *whose agent* a proxy is. Now the second question, and the one that determines what it can actually do: **how deep does it read?**
+
+### Two Layers, Two Kinds of Information
+
+Network traffic is layered — each layer wraps the one above it, adding its own information. Two of those layers matter here:
+
+- **Layer 4, the transport layer.** Carries addresses and port numbers, and delivers a stream of bytes between two machines. It has no idea what those bytes mean. To Layer 4, a web request, a database query, and a video stream are all identical: bytes to move from a port here to a port there.
+- **Layer 7, the application layer.** Where the bytes have *meaning* — an HTTP request with a method, a path, headers, and a body. This is the layer that knows the difference between fetching a product page and submitting a payment.
+
+The numbers come from a standard layering model. What matters isn't the numbering but the **information available at each level**, because a proxy can only make decisions using information it can actually see.
+
+```mermaid
+flowchart TD
+    subgraph L4["🔌 Layer 4 — the connection"]
+        A["Source address + port<br/>Destination address + port<br/>A stream of opaque bytes"]
+    end
+    subgraph L7["📄 Layer 7 — the message"]
+        B["GET /api/orders/42<br/>Host, Cookie, Authorization<br/>Body, status, content type"]
+    end
+    L4 --> L7
+```
+
+### What Each Kind of Proxy Can Do
+
+An **L4 proxy** operates on connections. It sees where a connection came from and where it's headed, picks an upstream, and then shovels bytes between the two sides without interpreting any of them.
+
+An **L7 proxy** operates on messages. It reads the request, understands it as a structured object, and can route, modify, or answer based on anything inside it.
+
+| | **L4 — connection level** | **L7 — message level** |
+|---|---|---|
+| Sees | Addresses, ports, byte counts | Method, path, headers, cookies, body |
+| Routes on | Destination port; source address | **Anything in the request** |
+| Understands protocol | No — any protocol works | Yes — must speak HTTP specifically |
+| Per-request decisions | ❌ One decision per *connection* | ✅ Every request decided independently |
+| Can modify content | ❌ | ✅ Headers, paths, bodies |
+| Can cache | ❌ — doesn't know what a response is | ✅ |
+| Cost | Very low | Parsing, buffering, re-emitting |
+| Works with encrypted traffic | ✅ — doesn't need to read it | ❌ **Must decrypt first (§6)** |
+
+Two rows carry most of the practical weight.
+
+**Per-request decisions.** Modern connections carry many requests — a browser will send dozens over one connection. An L4 proxy chooses an upstream when the *connection* opens, and every request on it goes to the same place, whatever they are. An L7 proxy decides *per request*: one to a static-content server, the next to an API service, the next to a legacy system, all over the same client connection. §10's migration depends entirely on this.
+
+**Encryption.** An L4 proxy is indifferent to encryption because it never looks inside — encrypted bytes forward exactly as well as plain ones. An L7 proxy is helpless against it. You cannot route on a URL path you cannot read. This is the causal link that makes §6 necessary rather than optional: **terminating encryption is the precondition for Layer 7 routing.** It isn't a separate feature you might also want; it's the thing that has to happen first.
+
+### What L7 Buys, Concretely
+
+Reading the message enables a category of things impossible at L4:
+
+- **Path routing** — `/api/*` to one system, `/static/*` to another, everything else to a third. One hostname, many backends.
+- **Header and cookie routing** — send a fraction of users to a new version; route by tenant, region, or account.
+- **Rewriting** — change a path or add a header before the origin ever sees it. §7's mechanism is exactly this.
+- **Caching** — impossible at L4, because caching requires knowing what a response *is* and whether it's reusable.
+- **Selective retries** — a failed idempotent read can be retried against a different upstream; L4 can only fail the connection.
+
+### What L4 Buys
+
+L4 isn't the primitive option — it's the correct one whenever you don't need to read the message:
+
+- **Protocol independence.** L7 proxying means implementing the protocol. An L4 proxy carries databases, message queues, custom binary protocols, or anything else without knowing what they are.
+- **Cost.** No parsing, no buffering, no re-emitting. Minimal work per byte and less to go wrong.
+- **End-to-end encryption preserved.** Traffic passes through still encrypted; the proxy never has the keys and never sees the content. When that's a requirement, L4 isn't a compromise — it's the only acceptable answer.
+
+> 💡 **Key Insight**
+>
+> L4 and L7 aren't a quality ranking, they're a **visibility choice, and visibility costs both work and trust.** L4 sees a connection and forwards bytes cheaply, protocol-agnostically, without ever decrypting anything. L7 sees the message and can do far more with it — route per request, rewrite, cache — but only by parsing every request and, crucially, only by **first decrypting traffic the client encrypted end-to-end.** Every L7 capability is purchased with that decryption, which is why the next section is about where the encryption ends and what moves when it does.
+
+### Quick Recap — L4 vs L7
+
+- **Layer 4** carries addresses, ports, and opaque bytes; **Layer 7** carries the message — method, path, headers, body.
+- An **L4 proxy decides once per connection** and forwards blindly; an **L7 proxy decides per request** and can route, rewrite, cache, or answer.
+- **L7 requires decryption** — you cannot route on a path you cannot read — which makes TLS termination (§6) a precondition, not an extra.
+- **L4 is the right choice** when you need protocol independence, minimal cost, or genuinely untouched end-to-end encryption.
