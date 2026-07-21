@@ -107,3 +107,86 @@ That last one is the deep reason. An intermediary is **a place to make decisions
 - **Upstream** points toward the origin, **downstream** toward the client, and the **origin** is whatever finally produces a response instead of relaying one.
 - Many familiar things are proxies under other names — home routers doing **NAT**, corporate gateways, CDNs, VPNs.
 - Intermediaries earn their cost by being **a place to make decisions without modifying either endpoint** — the property everything else in this document builds on.
+
+---
+
+## 2. Forward Proxy — Acting for the Client
+
+> **A forward proxy is an intermediary that acts on behalf of clients. It sits at the edge of *their* network, receives their outbound requests, and makes those requests to the internet in its own name.**
+
+The defining consequence is what the destination sees. It does not see the client. It sees the proxy — the proxy's address, the proxy's connection. As far as the destination is concerned, the proxy *is* the client.
+
+```mermaid
+flowchart LR
+    C1["👤 Client A"] --> FP["🏢 Forward proxy<br/>acts for the clients"]
+    C2["👤 Client B"] --> FP
+    C3["👤 Client C"] --> FP
+    FP -->|"one identity<br/>for all three"| S["🌍 Any server<br/>on the internet"]
+```
+
+Note the shape: **one proxy, many destinations.** A forward proxy doesn't know or care what's on the other side — today it fetches a news site, tomorrow an API, next an update server. It's bound to its *clients*, not to any particular destination. That asymmetry is what distinguishes it from §3's reverse proxy, which is bound to particular servers and serves any client on Earth.
+
+### Who Deploys One, and Why
+
+Almost always someone with authority over the client machines, wanting a policy enforced without installing anything on each device:
+
+| Motive | What the proxy does |
+|---|---|
+| **Control** | Blocks categories of destination; enforces acceptable-use policy |
+| **Visibility** | Logs every outbound request — a compliance and audit requirement in many industries |
+| **Shared caching** | One copy of a common download serves the whole office |
+| **Bandwidth** | Compresses or strips content before it reaches a constrained network |
+| **Egress identity** | All traffic leaves from one known address, so partners can allow-list it |
+| **Privacy** | The user's own address is hidden from the sites they visit |
+
+That last row is the one most people meet first, and it's worth being precise: **the destination no longer knows who you are, but the proxy operator knows exactly who you are and everything you asked for.** You haven't removed the observer; you've *chosen* it. Whether that's a privacy improvement depends entirely on who runs the proxy — which is why "use a proxy for privacy" is advice that means nothing without naming the operator.
+
+### Explicit vs Transparent
+
+A distinction with real operational consequences, and one that's rarely stated plainly:
+
+**Explicit** — the client is configured to use the proxy and *knows* it exists. Browser settings, a system-wide proxy setting, an environment variable. The client deliberately addresses its requests to the proxy.
+
+**Transparent** (or *intercepting*) — the client knows nothing. The network silently redirects outbound traffic to the proxy, which handles it and forwards it on. Nothing was configured on the device; the client believes it's talking directly to the destination.
+
+| | Explicit | Transparent |
+|---|---|---|
+| Client configuration | Required on every device | **None** |
+| Client awareness | Knows the proxy exists | No idea |
+| Deployment | Config management, per-device | Network-level, applies to everything |
+| Bypassable | Yes — change the setting | No — it's the path itself |
+| Debugging | Straightforward | **Confusing** — behaviour with no visible cause |
+
+That last row costs real hours. When a transparent proxy misbehaves, the symptom appears at the application with no indication that an intermediary exists at all — a request that works from one network and fails from another, with identical code and identical configuration. The infamous version is a captive portal in a hotel or airport: your request for one site returns a login page from somewhere else entirely, because something intercepted it.
+
+### The Encryption Wall
+
+Here is the limit that reshaped forward proxies, and it follows directly from HTTPS being everywhere.
+
+When a client wants an encrypted connection through a proxy, it can't simply ask the proxy to fetch a page — the whole point is that only the client and the destination hold the keys. Instead it issues a `CONNECT` request: *open a raw tunnel to this host and port, and relay bytes without interpreting them.*
+
+The proxy complies and becomes a **blind pipe**. Encrypted bytes flow through it in both directions. It can see:
+
+- **The destination hostname** — required to open the tunnel at all
+- **Byte counts and timing** — how much, how long, how often
+
+and it cannot see the path requested, the headers, the cookies, the content, or the response. Its filtering degrades from *"block this article"* to *"block this entire domain, or don't."*
+
+```mermaid
+flowchart LR
+    C["👤 Client"] -->|"CONNECT host:443"| FP["🏢 Forward proxy"]
+    FP -.->|"🔒 opaque tunnel<br/>proxy relays bytes blindly"| S["🌍 Server"]
+    FP --> K["👁️ Can see:<br/>hostname, size, timing"]
+    FP --> X["🚫 Cannot see:<br/>path, headers, content"]
+```
+
+Organisations that need deeper inspection respond by **intercepting TLS**: the proxy terminates the encryption itself, inspects the plaintext, and re-encrypts toward the destination using its own certificate — which it can only do because the organisation installed that certificate as trusted on every managed device. It works, and it means the proxy operator reads everything, including traffic the user believes is private end-to-end. §6 covers the mechanics of terminating encryption and the trust boundary it moves.
+
+> ⚠️ **A forward proxy is a deliberate concentration of visibility.** Every request every client makes flows through one machine that can log all of it. That's precisely the point when it's your organisation's compliance requirement — and precisely the risk when it's an anonymous free proxy you found online. The traffic didn't become unobserved; the observer changed from "each site you visit" to "one operator who sees every site you visit." Always ask who runs it.
+
+### Quick Recap — Forward Proxy
+
+- A **forward proxy acts for clients**: it makes their outbound requests in its own name, so destinations see the proxy rather than the client.
+- Its shape is **one proxy, many destinations** — bound to its clients, indifferent to what's on the other side.
+- **Explicit** proxies are configured on the client; **transparent** ones intercept silently and produce failures with no visible cause.
+- HTTPS turns it into a **blind pipe** via `CONNECT` — hostname, size, and timing only — unless the operator intercepts TLS with a certificate installed on every device (§6).
