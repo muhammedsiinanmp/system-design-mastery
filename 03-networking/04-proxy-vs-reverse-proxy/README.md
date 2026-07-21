@@ -253,3 +253,63 @@ Two things share the word *proxy* and point in opposite directions, which is a g
 - It holds the **only public address**; the servers behind it are unreachable from outside, which is what makes them hidden and interchangeable.
 - It **absorbs work every server would otherwise duplicate** — decryption, slow clients, static content, hostile traffic, connection churn.
 - Unqualified **"proxy" in a design discussion means reverse proxy** — the other kind gets qualified because it's the exception.
+
+---
+
+## 4. The Same Box Pointing Opposite Ways
+
+Sections 2 and 3 described two components. It's worth being clear that they may be **the same software, running the same way, doing the same job.** The popular proxy servers are all capable of either role; which one you have is determined entirely by where you put it and whose traffic it handles.
+
+### One Question Decides It
+
+> **Whose agent is it?** A forward proxy acts for the **clients** in front of it. A reverse proxy acts for the **servers** behind it.
+
+Everything else follows from that answer:
+
+| | Forward proxy | Reverse proxy |
+|---|---|---|
+| Acts for | The **clients** | The **servers** |
+| Deployed by | Whoever controls the clients | Whoever controls the servers |
+| Bound to | Its clients (any destination) | Its upstreams (any client) |
+| Hides | The client, from the destination | The servers, from the client |
+| Client knows it exists? | Sometimes (explicit) or never (transparent) | **Never** — it looks like the server |
+| Shape | Many clients → one proxy → the internet | The internet → one proxy → many servers |
+
+The row worth pausing on is the second-to-last. A reverse proxy is not merely unannounced; **to the client it is indistinguishable from the origin.** It answers on the origin's hostname, presents the origin's certificate, and returns the origin's responses. There is no reliable way for an outside client to determine whether it's talking to the real server or something in front of it — and that indistinguishability is the entire design goal.
+
+### The Taxonomy — What Else Is a Reverse Proxy
+
+Once you have the definition, a large amount of infrastructure resolves into the same pattern wearing different job descriptions. Each of these accepts traffic on behalf of servers behind it — they differ only in what they emphasise:
+
+```mermaid
+flowchart TD
+    RP["🚪 Reverse proxy<br/>accepts for the servers behind it"]
+    RP --> LB["⚖️ Load balancer<br/>emphasis: distributing across many"]
+    RP --> GW["🛂 API gateway<br/>emphasis: auth, limits, aggregation"]
+    RP --> CDN["🌍 CDN edge<br/>emphasis: geography and caching"]
+    RP --> SC["🔗 Sidecar<br/>emphasis: one per service instance"]
+    RP --> IC["🎛️ Ingress controller<br/>emphasis: cluster entry"]
+```
+
+| Specialisation | What it adds | Covered in |
+|---|---|---|
+| **Load balancer** | Distributes across many upstreams; tracks their health | Topics 05–06 |
+| **API gateway** | Authentication, rate limiting, request aggregation, versioning | Phase 04 |
+| **CDN edge** | Geographic distribution; caches near users | Phase 06 |
+| **Sidecar** | One proxy per service instance, handling all its traffic | Phase 09 |
+| **Ingress controller** | The entry point into a container cluster | Phase 09 |
+
+This resolves a question that otherwise recurs indefinitely — *"is a load balancer a proxy? is an API gateway a load balancer?"* They're all the same position on the wire, with different features foregrounded. A load balancer is a reverse proxy whose emphasis is distribution. An API gateway is a reverse proxy whose emphasis is policy. A CDN edge is a reverse proxy whose emphasis is geography.
+
+Real deployments blur them further: one component often plays several of these roles simultaneously, and a request may pass through three of them before reaching an origin. Arguing about the labels is unproductive. Asking **"whose agent is this, and what does it emphasise?"** always works.
+
+> 💡 **Key Insight**
+>
+> Forward and reverse proxies are **the same mechanism aimed in opposite directions**, distinguished only by whose agent they are — and once you see that, a whole category of infrastructure collapses into one idea. Load balancers, API gateways, CDN edges, sidecars, and ingress controllers are not five things to learn separately; they're **one position on the wire with different emphases.** The vocabulary is genuinely confusing, and the confusion is entirely in the naming rather than in the concept.
+
+### Quick Recap — The Same Box, Opposite Ways
+
+- The same software is a forward or reverse proxy depending on **placement and whose traffic it carries** — the distinction is deployment, not implementation.
+- One question settles it: **whose agent is it** — the clients in front, or the servers behind?
+- A reverse proxy is **indistinguishable from the origin** to any outside client, by design.
+- **Load balancers, API gateways, CDN edges, sidecars, and ingress controllers are all specialized reverse proxies** — one position, different emphases, each covered in its own topic.
