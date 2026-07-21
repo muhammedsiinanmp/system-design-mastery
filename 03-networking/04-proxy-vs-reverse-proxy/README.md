@@ -243,7 +243,7 @@ That third-to-last point is why a reverse proxy improves capacity even with a si
 
 ### The Naming Confusion, Resolved
 
-Two things share the word *proxy* and point in opposite directions, which is a genuine and lasting source of confusion. One convention helps: **in an architecture discussion, an unqualified "proxy" almost always means a reverse proxy.** It's overwhelmingly the more common production component, and people qualify the other kind — "forward proxy," "egress proxy," "corporate proxy" — precisely because it's the exception.
+Two things share the word *proxy* and point in opposite directions, which is a genuine and lasting source of confusion. One convention helps: **the bare word, spoken without a qualifier, has come to mean the reverse kind.** Reverse proxies are so much more common in production that the client-side variety is the one people bother to label — "forward proxy," "egress proxy," "corporate proxy." If nobody attached an adjective, assume the front door.
 
 > 💡 **Key Insight**
 >
@@ -254,7 +254,7 @@ Two things share the word *proxy* and point in opposite directions, which is a g
 - A **reverse proxy acts for servers**: any client reaches it, and it forwards to upstreams that are never addressed directly — the exact mirror of §2.
 - It holds the **only public address**; the servers behind it are unreachable from outside, which is what makes them hidden and interchangeable.
 - It **absorbs work every server would otherwise duplicate** — decryption, slow clients, static content, hostile traffic, connection churn.
-- Unqualified **"proxy" in a design discussion means reverse proxy** — the other kind gets qualified because it's the exception.
+- The **bare word "proxy" has come to mean the reverse kind** — the client-side variety is the one people bother to label.
 
 ---
 
@@ -578,7 +578,7 @@ A proxy that understands responses can keep a copy and answer the next identical
 
 The property that makes this different from caching inside an application is **position**: the proxy is *shared*. One stored copy serves every user who asks, which is why an intermediary cache is far more effective than each client caching separately — the first request warms it for everyone.
 
-This creates a distinction that matters: content that is the same for everyone can be cached at a shared proxy, while content personalised per user must not be — a shared cache holding one user's personalised page can serve it to another. That failure is a real and recurring class of data-leak incident caused by a single incorrect caching directive.
+This creates a distinction that matters: content identical for everyone can be cached at a shared proxy, while anything personalised must not be. Store one user's account page in a cache that answers everybody, and the next visitor receives it. Sharing is exactly what makes the cache valuable and exactly what makes this failure possible — the same property, pointed at the wrong content.
 
 Cache strategy — what to store, for how long, how to invalidate, how to distribute geographically — is **Phase 06**. The point here is only that the proxy is a *position* where caching becomes shared rather than per-client.
 
@@ -643,7 +643,7 @@ Every advantage in this document comes from the same arrangement: one machine th
 
 There's a two-condition test for identifying the components whose failure is catastrophic rather than merely inconvenient:
 
-> **A single point of failure is a component that is (1) on the critical path — everything depends on it — and (2) has no redundancy. Both conditions must hold.** A critical component with backups is fine. A component with no backup that nothing depends on is fine. The intersection is what takes systems down.
+> **A single point of failure is a component satisfying two conditions at once: nothing works without it, and there is exactly one of it.** Either alone is harmless. Something indispensable but duplicated survives losing a copy; something solitary but inessential can be lost without consequence. Only the overlap — indispensable *and* solitary — takes a system down.
 
 A reverse proxy satisfies the first condition perfectly, and by design. It is *the* entrance. If it stops, every server behind it is unreachable — all healthy, all running, all invisible. Its failure isn't a degradation, it's total: the system doesn't get slower, it disappears.
 
