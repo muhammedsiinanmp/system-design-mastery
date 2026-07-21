@@ -630,3 +630,68 @@ Eventually the proxy configuration holds a meaningful amount of the system's beh
 - **Rewriting** requests and responses decouples the public interface from internal structure, which is what makes migrations like §10 possible.
 - It **absorbs client behaviour** — slow connections, connection churn, malformed input — so origins spend capacity on real work.
 - Policy jobs (rate limiting, auth, logging) belong at the door because they'd otherwise be duplicated everywhere — but they all depend on §7's identity, and configuration accretes quietly.
+
+---
+
+## 9. The Front Door as Trust Boundary and Failure Point
+
+Every advantage in this document comes from the same arrangement: one machine that all traffic passes through, holding the only public address, seeing every request in plaintext. This section is the bill for that arrangement.
+
+### Everything Depends On It
+
+There's a two-condition test for identifying the components whose failure is catastrophic rather than merely inconvenient:
+
+> **A single point of failure is a component that is (1) on the critical path — everything depends on it — and (2) has no redundancy. Both conditions must hold.** A critical component with backups is fine. A component with no backup that nothing depends on is fine. The intersection is what takes systems down.
+
+A reverse proxy satisfies the first condition perfectly, and by design. It is *the* entrance. If it stops, every server behind it is unreachable — all healthy, all running, all invisible. Its failure isn't a degradation, it's total: the system doesn't get slower, it disappears.
+
+Which leaves the second condition as the only thing standing between you and an outage. Running exactly one proxy means everything you built behind it inherits the availability of that single box. **Making the front door redundant — running several, detecting failure, moving traffic — is Topic 05's subject**, along with the health checking that makes it work. What matters here is recognising the shape: the component that makes your fleet replaceable is itself the thing that must not be singular.
+
+### It Sees Everything
+
+The security consequence of §6 deserves stating directly.
+
+The proxy holds the certificate and terminates encryption, so **every secret entering your system passes through it in plaintext**: credentials, session tokens, personal data, payment details. Not some of it — all of it, on one machine.
+
+```mermaid
+flowchart TD
+    U["👤 Every user"] -->|"🔒 encrypted"| P["🚪 Proxy<br/>certificate + keys<br/>ALL plaintext visible"]
+    P --> S1["🖥️ Service A"]
+    P --> S2["🖥️ Service B"]
+    P --> S3["🖥️ Service C"]
+    P --> R["🎯 Highest-value target<br/>in the entire system"]
+```
+
+That makes it the single highest-value target you operate. Compromise any individual service and an attacker gets that service's data; compromise the proxy and they get **everything, continuously, as it arrives** — with no need to break anything else. It's also the ideal position for an attacker to remain quiet in: traffic keeps flowing normally, nothing errors, and nothing in the application logs looks unusual.
+
+The practical implications are ordinary and worth stating anyway: the proxy warrants stricter access control than the services behind it, its configuration deserves the same review discipline as application code, and its certificates and keys are among the most sensitive material in the system.
+
+### The Failures That Are Distinctive
+
+Some failure modes belong specifically to being an intermediary:
+
+| Failure | What happens |
+|---|---|
+| **Misrouting** | A configuration change sends traffic to the wrong upstream. Users see another system's responses — sometimes another *tenant's* data |
+| **Trusting client headers** | §7's forgery: rate limits evaded, allow-lists defeated, audit logs falsified |
+| **Cached personalisation** | One user's private page served to another from a shared cache (§8) |
+| **Stale upstream list** | Traffic sent to servers that no longer exist, or withheld from ones that do |
+| **Certificate expiry** | Every connection rejected at once, globally, instantly (§6) |
+| **Configuration drift** | The config accretes until nobody can predict routing from reading it |
+
+The first two share a property that makes them worse than an outage: **they fail silently and successfully.** Misrouted requests return `200 OK` with the wrong content. A forged header produces a perfectly normal-looking log entry. No error fires, no alert triggers, and the problem is discovered by a user or an auditor rather than by monitoring — which is precisely the class of failure that runs longest before anyone notices.
+
+### The Honest Accounting
+
+None of this argues against reverse proxies. Nearly every production system has one, and the alternative — every server publicly addressable, each managing its own certificate, each implementing its own rate limiting — is worse in every dimension including security.
+
+The accounting is simply this: you are **concentrating** risk in exchange for **eliminating** duplication. Concentrated risk is easier to manage precisely because it's in one place — one certificate to renew, one config to review, one machine to harden. That's a genuinely good trade, and it's only good if you know you made it.
+
+> ⚠️ **The component that makes everything behind it replaceable is the one thing that isn't.** A reverse proxy exists to make servers interchangeable and hidden — and in doing so it becomes the single machine that must not fail, holding the only public address, terminating every connection, and reading every secret. That's an acceptable and normal design. It stops being acceptable when it's *accidental* — when nobody decided the front door was the most critical and most sensitive machine in the system, it simply became so while everyone was configuring routes.
+
+### Quick Recap — Trust Boundary and Failure Point
+
+- A single point of failure needs **both** conditions: on the critical path *and* no redundancy. A reverse proxy satisfies the first by design, leaving only the second — **redundancy mechanics are Topic 05**.
+- Its failure is **total, not partial**: every server behind it is healthy and simultaneously unreachable.
+- It terminates encryption, so **every secret in the system passes through it in plaintext** — making it the highest-value target and an ideal quiet foothold.
+- Its distinctive failures — **misrouting and trusted client headers** — return `200 OK`, so they're found by users and auditors rather than by monitoring.
