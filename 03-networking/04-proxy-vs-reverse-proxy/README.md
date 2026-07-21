@@ -233,6 +233,8 @@ Work placed at the reverse proxy is work every server behind it stops doing, and
 
 - **Encryption** — decrypt once at the door rather than in every application process (§6).
 - **Slow clients** — a request arriving over a poor mobile connection can take seconds to fully deliver. The proxy absorbs that trickle and hands the origin a complete request instantly, so an expensive application process isn't held open waiting for bytes.
+
+  The asymmetry here is larger than it sounds. An application worker — a thread or process with a database connection and application memory attached — is a scarce resource, often numbering in the dozens or low hundreds per server. A proxy connection is cheap enough that a single proxy commonly holds **tens of thousands** of them concurrently. Letting a client on a slow connection occupy a worker for two seconds instead of two milliseconds is the difference between a server handling its rated load and collapsing under a fraction of it. This is also the mechanism behind a class of denial-of-service attack that deliberately sends requests as slowly as possible, purely to exhaust worker slots — an attack a buffering proxy absorbs almost entirely.
 - **Static content** — served directly, never troubling the application.
 - **Malformed and hostile traffic** — rejected before it reaches code that would have to handle it.
 - **Connection management** — many short client connections consolidated into a small pool of reused upstream ones.
@@ -378,7 +380,7 @@ Reading the message enables a category of things impossible at L4:
 L4 isn't the primitive option — it's the correct one whenever you don't need to read the message:
 
 - **Protocol independence.** L7 proxying means implementing the protocol. An L4 proxy carries databases, message queues, custom binary protocols, or anything else without knowing what they are.
-- **Cost.** No parsing, no buffering, no re-emitting. Minimal work per byte and less to go wrong.
+- **Cost.** No parsing, no buffering, no re-emitting. Minimal work per byte and less to go wrong. The gap is real but frequently overstated in architecture discussions: L7 proxying typically adds well under a millisecond of processing to a request, which is negligible against the tens of milliseconds a cross-region round trip costs. At very high connection volumes the difference matters; for most systems, choosing L4 for performance while giving up routing is optimising the wrong quantity.
 - **End-to-end encryption preserved.** Traffic passes through still encrypted; the proxy never has the keys and never sees the content. When that's a requirement, L4 isn't a compromise — it's the only acceptable answer.
 
 > 💡 **Key Insight**
@@ -439,7 +441,7 @@ flowchart TD
 
 Beyond enabling L7, centralising encryption solves a set of problems that are genuinely painful when distributed:
 
-- **Certificates live in one place.** Renewal, rotation, and expiry monitoring happen once instead of on every server. Certificates expire, and an expired one rejects every connection instantly and completely — a well-known and recurring cause of total outages at organisations that were otherwise excellent at redundancy. One renewal process is dramatically easier to get right than fifty.
+- **Certificates live in one place.** Renewal, rotation, and expiry monitoring happen once instead of on every server. Certificates expire, and an expired one rejects every connection instantly and completely — a well-known and recurring cause of total outages at organisations that were otherwise excellent at redundancy. One renewal process is dramatically easier to get right than fifty. The pressure here has increased: certificate lifetimes have fallen from years to **90 days** as the common default, and the industry is moving shorter still, which makes manual renewal untenable and automation mandatory rather than advisable.
 - **Cryptographic work is concentrated** where it can be optimised or hardware-accelerated, instead of consuming capacity in every application process.
 - **Policy is uniform.** Protocol versions and cipher choices are set once. No server drifts onto an outdated configuration because someone forgot it existed.
 - **Applications stop handling encryption.** They speak plain HTTP and never manage a key.
