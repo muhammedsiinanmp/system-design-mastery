@@ -473,3 +473,91 @@ Two properties follow, and both matter:
 - Three arrangements: **passthrough** (end-to-end, L4 only), **terminate** (plaintext inside, full L7), **re-encrypt** (L7 plus a protected internal hop).
 - Terminating at the edge centralises **certificates, cryptographic cost, and protocol policy** — and certificate expiry is a classic total-outage cause, so one renewal process beats fifty.
 - It **moves the trust boundary**: everything behind the proxy is now asserted trustworthy, and the proxy becomes the machine that sees every secret in the system (§9).
+
+---
+
+## 7. The Identity Problem — Who Was the Client?
+
+Every section so far has described a proxy accepting a connection and making a *new* one to its upstream. That detail, stated plainly in §1 and mostly ignored since, has a consequence that breaks more production systems than anything else in this document.
+
+### The Origin Sees the Proxy
+
+The connection your origin server accepts was opened by the proxy. Its source address is the proxy's. The client's address is nowhere in it — not hidden or stripped, simply **not part of a connection the client didn't open.**
+
+So every request arriving at the origin appears to come from the same place:
+
+```mermaid
+flowchart LR
+    A["👤 User in Tokyo<br/>203.0.113.7"] --> P["🚪 Proxy<br/>10.0.0.5"]
+    B["👤 User in Berlin<br/>198.51.100.22"] --> P
+    C["👤 Attacker<br/>192.0.2.99"] --> P
+    P -->|"all three arrive as<br/>10.0.0.5"| O["🖥️ Origin sees<br/>ONE client"]
+```
+
+This is §1's home-router observation at internet scale. The router made four family members indistinguishable; the proxy makes your entire user base indistinguishable.
+
+### What Breaks
+
+The failures are diverse and share one cause — anything using the client's address is now using the proxy's:
+
+| Breaks | How it presents |
+|---|---|
+| **Access logs** | Every entry shows one address. Traffic analysis becomes impossible |
+| **Rate limiting** | All users share one bucket — either everyone is throttled together, or nobody is |
+| **Geolocation** | Every user appears to be wherever the proxy lives |
+| **Security tooling** | Cannot identify or block an individual actor; blocking the address blocks everyone |
+| **Audit trails** | "Who performed this action?" has no answer beyond "the proxy" |
+| **Address allow-lists** | Silently permit everyone, since only the proxy's address is ever checked |
+
+That last row is the dangerous one, because it fails *open* and silently. A rule intended to permit a handful of office addresses now permits anyone who can reach the proxy — and nothing errors, nothing logs, and the control appears to be working.
+
+The rate-limiting failure is the most commonly hit. A limit of 100 requests per minute per address, with all traffic arriving from one address, becomes 100 requests per minute *for the entire user base* — a self-inflicted outage that arrives the moment the proxy is deployed.
+
+### The Fix, and Its Flaw
+
+Since the address can't survive in the connection, the proxy records it **in the message** instead. This is L7 work (§5) — it requires reading and modifying the request:
+
+```
+X-Forwarded-For: 203.0.113.7
+```
+
+The origin reads that header instead of the connection's source address. With multiple proxies in the path, each appends, producing a chain in original-first order:
+
+```
+X-Forwarded-For: 203.0.113.7, 70.41.3.18, 150.172.238.178
+                 ↑ original     ↑ proxy 1    ↑ proxy 2
+```
+
+A standardised `Forwarded` header does the same job with richer structure; `X-Real-IP` is a common simpler variant carrying only the original address. `X-Forwarded-For` remains the most widely used.
+
+Now the flaw, and it is serious:
+
+> ⚠️ **`X-Forwarded-For` is just a header, and a client can set it to anything.**
+
+Nothing prevents someone sending `X-Forwarded-For: 1.2.3.4` with their request. If your proxy appends to what arrived rather than replacing it, and your origin trusts the first entry, then **the client controls the address your system believes it is talking to.** Every mechanism from the table above is now attacker-controlled: rate limits evaded by rotating the header, allow-lists defeated by claiming a permitted address, audit logs recording whatever the attacker chose.
+
+### Doing It Correctly
+
+The rule is short:
+
+> **The header is trustworthy only for the hops you operate. Everything before your edge is client input.**
+
+Which means:
+
+1. **Your edge proxy overwrites, never appends.** The outermost proxy — the one clients reach directly — must *replace* any incoming `X-Forwarded-For` with the address it actually observed. Anything a client sent is discarded there.
+2. **Internal proxies append.** Behind the edge, each hop adds its own observation, building a chain your infrastructure produced.
+3. **The origin counts from the right.** With a known number of trusted proxies, the real client address is at a known position counting *inward* from the last entry — never simply "the first one," which is the entry an attacker controls.
+4. **Trust is configured explicitly.** Proxy and application frameworks want to know how many hops to trust, or which addresses count as trusted proxies. Getting this number wrong in either direction breaks something: too high and you trust client input, too low and you rate-limit your own infrastructure.
+
+The recurring mistake is deploying a proxy, discovering the logging problem, enabling `X-Forwarded-For`, and reading the first entry — which works perfectly in testing and is exploitable the day it ships.
+
+> 💡 **Key Insight**
+>
+> A proxy doesn't hide the client's identity as a side effect — **it structurally cannot preserve it**, because the origin's connection was opened by the proxy and never carried the client's address at all. The recovery is to move that identity from the connection into a *header*, and that relocation changes its nature completely: connection addresses are asserted by the network and hard to forge, while headers are asserted by whoever sent them and trivial to forge. Every `X-Forwarded-For` bug is the same mistake — treating recovered identity as though it had the authority of the original.
+
+### Quick Recap — The Identity Problem
+
+- The origin's connection was opened by the **proxy**, so the client's address isn't in it — every user appears to come from one place.
+- This breaks **logging, rate limiting, geolocation, security tooling, audit trails**, and address allow-lists, which fail *open* and silently.
+- **`X-Forwarded-For`** carries the original address in the message instead, appending a chain when several proxies are involved.
+- It is **client-settable and therefore forgeable**: the edge must **overwrite** it, internal hops append, and the origin counts inward from the last entry — never trusting the first.
