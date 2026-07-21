@@ -561,3 +561,72 @@ The recurring mistake is deploying a proxy, discovering the logging problem, ena
 - This breaks **logging, rate limiting, geolocation, security tooling, audit trails**, and address allow-lists, which fail *open* and silently.
 - **`X-Forwarded-For`** carries the original address in the message instead, appending a chain when several proxies are involved.
 - It is **client-settable and therefore forgeable**: the edge must **overwrite** it, internal hops append, and the origin counts inward from the last entry — never trusting the first.
+
+---
+
+## 8. What Else the Front Door Does
+
+Once something sits at the entrance reading every request (§5) with the plaintext available (§6), a long list of jobs becomes possible there. Most systems accumulate several without ever deciding to.
+
+This section is a **map, not a manual** — each item gets full treatment in its own topic, named as we go. The value here is recognising *why they cluster at the proxy*: they're all things that would otherwise be implemented identically in every service behind it.
+
+### Serving Instead of Forwarding
+
+A proxy that understands responses can keep a copy and answer the next identical request itself, without troubling the origin at all.
+
+The property that makes this different from caching inside an application is **position**: the proxy is *shared*. One stored copy serves every user who asks, which is why an intermediary cache is far more effective than each client caching separately — the first request warms it for everyone.
+
+This creates a distinction that matters: content that is the same for everyone can be cached at a shared proxy, while content personalised per user must not be — a shared cache holding one user's personalised page can serve it to another. That failure is a real and recurring class of data-leak incident caused by a single incorrect caching directive.
+
+Cache strategy — what to store, for how long, how to invalidate, how to distribute geographically — is **Phase 06**. The point here is only that the proxy is a *position* where caching becomes shared rather than per-client.
+
+### Changing Requests and Responses in Flight
+
+L7 access means the proxy can rewrite what passes through:
+
+- **Path rewriting** — an external `/api/v2/orders` becomes an internal `/orders`, so public URLs stay stable while internal structure changes freely.
+- **Header injection** — §7's `X-Forwarded-For` is exactly this; so are request IDs for tracing.
+- **Header removal** — stripping headers that reveal server software or versions.
+- **Compression** — compressing responses once at the edge rather than in every application.
+- **Redirects** — answering with a redirect outright, never involving an origin.
+
+Path rewriting is quietly one of the most useful. It decouples your public interface from your internal layout, which is what makes §10's migration possible without changing a single client.
+
+### Absorbing Client Behaviour
+
+Some of the proxy's most valuable work is protecting origins from *how* clients behave rather than what they ask:
+
+- **Slow clients**, introduced in §3 — the proxy accepts a trickling request in full, then hands the origin a complete one. An expensive application process is never held open waiting on a poor connection.
+- **Connection consolidation** — thousands of short-lived client connections become a small pool of reused upstream ones, so origins spend their capacity on requests rather than connection setup.
+- **Malformed requests** — rejected at the door by software built to handle hostile input, rather than by application code that assumed well-formed input.
+
+### Policy at the Entrance
+
+Because every request passes through, the proxy is the natural place to enforce rules uniformly:
+
+| Job | What the proxy does | Covered in |
+|---|---|---|
+| **Rate limiting** | Rejects excess requests before they consume capacity | Phase 10 |
+| **Authentication** | Verifies identity once at the edge | Phase 04 / Phase 10 |
+| **Access control** | Blocks by path, method, or origin | Phase 10 |
+| **Request logging** | One consistent record of all traffic | Phase 10 |
+| **Distributing load** | Chooses among many upstreams | Topics 05–06 |
+
+Note the dependency running through the first four: each needs to identify *who* is asking, which is §7's problem. Rate limiting keyed on the wrong address throttles everyone as one user — the failure §10 runs into.
+
+### The Temptation
+
+There's a pattern worth naming. Because the front door is such a convenient place to put things, it accumulates them — routing, then auth, then rate limits, then rewriting, then a special case for one legacy client, then another.
+
+Eventually the proxy configuration holds a meaningful amount of the system's behaviour, expressed in a configuration language, typically untested, and understood by fewer people than the application code. It's genuinely the right place for cross-cutting concerns; it is not a good place for business logic. The line is blurry and worth watching, because nothing about the configuration file announces when you've crossed it.
+
+> 💡 **Key Insight**
+>
+> Everything clustering at the front door shares one property: it's work that would otherwise be **duplicated identically in every service behind it.** Decryption, compression, rate limiting, authentication, logging — implement each once at the door or fifty times in the fleet. That's the real argument for a reverse proxy, and it's also the warning: the same convenience that makes it the correct home for cross-cutting concerns makes it an *attractive* home for things that aren't, and configuration accretes far more quietly than code.
+
+### Quick Recap — What Else the Front Door Does
+
+- Proxy caching's distinguishing property is **position** — one shared copy serves everyone, which is why personalised content must never be cached there. Strategy is Phase 06.
+- **Rewriting** requests and responses decouples the public interface from internal structure, which is what makes migrations like §10 possible.
+- It **absorbs client behaviour** — slow connections, connection churn, malformed input — so origins spend capacity on real work.
+- Policy jobs (rate limiting, auth, logging) belong at the door because they'd otherwise be duplicated everywhere — but they all depend on §7's identity, and configuration accretes quietly.
