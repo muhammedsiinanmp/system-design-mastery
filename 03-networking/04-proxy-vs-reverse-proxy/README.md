@@ -190,3 +190,66 @@ Organisations that need deeper inspection respond by **intercepting TLS**: the p
 - Its shape is **one proxy, many destinations** — bound to its clients, indifferent to what's on the other side.
 - **Explicit** proxies are configured on the client; **transparent** ones intercept silently and produce failures with no visible cause.
 - HTTPS turns it into a **blind pipe** via `CONNECT` — hostname, size, and timing only — unless the operator intercepts TLS with a certificate installed on every device (§6).
+
+---
+
+## 3. Reverse Proxy — Acting for the Server
+
+> **A reverse proxy is an intermediary that acts on behalf of servers. It receives incoming requests from the internet, and forwards them to servers behind it that clients never address directly.**
+
+Flip every property of §2 and you have it. The forward proxy served many clients reaching any destination; the reverse proxy serves **any client reaching a particular set of servers.** It's bound to its upstreams, indifferent to who's asking.
+
+```mermaid
+flowchart LR
+    C1["👤 Anyone"] --> RP["🚪 Reverse proxy<br/>acts for the servers"]
+    C2["👤 Anyone"] --> RP
+    C3["👤 Anyone"] --> RP
+    RP --> S1["🖥️ Server 1"]
+    RP --> S2["🖥️ Server 2"]
+    RP --> S3["🖥️ Server 3"]
+```
+
+The diagrams for §2 and §3 are mirror images, and that is genuinely the whole distinction — §4 makes it precise.
+
+### The Public Address Is the Point
+
+Here is the structural fact underneath everything a reverse proxy does: **it is the only machine in the system with a publicly reachable address.** The servers behind it hold private addresses, unreachable from the internet. There is no route to them from outside — not blocked by policy, but *nonexistent as a path*.
+
+That single arrangement produces a cascade of consequences:
+
+| Consequence | Why it follows |
+|---|---|
+| **The fleet is invisible** | Clients cannot address, scan, or attack what has no route |
+| **Servers become fungible** | Add, remove, or replace them without anyone outside noticing |
+| **One address, many services** | Different paths and hostnames route to entirely different systems |
+| **One place for policy** | TLS, authentication, rate limiting applied once at the door |
+| **Deploys stop being visible** | Traffic shifts between versions behind a stable public identity |
+
+The second row is the one with the largest downstream effect. Because clients hold no reference to any individual server, the set behind the proxy can change continuously — which is the precondition for running many interchangeable copies of an application at all. Distributing traffic across them is **Topic 05 — Load Balancers**, and choosing *which* one receives each request is **Topic 06 — Load Balancing Algorithms**. This document stops at the position; those two cover the machinery.
+
+### What It Absorbs
+
+Work placed at the reverse proxy is work every server behind it stops doing, and it's the same work every one of them would otherwise duplicate:
+
+- **Encryption** — decrypt once at the door rather than in every application process (§6).
+- **Slow clients** — a request arriving over a poor mobile connection can take seconds to fully deliver. The proxy absorbs that trickle and hands the origin a complete request instantly, so an expensive application process isn't held open waiting for bytes.
+- **Static content** — served directly, never troubling the application.
+- **Malformed and hostile traffic** — rejected before it reaches code that would have to handle it.
+- **Connection management** — many short client connections consolidated into a small pool of reused upstream ones.
+
+That third-to-last point is why a reverse proxy improves capacity even with a single server behind it. The application process is the expensive resource; the proxy exists partly to stop it being occupied by work that isn't application work.
+
+### The Naming Confusion, Resolved
+
+Two things share the word *proxy* and point in opposite directions, which is a genuine and lasting source of confusion. One convention helps: **in an architecture discussion, an unqualified "proxy" almost always means a reverse proxy.** It's overwhelmingly the more common production component, and people qualify the other kind — "forward proxy," "egress proxy," "corporate proxy" — precisely because it's the exception.
+
+> 💡 **Key Insight**
+>
+> A reverse proxy's power comes from one structural fact: **it holds the only public address, so nothing behind it is reachable or even nameable from outside.** Every benefit follows from that — the fleet is hidden because it's unaddressable, servers are replaceable because no client holds a reference to any of them, and policy has one enforcement point because there's exactly one door. It isn't a load-balancing feature or a caching feature. It's a **position**, and the features are what that position makes possible.
+
+### Quick Recap — Reverse Proxy
+
+- A **reverse proxy acts for servers**: any client reaches it, and it forwards to upstreams that are never addressed directly — the exact mirror of §2.
+- It holds the **only public address**; the servers behind it are unreachable from outside, which is what makes them hidden and interchangeable.
+- It **absorbs work every server would otherwise duplicate** — decryption, slow clients, static content, hostile traffic, connection churn.
+- Unqualified **"proxy" in a design discussion means reverse proxy** — the other kind gets qualified because it's the exception.
