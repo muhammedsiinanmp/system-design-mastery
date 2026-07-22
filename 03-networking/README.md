@@ -37,7 +37,7 @@ mechanisms below are only interesting because of the properties they threaten.
 | 2 | [HTTP & HTTPS](02-http-https/README.md) | What is the request actually written in, why has it been rewritten three times — and what does "just add HTTPS" really cost? *(standalone — assumes no prior reading)* |
 | 3 | [TCP vs UDP](03-tcp-vs-udp/README.md) | How do you build guaranteed delivery on a network that guarantees nothing — and why do DNS, video calls, and the web's newest protocol all refuse those guarantees? *(standalone — assumes no prior reading)* |
 | 4 | [Proxy vs Reverse Proxy](04-proxy-vs-reverse-proxy/README.md) | How many machines really handle your request — and what is each one allowed to see, change, or decide? *(standalone — assumes no prior reading)* |
-| 5 | Load Balancers *(coming)* | The box everything flows through: how it distributes, how it health-checks, and how it fails |
+| 5 | [Load Balancers](05-load-balancers/README.md) | When many machines can serve a request, how does anything decide where to send it — and how does it know that machine still works? *(standalone — assumes no prior reading)* |
 | 6 | Load Balancing Algorithms *(coming)* | Round-robin, least-connections, hashing — how the choice changes behavior under load |
 | 7 | Checksums *(coming)* | How data proves it arrived intact, and what integrity costs |
 
