@@ -731,3 +731,120 @@ The honest positive list, from everything above:
 - It **cannot fix a shared bottleneck**: ten servers querying one database give that database identical load, and adding servers may worsen it.
 - It **cannot make stateful servers interchangeable** — affinity manages that constraint, only relocating state removes it.
 - It **cannot distinguish slow from broken**, which is the root of every §8 pathology, and it will faithfully distribute a **bad deploy** unless routing is deliberately configured to limit exposure.
+
+---
+
+## 10. Putting It All Together — The Health Check That Caused the Outage
+
+A team runs twenty application servers behind one load balancer. It has worked without incident for two years. Nobody has changed the balancer configuration in about that long, and nobody currently at the company wrote it.
+
+Then, on an ordinary Tuesday, the entire service goes down for eleven minutes — and every server stays healthy throughout.
+
+### Step 1 — The Trigger (§4)
+
+The database performs a routine failover. A standby is promoted; the primary is unreachable for **about 40 seconds**. Unpleasant, entirely survivable, and something the application handles: requests that need the database would fail or retry, while cached reads and static paths would continue.
+
+That's not what happens.
+
+The health check, written years earlier by someone being thorough, is a deep one (§4). Its endpoint verifies the process is alive, checks the cache, **and runs a query against the database**. Any failure returns unhealthy.
+
+Every one of the twenty servers checks the same database. So during the failover, every one of them fails its health check — **at the same time**, because they're all checking the same thing.
+
+```mermaid
+flowchart TD
+    DB["🗄️ Database failover<br/>~40 seconds unreachable"]
+    DB --> ALL["🖥️ All 20 servers<br/>❌ deep check fails"]
+    ALL --> LB["⚖️ Balancer removes<br/>every server"]
+    LB --> OUT["💀 Empty pool<br/>100% of requests fail"]
+    DB -.->|"the outage the<br/>database would have caused"| PART["⚠️ Partial degradation"]
+```
+
+The balancer removes all twenty and the pool is empty. Every request now fails — including requests that never touch the database, which would have succeeded perfectly well. **A partial degradation became a total outage, and the load balancer is what converted it.**
+
+### Step 2 — Why It Lasted Longer Than 40 Seconds (§3, §8)
+
+The database recovers on schedule. The outage does not end on schedule.
+
+First, the healthy threshold (§3): servers need **three consecutive successful checks at a 10-second interval** before returning. That's 30 more seconds minimum, and they don't all cross it together.
+
+Then the herd (§8). Eleven minutes of clients have been retrying. The instant the first few servers return, all of that accumulated demand lands on a fraction of the fleet — which promptly slows, fails checks, and gets removed again. The pool oscillates. Recovery takes several minutes longer than the failure did.
+
+Total user-visible outage: **eleven minutes**, from a 40-second database event.
+
+### Step 3 — The Fix (§4)
+
+The correction is small and the reasoning matters more than the change.
+
+They split the endpoint in two:
+
+- **`/health`** — used by the balancer. Answers one question: *is this process alive and able to serve?* Checks nothing shared.
+- **`/ready`** — used by monitoring and dashboards. Checks the database, cache, and downstream dependencies, and alerts humans when something is wrong.
+
+This is §4's rule applied directly: **check only what can differ between servers.** The database can't differ between them — it's the same database — so its state carries no information about which server should receive traffic. It needs alerting, not traffic removal.
+
+They also enable the fail-open rule (§4): if more than half the pool reports unhealthy, treat them all as healthy. If ten of twenty servers fail simultaneously, the overwhelming probability is that the check is wrong, and degraded servers beat no servers.
+
+### Step 4 — What the Incident Review Turned Up (§5)
+
+Reviewing the configuration properly for the first time in two years, they find a second problem nobody had noticed.
+
+There is no connection draining (§5). Deploys work by stopping a server, updating it, and starting it again. Every deploy has been discarding whatever requests those servers held — a small number each time, appearing in dashboards as a brief error blip that everyone had come to read as "normal deploy noise."
+
+It was never noise. It was users, several times a week, for two years.
+
+They configure a **30-second drain timeout** — above their slowest realistic request — and discover the second half of the contract: the application exits immediately on the shutdown signal, so draining changes nothing until the application is fixed to finish in-flight work first. The balancer's half was necessary and insufficient.
+
+They add **slow start** (§5) too, having noticed the latency spike after every deploy: freshly started servers with cold caches were taking full traffic while still warming.
+
+### Step 5 — The Thing They'd Been Ignoring (§7)
+
+One more finding, and it's the one that had been visible the whole time: **there is one load balancer.**
+
+Twenty redundant servers, health checks, careful draining — behind a single box whose failure takes everything down (§7). It had never failed, which is precisely why nobody had thought about it.
+
+They deploy a second balancer as an active-standby pair sharing a **floating address** (§7), so failover moves the address in seconds without any client noticing. Then they do the part that's usually skipped: they **test it**, deliberately failing the active balancer during a maintenance window to confirm the standby actually takes over. It doesn't, the first time — a permission needed for the address takeover had never been granted. They'd have discovered that during an outage otherwise.
+
+### The Payoff
+
+Four months later the database fails over again. Requests that need it fail for about thirty seconds; everything else keeps serving. Monitoring pages someone about the database. The load balancer does nothing at all, because nothing about that event concerns which server should receive traffic.
+
+The lesson the team writes down is not about health checks specifically:
+
+> **Every one of these was the load balancer doing exactly what it was told.** It removed servers that failed their check. It didn't drain, because draining wasn't configured. It was a single point of failure because only one was deployed. There was no bug, no misbehaviour, nothing to fix in the software — just a configuration written years ago encoding beliefs that were never quite right, running faithfully ever since.
+
+Load balancer configuration ages badly precisely because it *keeps working*. Nothing forces you to revisit a health check that passes every day, and its worst assumption stays invisible until the one day conditions expose it.
+
+---
+
+## 11. Final Recap
+
+| Concept | Core Insight | Biggest Tradeoff |
+|---|---|---|
+| **The mismatch** | Clients hold one address; capacity needs many machines | Requires servers to be interchangeable — statelessness is the precondition |
+| **Decision granularity** | The real question is *how often it decides*: per connection (L4) or per request (L7) | Per-connection pins long-lived clients; per-request needs decryption and parsing |
+| **Health checking** | Turns a static list into a live one, via interval, timeout, and thresholds | **Detection budget = interval × threshold** — how long a dead server keeps getting traffic |
+| **What checks prove** | Only that one probe succeeded; checks are **comparative**, not diagnostic | A deep check on a shared dependency fails the whole fleet at once |
+| **Draining** | Stop new work, let in-flight work finish, then shut down | A two-sided contract — useless if the application exits instantly |
+| **Slow start** | A new server is correct but cold; ramp traffic instead of full share | Without it, every deploy shows a latency spike |
+| **Session affinity** | Pins clients when a server holds state the pool doesn't share | Uneven load, sessions lost on drain or crash, scaling that only helps new users |
+| **Front-door redundancy** | The balancer meets the first SPOF condition by design | Getting traffic to the spare is the hard part — VIP, name-level, or anycast, each with a failover cost |
+| **Amplification** | Removing "slow" servers, retrying, and herds can convert degradation into outage | The response should get *more conservative* as more of the pool is affected |
+| **The limits** | It distributes; it doesn't create capacity or fix shared bottlenecks | If the constraint isn't "which machine gets this request," the fix is elsewhere |
+
+### The One Thing to Remember
+
+> **A load balancer is not the thing that spreads requests — it is the thing that continuously decides which servers exist. Distribution is the solved half. The unsolved half is the judgement running underneath it every few seconds: is this machine alive, is it ready, is it still ready, and what happens to the work it is holding right now? Every serious load-balancer failure is a wrong answer to one of those questions, and the wrong answers are uniquely dangerous because they are indistinguishable from correct operation — the pool empties, the deploy drops requests, the spare never takes over, and the configuration was followed exactly the whole time. Its most important setting is not the algorithm. It is what the health check believes, because that belief silently decides whether you have a fleet or nothing at all.**
+
+---
+
+## What's Next
+
+> **Topic 06 — Load Balancing Algorithms**
+
+This document treated one thing as a black box throughout. Something picks an upstream — and *which* one it picks was deliberately left unopened, because everything around that choice turned out to matter more.
+
+Now the choice itself. **Round-robin** and its assumption that all requests cost the same. **Least-connections** and the inversion §8 hinted at, where a fast-failing server looks like the most available one. **Weighted** distribution for fleets of unequal machines. **Hash-based** routing that sends the same key to the same server every time — and what happens to those assignments when the pool changes size.
+
+Each is a few lines to describe and behaves very differently under real load. You've learned what surrounds the decision. Next you find out what the decision is.
+
+---
