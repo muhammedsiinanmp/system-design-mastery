@@ -109,3 +109,74 @@ The middle row is worth flagging as the one teams underestimate. Deploying witho
 - The precondition is **statelessness** — any server must answer any request — which is what makes machines **interchangeable**.
 - "Balancing" is really applying a **selection rule** and hoping work distributes evenly; the rules themselves are **Topic 06**.
 - Beyond capacity it buys **failure survival, zero-downtime deploys, and an invisible fleet** — and the deploy benefit is a balancer feature, not an application one (§5).
+
+---
+
+## 2. Where the Balancing Happens
+
+§1 treated the selection rule as a black box. Before opening anything else, there's a prior question: **at what granularity does the balancer get to choose?**
+
+The answer depends on how much of the traffic it interprets, and it produces two quite different components that share a name.
+
+### Connections Versus Requests
+
+Network traffic arrives in layers. A **connection** is the lower-level thing — two machines establish a channel identified by addresses and ports, and bytes flow through it. A **request** is the higher-level thing — a structured message with a destination path, headers, and a body, carried inside that channel.
+
+The distinction matters enormously here, because **one connection carries many requests.** A browser opens a connection and sends dozens of requests over it. So a balancer that decides per *connection* makes one decision covering all of them, while a balancer that decides per *request* makes a fresh decision each time.
+
+That single difference is what separates the two kinds:
+
+| | **Connection-level (L4)** | **Request-level (L7)** |
+|---|---|---|
+| Decides once per | **Connection** | **Request** |
+| Can distribute on | Source address, destination port | Path, headers, cookies, method, host |
+| Interprets traffic | No — bytes are opaque | Yes — must parse each message |
+| Works with encrypted traffic | ✅ Never needs to read it | ❌ Must decrypt first |
+| Protocol support | Anything — databases, queues, custom | The protocol it implements (usually HTTP) |
+| Cost per request | Minimal | Parsing and re-emitting |
+
+The layer numbers come from a standard network model — **Layer 4** being the transport layer that moves bytes between ports, **Layer 7** the application layer where those bytes have meaning. The numbering is conventional shorthand; the substance is entirely in the first row of that table.
+
+```mermaid
+flowchart TD
+    subgraph L4["🔌 L4 — one decision per connection"]
+        C1["👤 One connection<br/>carrying 30 requests"] --> D1["⚖️ picks a server"]
+        D1 --> A1["🖥️ ALL 30 go here"]
+    end
+    subgraph L7["📄 L7 — one decision per request"]
+        C2["👤 One connection<br/>carrying 30 requests"] --> D2["⚖️ picks per request"]
+        D2 --> B1["🖥️ Server A"]
+        D2 --> B2["🖥️ Server B"]
+        D2 --> B3["🖥️ Server C"]
+    end
+```
+
+### What Each Granularity Costs You
+
+The consequences run deeper than "L7 is more flexible."
+
+**A long-lived connection pins its traffic.** With connection-level balancing, a client that keeps a connection open for an hour sends an hour of traffic to whichever server it was assigned. If that server is overloaded, nothing corrects it until the connection closes. Distribution that looked even at connection time drifts arbitrarily far from even as connections age — and the busiest clients, holding the most persistent connections, are exactly the ones least likely to be redistributed.
+
+**Removing a server is harder at L4.** When a server must be taken out of service (§5), a request-level balancer simply stops choosing it and existing requests finish naturally. A connection-level balancer has connections *bound* to that server, and must either wait for them to close on their own or break them.
+
+**Encryption forces the choice.** Reading a path or header means the traffic must be decrypted first. A connection-level balancer never reads anything, so it forwards encrypted traffic untouched and never needs a certificate. A request-level balancer must terminate the encryption to see inside — which means it holds the certificate and sees all content in plaintext. That's a security decision embedded in what looks like a routing choice.
+
+**Health checking gets sharper at L7.** A connection-level balancer can generally establish that a port accepts connections. A request-level one can issue a real request and evaluate the response — which is where §3 and §4 live, and it's the more consequential difference than routing flexibility.
+
+### Two Other Places Balancing Can Happen
+
+A dedicated balancer isn't the only option, and both alternatives are worth recognising:
+
+- **Name-resolution balancing.** The name-to-address lookup returns different addresses to different clients, spreading them before any connection is made. It's the only approach that distributes across *separate locations*, since a single balancer necessarily lives in one of them. Its weakness is that the answers are cached by machines you don't control, so removing a failed address doesn't take effect until those caches expire — which makes it poor at reacting to failure. §7 returns to this.
+- **Client-side balancing.** The client holds the server list and chooses directly, with no middle component. This removes an entire hop and its failure mode, at the cost of every client needing the current list and the selection logic. Common inside systems where you control all the callers; impractical when the callers are browsers. *How clients obtain and refresh that list is service discovery, which belongs to Phase 09.*
+
+> 💡 **Key Insight**
+>
+> The real question isn't which layer a balancer operates at — it's **how often it gets to decide.** Connection-level balancing makes one choice and lives with it for the life of that connection, which means a long-lived connection is effectively a long-term assignment that nothing revisits. Request-level balancing re-decides continuously, so the distribution self-corrects and servers can be removed cleanly. Everything else — routing flexibility, encryption handling, health-check depth — follows from that difference in decision frequency.
+
+### Quick Recap — Where the Balancing Happens
+
+- **One connection carries many requests**, so the decisive question is whether the balancer chooses per **connection** (L4) or per **request** (L7).
+- Connection-level balancing **pins long-lived connections** to one server, so distribution drifts and removal is disruptive; request-level balancing re-decides and self-corrects.
+- **Encryption forces the choice**: reading paths and headers requires terminating it, which means holding the certificate and seeing plaintext.
+- **Name-resolution balancing** spreads across locations but reacts slowly to failure; **client-side balancing** removes the hop but requires every client to hold the server list.
