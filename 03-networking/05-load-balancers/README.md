@@ -666,3 +666,68 @@ A flapping server oscillates between healthy and unhealthy — passing checks, f
 - **Retries amplify**, especially stacked across client, balancer, and service layers; bound them with a **retry budget** and retry at one layer only.
 - Recovery triggers a **thundering herd**; **slow start** protects the returning server and **randomised backoff** breaks client lockstep.
 - A **fast-failing server can attract traffic** by looking idle, and a **flapping server is worse than a dead one** — which is why re-admission should be slower than removal.
+
+---
+
+## 9. What a Load Balancer Cannot Do
+
+A load balancer is often the first thing reached for when a system is struggling, and frequently it's the right instrument. But it's a **distribution** device, and problems that aren't distribution problems don't respond to it. Knowing the boundary saves a great deal of wasted effort.
+
+### It Cannot Create Capacity
+
+The most common misplaced expectation. A balancer moves work between machines; it never reduces the work or increases what the machines can do.
+
+If demand exceeds the total capacity of the pool, balancing perfectly changes only *which* requests fail. Ten servers each capable of 100 requests per second serve 1,000 requests per second, and no distribution strategy makes them serve 1,500. Perfect balancing means everything is uniformly slow rather than some servers being fine and others drowning — genuinely better, and not more capacity.
+
+The actual answers are more servers, faster servers, less work per request, or serving fewer requests. *Adding servers automatically in response to demand is autoscaling, covered in the scaling phase — note that it's a separate system that changes the pool, not something the balancer does.*
+
+### It Cannot Fix a Shared Bottleneck
+
+This is §4's lesson from the other direction. Spreading requests across ten servers that all query one database gives that database exactly the same load — you've distributed the *application* tier while the constraint sits somewhere else entirely.
+
+The characteristic symptom: adding servers doesn't help, and may hurt as more machines compete for the same limited resource. It's a genuinely confusing failure, because every dashboard for the thing you scaled looks healthy while performance doesn't improve.
+
+The rule generalises: **a balancer helps only when the constrained resource is the thing being balanced across.** If the bottleneck is downstream and shared, distribution changes nothing about it.
+
+### It Cannot Make Stateful Servers Interchangeable
+
+§6 covered the workaround; here's the limit. When servers hold state that others lack, the balancer can pin clients to them — but it cannot *move* that state, reconstruct it after a crash, or share it.
+
+Affinity manages the constraint without removing it. A pinned server dying still loses everything on it. Only an architectural change — relocating state to a shared store or into the client — actually solves it, and that's application work no balancer configuration substitutes for.
+
+### It Cannot Tell Slow From Broken
+
+Worth stating plainly as a limit, since §8 showed the damage.
+
+A balancer observes response times and success rates. Both are ambiguous. A server responding slowly might be failing, or overloaded, or doing legitimately expensive work. A server returning errors might be broken, or correctly rejecting invalid requests.
+
+The balancer has no way to distinguish these, so it applies thresholds — and thresholds are guesses that hold under normal conditions and stop holding during unusual ones. Every §8 pathology traces back to this ambiguity.
+
+### It Cannot Fix a Bad Deploy
+
+If a new version is broken, distributing it evenly means everyone gets the broken version. The balancer will faithfully spread a defect across the entire fleet.
+
+What it *can* do is control **how much** traffic reaches a version — routing a small share to the new one, comparing behaviour, and rolling forward or back. That's a genuinely powerful capability that turns the balancer into a deployment safety mechanism. But it requires deliberately configured routing; nothing about default balancing provides it.
+
+### What It Is Actually Good At
+
+The honest positive list, from everything above:
+
+| A load balancer is the right tool for | Not for |
+|---|---|
+| Spreading load across interchangeable servers | Creating capacity that doesn't exist |
+| Removing individual failed machines | Failures affecting the whole fleet |
+| Deploying and scaling without dropped requests | Making a broken version work |
+| Presenting one address for a changing fleet | Bottlenecks downstream of the pool |
+| Controlling what fraction of traffic sees what | Turning stateful servers stateless |
+
+> 💡 **Key Insight**
+>
+> A load balancer is a **distribution** instrument, and distribution only helps when the constraint is *where work goes* rather than *how much there is* or *what happens after it arrives*. That's why the reflex to "add a load balancer" so often disappoints: it's usually applied to capacity shortfalls, shared downstream bottlenecks, or stateful designs, none of which are distribution problems. Ask first **what is actually constrained** — and if the honest answer isn't "which machine gets this request," the fix lives somewhere else.
+
+### Quick Recap — What a Load Balancer Cannot Do
+
+- It **cannot create capacity** — perfect balancing changes which requests fail, not how many the pool can serve.
+- It **cannot fix a shared bottleneck**: ten servers querying one database give that database identical load, and adding servers may worsen it.
+- It **cannot make stateful servers interchangeable** — affinity manages that constraint, only relocating state removes it.
+- It **cannot distinguish slow from broken**, which is the root of every §8 pathology, and it will faithfully distribute a **bad deploy** unless routing is deliberately configured to limit exposure.
