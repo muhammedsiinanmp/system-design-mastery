@@ -238,7 +238,7 @@ flowchart LR
 
 The obvious response is to shrink the interval and threshold. Both directions cost something:
 
-- **A short interval** multiplies probe traffic across the fleet — a hundred servers checked every second is a hundred requests per second of pure overhead, and each probe consumes a connection and a worker slot.
+- **A short interval** multiplies probe traffic across the fleet — a hundred servers checked every second is a hundred requests per second of pure overhead, and each probe consumes a connection and a worker slot. With redundant balancers (§7) each one probes independently, so the cost multiplies again; a pair checking a hundred servers every second is 200 probes per second before a single user request is served.
 - **A low threshold** makes the balancer twitchy. One lost packet removes a healthy server, its traffic redistributes onto the others, and it returns moments later. Under load this produces **flapping**: servers cycling in and out of the pool while traffic sloshes back and forth. §8 explains why flapping is genuinely worse than a clean failure.
 
 There's also an asymmetry worth exploiting deliberately: **removing a server should be fast, returning it should be slow.** Removing a healthy server briefly costs a little capacity; returning a broken server costs failed requests. So a low unhealthy threshold with a higher healthy threshold is usually the right shape — quick to doubt, slow to re-trust.
@@ -581,7 +581,9 @@ Most production systems layer these: name-level distribution across regions, and
 
 One warning that applies to all three. A redundancy mechanism is only real if it has actually been exercised. The standby that has never taken traffic, the failover script that broke three changes ago, the VIP takeover that depends on a permission someone revoked — these fail at the exact moment they're needed, and they fail *silently* until then, because nothing about a healthy system reveals that its spare doesn't work.
 
-Failover is also never instantaneous. Detecting the failure takes a few seconds (the same detection-budget arithmetic as §3, now applied to the balancer itself), claiming the address takes a moment, and in-flight connections at the moment of the switch are usually lost regardless. Redundancy converts a total outage into a brief one — a large improvement, and not the same as zero.
+Failover is also never instantaneous. The budget breaks down roughly as: heartbeats between the pair every **1–2 seconds**, a failure declared after **2–3 missed** ones, then a second or two for the address takeover to be announced and accepted by the local network. Call it **3–10 seconds** end to end for a floating address — against minutes for the name-level approach, where you additionally wait out cached answers.
+
+During that window every request fails, and in-flight connections at the moment of the switch are lost regardless, because the new machine has no knowledge of connections established with the old one. Redundancy converts a total outage into a brief one — a large improvement, and not the same as zero. It's the same detection-budget arithmetic as §3, now applied to the balancer itself.
 
 > ⚠️ **The component that makes your servers redundant is the one most likely to be left singular.** It's easy to see that servers need duplicating — that's what the balancer is *for* — and correspondingly easy to treat the balancer as infrastructure rather than as a machine that fails. Every health check, drain, and pool in this document assumes something is in front doing the routing. If that something is one box, the entire apparatus is a single machine's uptime wearing a fleet's clothing.
 
@@ -627,6 +629,17 @@ Balancers often retry a failed request against a different server, which is genu
 Under partial failure it becomes an amplifier. Requests fail, so each is retried, perhaps twice. Traffic to the surviving servers is now **triple** the real demand. They fail under it, generating more retries.
 
 Worse, retries frequently stack. The client retries, the balancer retries, and an internal service retries — three layers each multiplying by three, turning one user request into up to twenty-seven. A modest failure becomes a self-sustaining flood that continues after the original cause is fixed.
+
+The arithmetic is worth doing once, because it's more violent than intuition suggests. A service handling 1,000 requests per second loses a quarter of its capacity. The 250 requests per second that now fail are retried by each of three layers:
+
+| Layer | Requests generated |
+|---|---|
+| Original demand | 1,000/s |
+| + client retries (×3) | 1,750/s |
+| + balancer retries (×3) | 3,250/s |
+| + service retries (×3) | 7,750/s |
+
+Losing 25% of capacity produced nearly **8× the traffic** against the 75% that remains. The surviving servers were never going to withstand that, so they fail too — and the amplification factor climbs as they do. This is why a small failure can take down a system with substantial headroom, and why the retries continue hammering the service long after the original fault is repaired.
 
 The controls are a **retry budget** (retries capped as a fraction of total requests, so they can't dominate traffic), retrying only idempotent requests where a duplicate is harmless, and retrying at exactly one layer rather than every layer. *Circuit breakers — a client-side pattern that stops sending to a failing dependency entirely — are covered in the architecture phase.*
 
