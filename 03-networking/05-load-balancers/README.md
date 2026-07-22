@@ -40,3 +40,72 @@ Then you meet the outages. And what's striking about load-balancer outages is th
 9. [What a Load Balancer Cannot Do](#9-what-a-load-balancer-cannot-do)
 10. [Putting It All Together — The Health Check That Caused the Outage](#10-putting-it-all-together--the-health-check-that-caused-the-outage)
 11. [Final Recap](#11-final-recap)
+
+---
+
+## 1. Many Servers, One Address
+
+Start with a mismatch that has no obvious resolution.
+
+**A client can only address one thing.** It has a name, it resolves that name to an address, it connects. Whatever answers is the system, as far as the client is concerned.
+
+**Capacity requires many things.** One machine has a ceiling — a finite number of requests per second, a finite amount of memory, and a hard limit past which adding work only makes everything slower. Serving more than one machine can handle means running several.
+
+So: clients can hold one address, and you need many machines. Something has to reconcile that.
+
+> **A load balancer is a component that accepts requests at a single address and distributes them across a group of servers, any of which can produce the answer. That group is the pool; each member is an upstream.**
+
+Two words worth fixing now, because they recur throughout: **upstream** means toward the machines that do the work — from the balancer's view, its upstreams are the servers it forwards to. **Downstream** means toward the client that asked.
+
+```mermaid
+flowchart LR
+    C1["👤"] --> LB["⚖️ Load balancer<br/>one address"]
+    C2["👤"] --> LB
+    C3["👤"] --> LB
+    LB --> S1["🖥️ Upstream 1"]
+    LB --> S2["🖥️ Upstream 2"]
+    LB --> S3["🖥️ Upstream 3"]
+```
+
+### The Precondition Nobody States
+
+There's a requirement hiding in that diagram, and it's the one that makes everything else possible:
+
+> **Any server in the pool must be able to answer any request.**
+
+If server 2 knows something server 1 doesn't — a logged-in user's shopping cart, a partially uploaded file, a cached computation — then "send it anywhere" stops being true, and the balancer's freedom to choose evaporates. Every request from that user must now return to server 2 specifically.
+
+This property is called being **stateless**: the server holds nothing between requests that a later request depends on. Anything that must persist lives somewhere shared — a database, a cache, a token the client carries.
+
+Statelessness is what makes machines **interchangeable**, and interchangeability is the entire foundation of this document. It's why you can add a server and immediately use it, remove one and lose nothing, and replace a failed one without any client noticing. §6 is what happens when you can't have it.
+
+### What "Balancing" Actually Means
+
+The name suggests equalising load, and that's the aspiration rather than the mechanism. A balancer doesn't measure load and equalise it; it applies a **selection rule** to each incoming request and hopes the result distributes work evenly.
+
+That distinction matters because the rule can be wrong. Sending requests to servers in rotation distributes *requests* evenly — which distributes *work* evenly only if all requests cost the same and all servers are equally capable. Neither is reliably true.
+
+**The specific rules — rotation, fewest-connections, weighted, hash-based — and how each behaves under load are Topic 06.** This document treats the choice as a black box: *something* picks an upstream. What matters here is everything around that choice, which turns out to be where the difficulty lives.
+
+### Three Things You Get Beyond Capacity
+
+Capacity is the obvious motivation. Three others come along with it, and in practice they're often the reason a balancer is deployed in front of a *single* server:
+
+| Benefit | What it means |
+|---|---|
+| **Survives failure** | A machine dies; the others absorb its traffic. Nobody outside notices |
+| **Deploys without downtime** | Update servers a few at a time while the rest serve (§5) |
+| **The fleet is invisible** | Clients hold one address; what's behind it can grow, shrink, or be entirely replaced |
+
+The middle row is worth flagging as the one teams underestimate. Deploying without dropping requests isn't an application capability — it's something the balancer provides by controlling which servers receive traffic and when. §5 is how.
+
+> 💡 **Key Insight**
+>
+> A load balancer exists to resolve an unavoidable mismatch — **clients can address one thing, capacity requires many** — and the entire arrangement rests on one precondition that's easy to state and hard to keep: **any server must be able to answer any request.** Notice that distribution, the thing the component is named after, is the part that's essentially solved. Everything genuinely difficult is adjacent to it: knowing which servers are capable of answering, and changing that set safely while traffic is flowing.
+
+### Quick Recap — Many Servers, One Address
+
+- Clients can hold **one address**; capacity requires **many machines**. A load balancer reconciles that, distributing across a **pool** of **upstreams**.
+- The precondition is **statelessness** — any server must answer any request — which is what makes machines **interchangeable**.
+- "Balancing" is really applying a **selection rule** and hoping work distributes evenly; the rules themselves are **Topic 06**.
+- Beyond capacity it buys **failure survival, zero-downtime deploys, and an invisible fleet** — and the deploy benefit is a balancer feature, not an application one (§5).
