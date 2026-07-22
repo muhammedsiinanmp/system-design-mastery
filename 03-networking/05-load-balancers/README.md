@@ -180,3 +180,80 @@ A dedicated balancer isn't the only option, and both alternatives are worth reco
 - Connection-level balancing **pins long-lived connections** to one server, so distribution drifts and removal is disruptive; request-level balancing re-decides and self-corrects.
 - **Encryption forces the choice**: reading paths and headers requires terminating it, which means holding the certificate and seeing plaintext.
 - **Name-resolution balancing** spreads across locations but reacts slowly to failure; **client-side balancing** removes the hop but requires every client to hold the server list.
+
+---
+
+## 3. Health Checking — Knowing What's Alive
+
+A balancer distributing across a pool needs to know what's in the pool. Not the configured list — the *currently working* list. Servers crash, hang, run out of memory, get rebooted, and lose network connectivity, and none of them announce it.
+
+> **A health check is a periodic test the balancer runs against each upstream to decide whether it should keep receiving traffic.**
+
+This is the mechanism that turns a static configuration into a live view of reality, and it's where most of this document's difficulty concentrates.
+
+### Two Ways to Find Out
+
+**Active checking** — the balancer independently contacts each server on a schedule and evaluates the response. Every few seconds, every server, whether or not real traffic is flowing.
+
+**Passive checking** — the balancer watches real traffic and draws conclusions. A server returning errors or timing out repeatedly gets marked bad, with no separate probe.
+
+| | Active | Passive |
+|---|---|---|
+| Cost | Constant background traffic | Free — uses requests already happening |
+| Detects a problem | Even with no traffic | Only by **failing real user requests** |
+| Idle servers | Covered | Invisible until traffic arrives |
+| Realism | Tests what the probe tests (§4) | Tests exactly what users experience |
+
+The tradeoff is stark: passive checking is free and perfectly realistic, but it learns a server is broken by **letting real users hit it**. Active checking costs constant probing but finds problems before a user does. Most production setups run both — active checks as the primary signal, passive observation as a faster-reacting supplement.
+
+### The Four Numbers
+
+Active checking is configured almost entirely by four values, and their interaction is more consequential than any of them alone:
+
+| Setting | Meaning | Typical |
+|---|---|---|
+| **Interval** | How often to probe | 5–30 s |
+| **Timeout** | How long to wait before calling a probe failed | 1–5 s |
+| **Unhealthy threshold** | Consecutive failures before removing the server | 2–3 |
+| **Healthy threshold** | Consecutive successes before returning it | 2–5 |
+
+The thresholds exist because a single failed probe means very little. Packets are lost, servers pause briefly, networks hiccup. Removing a server on one missed probe would produce constant churn from noise. Requiring several consecutive failures filters that out.
+
+But the filtering isn't free, and this is the number that actually matters:
+
+> **Detection budget = interval × unhealthy threshold (+ up to one timeout).** This is how long a dead server keeps receiving traffic before the balancer notices.
+
+With a 10-second interval and a threshold of 3, a server that dies at any moment continues receiving requests for **up to 30 seconds**. Every request routed to it during that window fails.
+
+```mermaid
+flowchart LR
+    D["💥 Server dies<br/>T+0"] --> P1["❌ probe 1 fails<br/>T+10s"]
+    P1 --> P2["❌ probe 2 fails<br/>T+20s"]
+    P2 --> P3["❌ probe 3 fails<br/>T+30s"]
+    P3 --> R["🚫 Removed from pool<br/>T+30s"]
+    D -.->|"⚠️ 30 seconds of<br/>failed user requests"| R
+```
+
+### Why Not Just Check Constantly
+
+The obvious response is to shrink the interval and threshold. Both directions cost something:
+
+- **A short interval** multiplies probe traffic across the fleet — a hundred servers checked every second is a hundred requests per second of pure overhead, and each probe consumes a connection and a worker slot.
+- **A low threshold** makes the balancer twitchy. One lost packet removes a healthy server, its traffic redistributes onto the others, and it returns moments later. Under load this produces **flapping**: servers cycling in and out of the pool while traffic sloshes back and forth. §8 explains why flapping is genuinely worse than a clean failure.
+
+There's also an asymmetry worth exploiting deliberately: **removing a server should be fast, returning it should be slow.** Removing a healthy server briefly costs a little capacity; returning a broken server costs failed requests. So a low unhealthy threshold with a higher healthy threshold is usually the right shape — quick to doubt, slow to re-trust.
+
+### The Probe Is Not the Traffic
+
+One structural caveat that §4 develops fully. A health check is a *separate* request the balancer makes on its own behalf. It is not the user's request, it doesn't follow the same path through the application, and it may succeed under exactly the conditions where real requests fail.
+
+A server can pass every probe while being useless — its thread pool exhausted, its dependency unreachable, its responses wrong. The probe answered because answering the probe was cheap.
+
+> ⚠️ **The detection budget is the most under-examined number in a load-balancer configuration.** Teams tune intervals and thresholds independently, without multiplying them, and are then surprised that a crashed server took half a minute to leave the pool. Every configuration contains that answer already — `interval × threshold` — and it directly determines how many user requests a sudden failure costs you. It is worth knowing before an incident rather than calculating during one.
+
+### Quick Recap — Health Checking
+
+- A **health check** converts a static server list into a live one; **active** checks probe on a schedule, **passive** checks infer from real traffic (learning by failing real users).
+- Four settings govern it — **interval, timeout, unhealthy threshold, healthy threshold** — and the thresholds exist to filter transient noise.
+- **Detection budget = interval × unhealthy threshold**: how long a dead server keeps receiving traffic. A 10 s interval with a threshold of 3 means **30 seconds of failed requests**.
+- Tighten it and you get **flapping**; the right shape is asymmetric — **quick to remove, slow to restore** (§8).
