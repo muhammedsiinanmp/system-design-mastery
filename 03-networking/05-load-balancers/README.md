@@ -416,3 +416,79 @@ That last requirement is the one applications routinely fail. Draining depends o
 - **Draining** stops new work while letting existing work finish, bounded by a **drain timeout** set just above your realistic slowest request.
 - Arrival needs **slow start** — a new server is correct but cold (empty caches, unoptimised runtime, unestablished pools), so traffic should ramp rather than arrive at full share.
 - **Zero-downtime deploys are a balancer capability**, but draining is a **two-sided contract**: an application that ignores the shutdown signal drops requests silently.
+
+---
+
+## 6. Session Affinity — When Requests Must Come Back
+
+§1 established the precondition: any server must be able to answer any request. Sometimes that isn't true, and the balancer has to accommodate it.
+
+> **Session affinity — also called sticky sessions — is the balancer consistently routing a particular client's requests to the same server, rather than choosing freshly each time.**
+
+### Why Anyone Needs It
+
+Affinity exists because a server is holding something the others don't have:
+
+- **In-memory session state.** The user logged in, and their session lives in that process's memory. Another server has never heard of them.
+- **A local cache** built up for that user, expensive to rebuild elsewhere.
+- **An open long-lived connection** — a real-time channel established with that specific process.
+- **Multi-step operations** where partial progress lives on one machine, like a chunked upload.
+
+In every case the same shape: **a server knows something that the pool doesn't share.** Affinity is the balancer working around a property of the application.
+
+### How It's Done
+
+Two common mechanisms, with meaningfully different behaviour:
+
+| | **Client-address based** | **Cookie based** |
+|---|---|---|
+| Pins on | The client's network address | A value the balancer sets and reads |
+| Works at | Connection level (§2) | Request level — must read the message |
+| Breaks when | The client's address changes | Cookies are cleared or unsupported |
+| Fairness | **Poor** — many users can share one address | Good — genuinely per-client |
+
+The address-based approach has a specific failure worth knowing. Many users frequently share one visible address — an entire office behind a shared gateway, a mobile network aggregating subscribers. Pinning by address sends *all* of them to a single server, which can concentrate a substantial fraction of traffic onto one machine while the rest of the pool idles.
+
+Cookie-based affinity avoids that by identifying the client rather than the network path, at the cost of requiring request-level balancing and a client that keeps cookies.
+
+### What It Costs
+
+Affinity is a workaround, and it charges for itself in four ways:
+
+**Distribution degrades.** The balancer can no longer send requests where capacity is; it must send them where the session is. Long-lived sessions accumulate unevenly, and a server can be overloaded while its peers are idle — with the balancer *correctly* continuing to overload it.
+
+**Removal loses state.** §5's draining assumed in-flight requests finish and the server leaves cleanly. With affinity, the sessions pinned to that server are also gone. Every affected user is logged out, loses their cart, or has their upload fail — during a routine deploy.
+
+**Failure is worse.** A crash (§3) doesn't just cost the requests in flight; it costs every session on that machine. The blast radius of losing one server is no longer proportional to its share of traffic — it's the whole population that happened to be pinned there.
+
+**Scaling out helps less.** Adding a server only helps *new* sessions. Existing ones stay where they are, so a fleet under load doesn't rebalance when you add capacity — it just gets somewhere to put future users.
+
+```mermaid
+flowchart TD
+    A["🍪 Affinity enabled"] --> B["⚖️ Must route to the session,<br/>not to capacity"]
+    B --> C["📊 Uneven load<br/>one server hot, others idle"]
+    B --> D["🔌 Removal or crash<br/>= sessions lost"]
+    B --> E["➕ New servers only<br/>take NEW sessions"]
+```
+
+### The Better Answer
+
+Affinity treats the symptom. The cause is server-held state, and removing it is almost always preferable:
+
+- **Move sessions to a shared store** — a cache or database every server can reach. Any server then serves any user, and §1's precondition is restored for real.
+- **Give the state to the client** — a signed token carrying what's needed, presented with each request. Nothing to look up and nothing to share.
+
+Both convert "this server knows you" into "any server can find out about you," which is the property that makes the entire pool work. The trade is a lookup on each request, or a larger request — usually a good exchange for even distribution, clean deploys, and failures that cost only what was in flight.
+
+The honest exception: genuinely long-lived connections, where a real-time channel is established with one process and cannot meaningfully be moved. There, affinity isn't a workaround — it's inherent, and the design question becomes how to lose those connections gracefully rather than how to avoid pinning.
+
+> 💡 **Key Insight**
+>
+> Session affinity is a **load balancer compensating for an application that broke the interchangeability rule**, and the compensation is expensive: distribution stops following capacity, deploys start costing user sessions, a crash takes down everyone pinned to that machine, and new servers only help future users. It works, and it is almost always the second-best answer. The first is to **relocate the state** — into a shared store or into the client — so that any server can serve anyone and the balancer is free to route by capacity again.
+
+### Quick Recap — Session Affinity
+
+- **Affinity** pins a client to one server, needed when that server holds something the pool doesn't share — session memory, a local cache, a live connection, partial progress.
+- **Address-based** pinning is connection-level and unfair when many users share one address; **cookie-based** is per-client but needs request-level balancing.
+- It costs four things: **uneven distribution, sessions lost on drain or crash, larger blast radius, and scaling that only helps new users**.
+- The better fix is **removing server-held state** — shared store or client-carried token — restoring the interchangeability affinity was working around (§1).
