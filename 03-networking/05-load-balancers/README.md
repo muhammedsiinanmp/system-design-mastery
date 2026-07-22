@@ -341,3 +341,78 @@ Two patterns that resolve most of this in practice:
 - Depth ranges from **connection → shallow → deep → synthetic**, and deeper is *not* strictly better.
 - **A deep check on a shared dependency fails the whole fleet at once**, converting a brief dependency problem into a total outage — the balancer emptying the pool exactly as configured.
 - Check **only what can differ between servers**; monitor shared dependencies with alerting instead, and consider a **fail-open** rule when most of the pool reports unhealthy.
+
+---
+
+## 5. Adding and Removing Servers
+
+§3 and §4 covered servers leaving the pool *involuntarily*, because something broke. This section covers the deliberate case — deploys, scaling, maintenance — where you control the timing and can therefore do it without losing a single request.
+
+The naive approach loses requests, and understanding exactly why is the whole section.
+
+### Removal Is Not Instant
+
+A server is handling live traffic. You want it out of the pool. Stop sending it new requests and shut it down — and you've just discarded every request it was in the middle of processing.
+
+The problem is that "currently serving traffic" isn't a single instant. At any moment a server holds:
+
+- Requests it has received but not finished
+- Responses partially written back to clients
+- Open connections that will carry more requests
+- Background work triggered by requests already accepted
+
+Killing the process abandons all of it. Users see failures for requests that were seconds from succeeding.
+
+### Draining
+
+> **Draining is the process of removing a server from rotation while allowing its in-flight work to finish: stop sending it new requests, wait for existing ones to complete, then shut it down.**
+
+The sequence:
+
+```mermaid
+flowchart LR
+    A["1️⃣ Mark draining<br/>stop NEW requests"] --> B["2️⃣ In-flight work<br/>finishes normally"]
+    B --> C["3️⃣ Connections close<br/>as they empty"]
+    C --> D["4️⃣ Shut down<br/>nothing lost"]
+    B -.->|"⏱️ drain timeout<br/>force-close stragglers"| D
+```
+
+The critical distinction is between **new** and **existing** work. A draining server is in an intermediate state that neither "in the pool" nor "out of the pool" describes — it accepts no new requests but is still actively serving.
+
+The **drain timeout** bounds the wait. Some requests never finish on their own — a long-running upload, a streaming response, a stuck handler. The timeout is the point at which the balancer stops waiting and closes anyway, and it's a straightforward trade: too short and you cut off legitimate slow requests, too long and every deploy crawls. It should exceed your realistic slowest request and no more. Anything genuinely long-running — batch jobs, large exports — shouldn't be holding a request open in the first place.
+
+At connection level (§2) draining is harder, because connections are bound to the server rather than individual requests being routed. The balancer must wait for whole connections to close, which a client holding a persistent connection may not do for a long time.
+
+### Arrival Has Its Own Problem
+
+Adding a server looks like it should be trivial: it's healthy, put it in the pool. But a freshly started server is frequently **slower than its peers for its first minutes of life**, for reasons that have nothing to do with correctness:
+
+- **Caches are empty.** In-process caches, connection pools, and prepared statements are all cold; every request does the expensive version of its work.
+- **Runtimes optimise over time.** Many language runtimes interpret code first and compile hot paths later, so early requests run substantially slower.
+- **Connections aren't established.** Pools to databases and downstream services fill on demand, and the first requests pay setup costs.
+
+A server passing its health check is therefore *correct* but not yet *fast*. Send it a full share of traffic immediately and it responds slowly for a minute, which shows up as a latency spike after every deploy — and worse, under some selection rules a slow server *attracts* additional traffic, which §8 covers.
+
+**Slow start** (or warm-up) fixes this: the new server receives a deliberately small fraction of traffic that ramps up over a configured period, giving it real requests to warm its caches without being responsible for a full share while cold.
+
+### Why This Is the Deploy Story
+
+Combining both directions gives zero-downtime deployment, and it's worth seeing that it's entirely a load-balancer capability rather than an application one:
+
+1. Drain one server; wait for its work to finish.
+2. Shut it down, update it, start it again.
+3. Wait for it to pass its healthy threshold (§3), ramping traffic in via slow start.
+4. Repeat for the next server.
+
+At every moment, some servers are serving. No request is dropped, no user sees an error, and the application needed no special deployment logic — it only needed to be interchangeable (§1) and to shut down gracefully when asked.
+
+That last requirement is the one applications routinely fail. Draining depends on the server actually *finishing* its work when told to stop, which means handling the shutdown signal, refusing new work, completing what it holds, and exiting. An application that exits immediately on that signal defeats draining entirely — the balancer stopped sending new requests, and the process threw away the old ones anyway.
+
+> ⚠️ **Draining is a contract between the balancer and the application, and it silently fails if either side doesn't honour it.** The balancer's half is stopping new traffic and waiting; the application's half is catching the shutdown signal and finishing in-flight work. Configure a perfect drain timeout in front of an application that exits instantly, and you get exactly the dropped requests you were trying to avoid — with no error anywhere in the balancer's logs, because from its side everything went correctly.
+
+### Quick Recap — Adding and Removing Servers
+
+- Removal isn't instant: a server holds **in-flight requests, partial responses, and open connections**, all discarded by an abrupt shutdown.
+- **Draining** stops new work while letting existing work finish, bounded by a **drain timeout** set just above your realistic slowest request.
+- Arrival needs **slow start** — a new server is correct but cold (empty caches, unoptimised runtime, unestablished pools), so traffic should ramp rather than arrive at full share.
+- **Zero-downtime deploys are a balancer capability**, but draining is a **two-sided contract**: an application that ignores the shutdown signal drops requests silently.
