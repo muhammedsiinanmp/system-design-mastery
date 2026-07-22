@@ -591,3 +591,78 @@ Failover is also never instantaneous. Detecting the failure takes a few seconds 
 - The difficulty isn't the spare, it's **getting traffic to it**: a second balancer has a different address no client knows.
 - **A floating address (VIP)** moves between a pair and fails over in seconds with no client change, but needs one network segment, idles a standby, and can split-brain under a partition.
 - **Name-level** distribution spans locations but is cache-bound and slow to react; **same-address-many-places** gives both, and is usually consumed via a provider. All of them are fiction until **actually rehearsed**.
+
+---
+
+## 8. When Balancing Makes Things Worse
+
+A load balancer sits between every user and every server, reacting continuously to conditions. That position makes it capable of taking a bad situation and making it considerably worse — not by malfunctioning, but by responding to a problem in a way that amplifies it.
+
+These are the pathologies worth recognising, because each one looks like correct behaviour while it happens.
+
+### Removing Capacity Exactly When You Need It
+
+Traffic rises. Servers slow under the load. Response times stretch past the health-check timeout (§3), so probes start failing. The balancer removes those servers.
+
+Their traffic redistributes onto the remaining servers, which are now *more* loaded, so they slow down too, and fail their checks, and are removed.
+
+```mermaid
+flowchart TD
+    A["📈 Load rises"] --> B["🐢 Servers slow down"]
+    B --> C["⏱️ Health probes time out"]
+    C --> D["🚫 Servers removed"]
+    D --> E["📈 Same traffic,<br/>fewer servers"]
+    E --> B
+    D --> F["💀 Pool empties<br/>total outage"]
+```
+
+Every step is the configuration working. The result is a system that had *degraded* performance converted into *no* service, by machinery that removed every server for the crime of being busy.
+
+The distinction the balancer can't draw is between **slow** and **broken** — and under load, healthy servers look exactly like failing ones. Mitigations exist: health-check timeouts generously above normal response times, checks on a separate path from user traffic so they aren't queued behind it, and the fail-open rule from §4 that ignores health status when most of the pool is failing. All of them amount to making the balancer *less* eager to act on a signal that becomes unreliable precisely when load is highest.
+
+### Retries That Multiply Load
+
+Balancers often retry a failed request against a different server, which is genuinely useful — one server hiccups, another answers, the user never knows.
+
+Under partial failure it becomes an amplifier. Requests fail, so each is retried, perhaps twice. Traffic to the surviving servers is now **triple** the real demand. They fail under it, generating more retries.
+
+Worse, retries frequently stack. The client retries, the balancer retries, and an internal service retries — three layers each multiplying by three, turning one user request into up to twenty-seven. A modest failure becomes a self-sustaining flood that continues after the original cause is fixed.
+
+The controls are a **retry budget** (retries capped as a fraction of total requests, so they can't dominate traffic), retrying only idempotent requests where a duplicate is harmless, and retrying at exactly one layer rather than every layer. *Circuit breakers — a client-side pattern that stops sending to a failing dependency entirely — are covered in the architecture phase.*
+
+### Everyone Returning at Once
+
+A server is removed and comes back. Or a dependency recovers. Or a balancer fails over (§7).
+
+At that instant, everything that was waiting arrives simultaneously — retried requests, queued work, reconnecting clients. This is a **thundering herd**: a recovery that immediately re-breaks what recovered, because the load arriving at the healed component is far above steady state.
+
+Slow start (§5) is the direct defence for a returning server — ramping traffic rather than restoring a full share instantly. For clients reconnecting, the standard answer is randomised backoff, so retries spread over time instead of synchronising.
+
+The synchronisation is the danger. If a thousand clients all retry after exactly one second, they arrive together and fail together, then retry together — a herd that stays a herd indefinitely. Randomising the wait breaks the lockstep.
+
+### Slow Servers Attracting More Work
+
+A pathology that surprises people because it inverts the intent.
+
+Some selection rules favour the server with the fewest active connections. Under normal conditions that's sensible — fewer connections means more spare capacity.
+
+But consider a server that has started failing *fast*: it errors immediately rather than doing work. Its connections close quickly, so its active count is the lowest in the pool, so it looks like the most available server, so it receives **more** traffic — which it fails, faster, keeping its count lowest.
+
+The broken server draws a growing share of traffic toward itself specifically because it's broken. *The selection rules and their individual pathologies are Topic 06's subject; what matters here is the shape — a metric that means "healthy" in normal conditions can invert during failure.*
+
+### Flapping
+
+§3 mentioned it; here's why it earns a place among the pathologies.
+
+A flapping server oscillates between healthy and unhealthy — passing checks, failing checks, passing again. Each transition costs real work: traffic redistributes, connections re-establish, caches on other servers shift, and with affinity (§6) sessions move or break.
+
+**A consistently dead server is better than a flapping one.** The dead one is removed and the system reaches a stable state with reduced capacity. The flapping one keeps the whole pool in permanent churn, and the churn itself consumes capacity. This is why the healthy threshold should be higher than the unhealthy threshold (§3) — slow re-admission damps oscillation, and a server that keeps failing should stay out until someone looks at it.
+
+> ⚠️ **The load balancer's reactions are tuned for the failure of *one* server among many — and every pathology here is that machinery meeting a failure that isn't shaped that way.** Removing a server is correct when one is broken and catastrophic when all are merely busy. Retrying is correct when a failure is isolated and an amplifier when it's widespread. The judgement to add is that **the balancer's response should get more conservative as the fraction of the pool affected goes up** — because past a certain point, the problem is no longer something moving traffic can solve.
+
+### Quick Recap — When Balancing Makes Things Worse
+
+- Under load, **slow and broken look identical**: probes time out, servers are removed, remaining servers get more load — a spiral that empties the pool.
+- **Retries amplify**, especially stacked across client, balancer, and service layers; bound them with a **retry budget** and retry at one layer only.
+- Recovery triggers a **thundering herd**; **slow start** protects the returning server and **randomised backoff** breaks client lockstep.
+- A **fast-failing server can attract traffic** by looking idle, and a **flapping server is worse than a dead one** — which is why re-admission should be slower than removal.
