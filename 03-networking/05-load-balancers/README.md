@@ -501,11 +501,11 @@ Every section so far has been about the balancer protecting you from server fail
 
 ### The Uncomfortable Arithmetic
 
-There's a two-condition test for the components whose failure is catastrophic rather than inconvenient:
+Some components can fail without anyone noticing. Others take the entire system with them. What separates the two is a pair of properties that must be present together:
 
-> **A component is a single point of failure when both hold: nothing works without it, and there is exactly one of it.** Either condition alone is survivable — something essential but duplicated survives losing a copy, and something solitary but inessential can be lost without consequence. Only the overlap is fatal.
+> **A single point of failure is something the system cannot operate without, that exists in quantity one.** Take away either property and the danger goes with it. Duplicate the indispensable thing and losing one copy is a non-event; leave the solitary thing unimportant and losing it costs nothing. The lethal combination is *required* and *unique* in the same component.
 
-A load balancer satisfies the first condition completely, by design. It is the address clients connect to. Every request passes through it.
+A load balancer is required by construction — it owns the address clients connect to, and every request travels through it. That property isn't incidental; it's the entire reason the component exists.
 
 So a single balancer means the whole arrangement — every redundant server, every health check, every careful drain — inherits the availability of one machine. You built a fleet that survives any server failing, and placed in front of it a box that survives nothing.
 
@@ -520,7 +520,7 @@ flowchart LR
     LB -.->|"💥 it dies"| X["🔴 All three healthy<br/>and unreachable"]
 ```
 
-Which leaves the second condition as the only one you can act on. Everything below is how.
+So uniqueness is the only property left that you can change. Everything below is how.
 
 ### The Problem With Two Balancers
 
@@ -549,7 +549,7 @@ flowchart TD
 
 What makes this work is that **clients never learn anything**. The address they hold is still correct; a different machine answers to it now. No name lookup, no cache to expire, no client-side change.
 
-The costs are real: it requires both machines on a network segment where address takeover is permitted, which is straightforward in a datacentre and often restricted in cloud environments. The standby is idle capacity you pay for and rarely exercise. And the pair must agree on who is active — if a network partition leaves both believing the other is dead, both claim the address and traffic splits unpredictably between two machines each convinced it is the only one.
+The costs are real: it requires both machines on a network segment where address takeover is permitted, which is straightforward in a datacentre and often restricted in cloud environments. You are also paying full price for a second machine that serves nothing on an ordinary day. And the pair must agree on who is active — if a network partition leaves both believing the other is dead, both claim the address and traffic splits unpredictably between two machines each convinced it is the only one.
 
 ### Approach 2 — Name-Level Distribution
 
@@ -579,7 +579,7 @@ Most production systems layer these: name-level distribution across regions, and
 
 ### The Failure Nobody Rehearses
 
-One warning that applies to all three. A redundancy mechanism is only real if it has actually been exercised. The standby that has never taken traffic, the failover script that broke three changes ago, the VIP takeover that depends on a permission someone revoked — these fail at the exact moment they're needed, and they fail *silently* until then, because nothing about a healthy system reveals that its spare doesn't work.
+One warning that applies to all three. A redundancy mechanism you have never triggered on purpose is a guess, not a guarantee. The standby that has never carried traffic, the failover script that stopped working three changes ago, the address takeover depending on a permission someone revoked last quarter — each is discovered broken during the one event it existed to handle. Until then it is perfectly invisible, because a working system produces no evidence about whether its spare works.
 
 Failover is also never instantaneous. The budget breaks down roughly as: heartbeats between the pair every **1–2 seconds**, a failure declared after **2–3 missed** ones, then a second or two for the address takeover to be announced and accepted by the local network. Call it **3–10 seconds** end to end for a floating address — against minutes for the name-level approach, where you additionally wait out cached answers.
 
