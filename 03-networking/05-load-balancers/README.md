@@ -492,3 +492,102 @@ The honest exception: genuinely long-lived connections, where a real-time channe
 - **Address-based** pinning is connection-level and unfair when many users share one address; **cookie-based** is per-client but needs request-level balancing.
 - It costs four things: **uneven distribution, sessions lost on drain or crash, larger blast radius, and scaling that only helps new users**.
 - The better fix is **removing server-held state** — shared store or client-carried token — restoring the interchangeability affinity was working around (§1).
+
+---
+
+## 7. Making the Front Door Redundant
+
+Every section so far has been about the balancer protecting you from server failures. This one is about the question that produces: **what protects you from the balancer?**
+
+### The Uncomfortable Arithmetic
+
+There's a two-condition test for the components whose failure is catastrophic rather than inconvenient:
+
+> **A component is a single point of failure when both hold: nothing works without it, and there is exactly one of it.** Either condition alone is survivable — something essential but duplicated survives losing a copy, and something solitary but inessential can be lost without consequence. Only the overlap is fatal.
+
+A load balancer satisfies the first condition completely, by design. It is the address clients connect to. Every request passes through it.
+
+So a single balancer means the whole arrangement — every redundant server, every health check, every careful drain — inherits the availability of one machine. You built a fleet that survives any server failing, and placed in front of it a box that survives nothing.
+
+That's the arithmetic teams miss: **redundancy behind a non-redundant component doesn't produce a redundant system.** It produces a system whose failure mode moved.
+
+```mermaid
+flowchart LR
+    C["👤 Clients"] --> LB["⚖️ ONE balancer"]
+    LB --> S1["🟢 Server 1"]
+    LB --> S2["🟢 Server 2"]
+    LB --> S3["🟢 Server 3"]
+    LB -.->|"💥 it dies"| X["🔴 All three healthy<br/>and unreachable"]
+```
+
+Which leaves the second condition as the only one you can act on. Everything below is how.
+
+### The Problem With Two Balancers
+
+Adding a second balancer is obvious. Making clients *use* it is not.
+
+Clients connect to an address. A second balancer has a *different* address, which no client knows about — so the spare sits there, fully functional, receiving nothing. Redundancy requires not just a spare but a way for traffic to reach it, and that's the hard part.
+
+Three approaches, with genuinely different costs.
+
+### Approach 1 — A Floating Address
+
+The most direct solution decouples the address from the machine.
+
+> **A virtual IP (VIP), or floating IP, is an address not permanently bound to any one machine. Whichever balancer currently owns it receives traffic sent there — and ownership can move.**
+
+Two balancers run as a pair. One holds the VIP and serves; the other stands by, monitoring it. When the active one stops responding, the standby **claims the address** — announcing to the local network that this address now belongs to it — and traffic follows within seconds.
+
+```mermaid
+flowchart TD
+    C["👤 Clients → 203.0.113.10<br/>the VIP"]
+    C --> A["⚖️ Balancer A<br/>🟢 owns the VIP"]
+    A -.->|"💓 heartbeat"| B["⚖️ Balancer B<br/>⚪ standby, watching"]
+    A -.->|"💥 stops responding"| B2["⚖️ Balancer B<br/>🟢 claims the VIP"]
+    B2 --> R["✅ Same address,<br/>clients unaware"]
+```
+
+What makes this work is that **clients never learn anything**. The address they hold is still correct; a different machine answers to it now. No name lookup, no cache to expire, no client-side change.
+
+The costs are real: it requires both machines on a network segment where address takeover is permitted, which is straightforward in a datacentre and often restricted in cloud environments. The standby is idle capacity you pay for and rarely exercise. And the pair must agree on who is active — if a network partition leaves both believing the other is dead, both claim the address and traffic splits unpredictably between two machines each convinced it is the only one.
+
+### Approach 2 — Name-Level Distribution
+
+Publish several balancer addresses under one name; clients receive one of them.
+
+This spreads load across balancers and survives one failing — but reacting to a failure is slow. The answers clients received are cached on machines you don't control, and those caches keep handing out a dead address until they expire. Failover takes as long as the cached answer lives, which is frequently minutes.
+
+Its real strength is different: it's the only approach that works across **separate locations**. A VIP requires both machines on one network; name-level distribution can point at balancers in different regions entirely. So it's usually the outer layer — coarse distribution across sites — with something faster handling failure inside each one.
+
+### Approach 3 — Announcing the Same Address From Many Places
+
+Several machines in different locations announce the *same* address to the wider internet, and the network routes each client to whichever is nearest. If one stops announcing, routing shifts to another within seconds.
+
+This gives both geographic distribution and fast failover, without cached answers to wait out. It requires the ability to participate in internet routing — realistic for large providers and cloud platforms, generally not something a single team operates directly. In practice you consume it by using a provider whose front door already works this way.
+
+### Comparing Them
+
+| | **Floating address** | **Name-level** | **Same-address-many-places** |
+|---|---|---|---|
+| Failover time | **Seconds** | Minutes (cache-bound) | **Seconds** |
+| Spans locations | ❌ One network segment | ✅ | ✅ |
+| Clients need to change | ❌ | ❌ | ❌ |
+| Uses spare capacity | ❌ Standby idles | ✅ | ✅ |
+| Who can run it | Anyone with the network control | Anyone | Providers, mostly |
+
+Most production systems layer these: name-level distribution across regions, and within each region a pair or cluster of balancers using a floating address.
+
+### The Failure Nobody Rehearses
+
+One warning that applies to all three. A redundancy mechanism is only real if it has actually been exercised. The standby that has never taken traffic, the failover script that broke three changes ago, the VIP takeover that depends on a permission someone revoked — these fail at the exact moment they're needed, and they fail *silently* until then, because nothing about a healthy system reveals that its spare doesn't work.
+
+Failover is also never instantaneous. Detecting the failure takes a few seconds (the same detection-budget arithmetic as §3, now applied to the balancer itself), claiming the address takes a moment, and in-flight connections at the moment of the switch are usually lost regardless. Redundancy converts a total outage into a brief one — a large improvement, and not the same as zero.
+
+> ⚠️ **The component that makes your servers redundant is the one most likely to be left singular.** It's easy to see that servers need duplicating — that's what the balancer is *for* — and correspondingly easy to treat the balancer as infrastructure rather than as a machine that fails. Every health check, drain, and pool in this document assumes something is in front doing the routing. If that something is one box, the entire apparatus is a single machine's uptime wearing a fleet's clothing.
+
+### Quick Recap — Making the Front Door Redundant
+
+- A balancer meets the first SPOF condition **by design** — everything passes through it — so **redundancy behind a single balancer doesn't produce a redundant system**.
+- The difficulty isn't the spare, it's **getting traffic to it**: a second balancer has a different address no client knows.
+- **A floating address (VIP)** moves between a pair and fails over in seconds with no client change, but needs one network segment, idles a standby, and can split-brain under a partition.
+- **Name-level** distribution spans locations but is cache-bound and slow to react; **same-address-many-places** gives both, and is usually consumed via a provider. All of them are fiction until **actually rehearsed**.
