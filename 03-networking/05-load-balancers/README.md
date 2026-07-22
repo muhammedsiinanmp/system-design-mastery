@@ -257,3 +257,87 @@ A server can pass every probe while being useless — its thread pool exhausted,
 - Four settings govern it — **interval, timeout, unhealthy threshold, healthy threshold** — and the thresholds exist to filter transient noise.
 - **Detection budget = interval × unhealthy threshold**: how long a dead server keeps receiving traffic. A 10 s interval with a threshold of 3 means **30 seconds of failed requests**.
 - Tighten it and you get **flapping**; the right shape is asymmetric — **quick to remove, slow to restore** (§8).
+
+---
+
+## 4. What a Health Check Actually Proves
+
+§3 ended on a caveat that deserves its own section, because it is the source of the most damaging load-balancer failures there are.
+
+A health check answers exactly one question: **did this specific probe succeed?** Everything else — *is this server working, is it fast enough, can it serve users* — is inference. The gap between what the probe proves and what you believe it proves is where systems break.
+
+### The Spectrum
+
+Health checks range from trivially shallow to dangerously deep:
+
+| Depth | The probe | Proves | Misses |
+|---|---|---|---|
+| **Connection** | Can I open a connection to the port? | Something is listening | A hung process still holds the port open |
+| **Shallow** | `GET /health` → does it return OK? | The web layer answers | The application may be unable to do real work |
+| **Deep** | `GET /health` → checks the database, cache, dependencies | The server can genuinely serve | **Failures shared across the whole fleet (below)** |
+| **Synthetic** | Perform a representative real operation | Closest to user reality | Expensive; may have side effects |
+
+Reading down that table, deeper looks strictly better. Each level catches failures the one above misses. The natural conclusion is to make health checks as deep as possible.
+
+**That conclusion causes outages.**
+
+### The Trap — Shared Dependencies
+
+Consider a deep health check that verifies the database is reachable. It looks obviously correct: a server that can't reach the database genuinely cannot serve requests, so it shouldn't receive traffic.
+
+Now the database has a brief problem. Not an outage — a 40-second pause from a failover, a lock, a network blip.
+
+Every server in the fleet checks the same database. So every server fails its health check. **Simultaneously.**
+
+```mermaid
+flowchart TD
+    DB["🗄️ Database pauses<br/>40 seconds"]
+    DB --> S1["🖥️ Server 1<br/>❌ check fails"]
+    DB --> S2["🖥️ Server 2<br/>❌ check fails"]
+    DB --> S3["🖥️ Server 3<br/>❌ check fails"]
+    DB --> S4["🖥️ Server 4<br/>❌ check fails"]
+    S1 & S2 & S3 & S4 --> LB["⚖️ Balancer removes<br/>ALL of them"]
+    LB --> R["💀 Empty pool<br/>every request fails"]
+```
+
+The balancer, following its configuration exactly, empties the entire pool. There are no healthy servers left, so every request now fails — including requests that don't touch the database at all, and including any request that might have succeeded while the database recovered.
+
+A **degraded** system became a **dead** one, and the load balancer is what killed it. The database recovered after 40 seconds; the outage lasted far longer, because now the fleet has to pass its healthy threshold (§3) and the backlog of waiting clients arrives all at once (§8).
+
+The failure mode generalises past databases: **any health check that tests a dependency shared by the whole fleet converts a partial failure of that dependency into a total failure of your service.** The check that was supposed to protect users from broken servers instead removed every working server they had.
+
+### What Health Checks Are Actually For
+
+The resolution comes from being precise about the question a health check answers:
+
+> **A health check should answer: "is this server, specifically, worse than its peers?" — not "is the system healthy?"**
+
+Health checking is a **comparative** mechanism. Its purpose is choosing among servers, and it only helps when servers can differ. A condition affecting every server equally carries no information for that decision — removing them all is never the right response, because there is nowhere better to send the traffic.
+
+That gives a usable rule:
+
+| Check for things that are… | Because |
+|---|---|
+| **Local to one server** — process alive, threads available, disk usable, warm-up finished | Some servers can be worse than others; removal helps |
+| **Not** shared by the whole fleet — the database, a downstream API, a shared cache | Removal cannot help; there's nowhere better to route |
+
+Shared dependencies still need monitoring — they just need *alerting*, not *traffic removal*. Those are different mechanisms with different consequences, and conflating them is precisely the trap.
+
+### Practical Shapes
+
+Two patterns that resolve most of this in practice:
+
+**Separate the questions.** Expose two endpoints: one answering *"is this process alive and able to serve?"* for the balancer, another answering *"are my dependencies reachable?"* for monitoring dashboards. The balancer reads the first; humans and alerting read the second.
+
+**Fail open at the fleet level.** Some balancers support a safety rule: if more than a set fraction of the pool is unhealthy, treat them all as healthy again. The reasoning is blunt and correct — if 90% of your servers report unhealthy, the far more likely explanation is that the *check* is wrong, and sending traffic to possibly-degraded servers beats sending it nowhere. It's a valuable last-resort guard against exactly the cascade above.
+
+> 💡 **Key Insight**
+>
+> A health check is a **comparative** instrument, not a diagnostic one: its only job is deciding whether *this* server is worse than its peers. The moment a check tests something every server shares, it stops discriminating and starts synchronising — every server fails together, the pool empties, and a dependency hiccup becomes a total outage caused by the machinery meant to prevent one. The correct depth isn't "as deep as possible," it's **exactly as deep as the things that can differ between one server and the next.**
+
+### Quick Recap — What a Health Check Proves
+
+- A check proves only that **one probe succeeded**; "the server works" is inference, and the gap is where outages live.
+- Depth ranges from **connection → shallow → deep → synthetic**, and deeper is *not* strictly better.
+- **A deep check on a shared dependency fails the whole fleet at once**, converting a brief dependency problem into a total outage — the balancer emptying the pool exactly as configured.
+- Check **only what can differ between servers**; monitor shared dependencies with alerting instead, and consider a **fail-open** rule when most of the pool reports unhealthy.
