@@ -49,7 +49,7 @@ Strip everything else away and look at the one moment this document is about.
 
 A request arrives at a component that fronts a group of servers. Several of those servers — maybe all of them — could produce the answer. The component must pick exactly one and forward the request to it. Then the next request arrives, and it picks again.
 
-That group of interchangeable servers is the **pool**; each member is an **upstream**; the component doing the picking is a load balancer. Everything about *how servers join the pool, how the balancer knows they're alive, and how they leave* is a separate subject with its own treatment. This document assumes a pool exists and asks only: **how is the one server chosen?**
+The interchangeable servers are collectively the **pool**, an individual one is an **upstream**, and the component choosing between them is a load balancer. Everything about *how servers join the pool, how the balancer knows they're alive, and how they leave* is a separate subject with its own treatment. This document assumes a pool exists and asks only: **how is the one server chosen?**
 
 It sounds trivial. It is not, and the reason is that the balancer is choosing with far less information than the choice deserves.
 
@@ -447,7 +447,7 @@ Every key's destination is computed *modulo N*. The whole scheme assumes N is st
 
 > 💡 **Key Insight**
 >
-> Hashing is the one family that pursues **locality over balance** — deliberately sending the same key to the same server so a warm cache, local state, or deduplicated work pays off. Plain modulo hashing delivers that cheaply and deterministically, but on **two** assumptions, not one: that load per key is fairly even (a hot key concentrates by design), and — the load-bearing one — that the server count never changes. That second assumption is false in every real system, and the consequence is severe enough to be its own section.
+> Hashing is the one family that pursues **locality over balance** — deliberately routing each key back to whichever server already holds something for it, so a warm cache, local state, or deduplicated work pays off. Plain modulo hashing delivers that cheaply and deterministically, but on **two** assumptions, not one: that load per key is fairly even (a hot key concentrates by design), and — the load-bearing one — that the server count never changes. That second assumption is false in every real system, and the consequence is severe enough to be its own section.
 
 ### Quick Recap — Hashing
 
