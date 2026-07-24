@@ -154,3 +154,54 @@ The mistake is not *using* round-robin. It's using it *without checking whether 
 - Its silent bet is that **every request costs the same and every server is equal**; equal count is equal work only when that holds.
 - It breaks when **requests vary in cost** (expensive ones pile up unnoticed, with no feedback loop to correct it) or when **servers vary in capacity** (§3 addresses the latter).
 - It remains the **right choice for genuinely uniform workloads** — the error is using it by default without confirming its assumption holds.
+
+---
+
+## 3. Weighted — When Servers Aren't Equal
+
+Round-robin's second break was unequal servers. Weighting is the direct repair, and it's still stateless — it just makes the fixed rule aware that the servers behind it differ.
+
+> **Weighted selection assigns each server a number reflecting its relative capacity, and distributes requests in proportion to those numbers rather than equally.**
+
+Give server A a weight of 3 and servers B and C a weight of 1 each, and out of every 5 requests, A receives 3 while B and C receive 1 apiece. A machine with triple the capacity does triple the work.
+
+```mermaid
+flowchart LR
+    R["📥 5 requests"] --> LB["⚙️ Weighted (3:1:1)"]
+    LB -->|"3 of 5"| A["🖥️ Server A<br/>weight 3 · big box"]
+    LB -->|"1 of 5"| B["🖥️ Server B<br/>weight 1"]
+    LB -->|"1 of 5"| C["🖥️ Server C<br/>weight 1"]
+```
+
+It's usually a layer on top of another stateless rule rather than a separate algorithm: **weighted round-robin** rotates but visits the heavier server more often per cycle; **weighted random** (§6) picks randomly with the odds tilted by weight. The weight changes the proportions; the underlying rule still decides the order.
+
+### What the Weights Should Reflect
+
+The obvious input is raw hardware — core count, memory, network capacity — and for a fleet of deliberately mixed machine sizes that's often enough. But capacity isn't only hardware. A server running other work has less to give. A server in a busier availability zone may have higher latency to shared dependencies. Weights are meant to capture *effective* capacity, which is hardware minus whatever else is competing for it.
+
+That's also the source of the trouble.
+
+### The Maintenance Trap
+
+Weights are a **static snapshot of a moving target.** You set them based on the fleet as it is today, and then the fleet changes: instances are replaced with different types, background jobs shift, load patterns move across zones, a dependency slows down for some servers and not others. The weights don't change with any of it, because nothing updates them — they're configuration someone typed once.
+
+So weighted distribution decays. The numbers that perfectly matched capacity at setup slowly stop matching it, and because the mismatch is gradual and silent, nobody notices until a server that's now over-weighted starts struggling. The failure looks like a capacity problem on one machine; the cause is a weight that describes a machine that no longer exists.
+
+This is the recurring weakness of *any* static configuration reacting to a dynamic system, and you have already seen its shape if you've configured anything by hand: the value was right when written and wrong by the time it mattered. Weights need periodic review against reality, or they need to be generated from real capacity data rather than typed — and the moment you're generating them from live measurement, you're partway toward the stateful algorithms of §4, which skip the snapshot entirely and read the current state directly.
+
+### When Weighting Earns Its Keep
+
+Weighting is the right tool when server capacity is **genuinely unequal and reasonably stable** — a fleet of intentionally different instance sizes, a gradual migration where old and new hardware run side by side, or steering a deliberately small share of traffic to a canary. In all of these the inequality is real and changes slowly enough that a periodically-reviewed weight tracks it well.
+
+It's the wrong tool for inequality that shifts *fast* — a server that's slow right now because of a transient spike. A static weight can't react to "right now"; by the time you'd re-weight, the condition has passed. Fast-changing load is what stateful selection is for.
+
+> 💡 **Key Insight**
+>
+> Weighting fixes round-robin's *unequal servers* break while keeping everything stateless — but it fixes it with a **number that's true the day you set it and drifts from then on.** That makes weighting excellent for inequality that is real and slow (mixed hardware, canaries) and useless for inequality that is real and fast (a server briefly overloaded now). The dividing line between weighted and the stateful algorithms ahead is exactly this: *does the imbalance you're correcting change slowly enough to describe in advance, or must it be observed as it happens?*
+
+### Quick Recap — Weighted
+
+- **Weighted** distributes in proportion to per-server capacity numbers rather than equally, usually layered onto round-robin or random.
+- Weights should reflect **effective** capacity — hardware minus competing work — not raw specs alone.
+- They are a **static snapshot** that silently drifts as the fleet changes, so they decay and need periodic review or generation from live data.
+- Right for **real, slow-changing** inequality (mixed fleets, canaries); wrong for **fast-changing** load, which needs the stateful algorithms of §4.
