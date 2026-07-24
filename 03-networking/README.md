@@ -38,8 +38,12 @@ mechanisms below are only interesting because of the properties they threaten.
 | 3 | [TCP vs UDP](03-tcp-vs-udp/README.md) | How do you build guaranteed delivery on a network that guarantees nothing — and why do DNS, video calls, and the web's newest protocol all refuse those guarantees? *(standalone — assumes no prior reading)* |
 | 4 | [Proxy vs Reverse Proxy](04-proxy-vs-reverse-proxy/README.md) | How many machines really handle your request — and what is each one allowed to see, change, or decide? *(standalone — assumes no prior reading)* |
 | 5 | [Load Balancers](05-load-balancers/README.md) | When many machines can serve a request, how does anything decide where to send it — and how does it know that machine still works? *(standalone — assumes no prior reading)* |
-| 6 | Load Balancing Algorithms *(coming)* | Round-robin, least-connections, hashing — how the choice changes behavior under load |
-| 7 | Checksums *(coming)* | How data proves it arrived intact, and what integrity costs |
+| 6 | [Load Balancing Algorithms](06-load-balancing-algorithms/README.md) | When any server could answer, what rule decides — and why does the "obvious" choice quietly ruin performance? *(standalone — assumes no prior reading)* |
+| 7 | Checksums *(idea)* | How data proves it arrived intact, and what integrity costs |
+
+Topics 1–6 form the complete wire-level arc — names, protocols, transport,
+intermediaries, and distribution. **Checksums** remains a future idea rather
+than a scoped document; the arc stands complete without it.
 
 ---
 
