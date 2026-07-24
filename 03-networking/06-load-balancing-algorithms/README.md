@@ -128,7 +128,7 @@ And it holds far less often than it looks. Two ways it breaks, both common.
 
 ### Break One — Requests Don't Cost the Same
 
-Imagine most requests are cheap 5-millisecond lookups, but one endpoint runs a 500-millisecond report. Round-robin doesn't know the difference — a request is a request. If the expensive requests happen to fall to server 1 several times in a row, server 1 is now doing vastly more work than servers 2 and 3, and round-robin *keeps sending it every third request anyway*, because its counter says server 1 is due.
+Imagine most requests are cheap 5-millisecond lookups, but one endpoint runs a 500-millisecond report — a 100× cost difference, which is entirely ordinary between a cached read and a heavy query. Round-robin doesn't know the difference — a request is a request. If the expensive requests happen to fall to server 1 several times in a row, server 1 is now doing vastly more work than servers 2 and 3, and round-robin *keeps sending it every third request anyway*, because its counter says server 1 is due. Just a handful of those 500ms requests landing together builds a queue that every subsequent cheap request on that server now waits behind — so a 5ms lookup unlucky enough to sit behind three reports takes over 1.5 seconds, and that is the tail latency, manufactured entirely by the selection rule.
 
 The balancer has no feedback loop. It cannot notice that server 1 is drowning, because noticing would require looking at server state, which round-robin by definition does not do. It will deal server 1 into the rotation at its regular turn even as that server falls over.
 
@@ -369,7 +369,9 @@ flowchart TD
     C -->|"B wins"| S["✅ Send to B"]
 ```
 
-The result is not a small improvement over random — it's dramatic and mathematically established. Pure random lets load imbalance grow substantially as the pool scales. Adding just the *second* choice collapses the worst-case imbalance from growing with the size of the pool to growing only with the logarithm of it — informally, from "some servers get badly overloaded" to "no server is ever more than a hair above average." A third choice barely improves on two; almost all the benefit is in going from one sample to two.
+The result is not a small improvement over random — it's dramatic and mathematically established. The classic result puts numbers on it: with `n` items placed into `n` bins, pure random leaves the busiest bin holding on the order of `log n / log log n` items — which for a large pool is a meaningful pileup. Sampling **two** and taking the emptier drops the busiest bin to on the order of `log log n` items. That double-logarithm is, for any realistic pool size, essentially a small constant: whether you have 100 servers or 100,000, the worst-loaded one sits barely above average.
+
+Concretely, going from one choice to two takes the worst-case overload from "grows noticeably with fleet size" to "flat regardless of fleet size." And the improvement is front-loaded: a *third* sample shaves the constant a little further, a fourth barely moves it. Almost the entire benefit is captured by the single step from one sample to two — which is what makes it such a bargain.
 
 And it keeps random's virtues while fixing least-connections' herd:
 
@@ -477,7 +479,7 @@ Watch what happens to where keys land. The hash of each key hasn't changed at al
 | 106 | 2 | 1 | ✅ |
 | 107 | 3 | 2 | ✅ |
 
-After the first few, nearly every key maps somewhere new. Adding one server to a pool of four doesn't move one-fifth of the keys — it moves **roughly 80% of them.** In general, changing N remaps almost all keys, not the small fraction you'd hope for. The arithmetic doesn't care that you only added one machine; `mod 5` is a completely different function from `mod 4`.
+After the first few, nearly every key maps somewhere new. Adding one server to a pool of four doesn't move one-fifth of the keys — it moves **roughly 80% of them.** In general, going from N to N+1 servers leaves only about `1/(N+1)` of keys in place and remaps the rest: growing a 10-server pool to 11 keeps roughly 9% of keys and moves ~91%; growing 100 to 101 keeps ~1% and moves ~99%. The bigger the pool, the *worse* the churn from adding a single machine — the opposite of what intuition expects. The arithmetic doesn't care that you only added one machine; `mod 5` is a completely different function from `mod 4`.
 
 ```mermaid
 flowchart TD
