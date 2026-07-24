@@ -393,3 +393,63 @@ The deeper lesson generalises past load balancing. The jump from "one random pic
 - **Greedy "pick the global least"** herds — many balancers swarm the same least-loaded server at once and make it the most loaded.
 - **Power of two choices** — sample two at random, take the less loaded — collapses worst-case imbalance dramatically while staying stateless-ish, coordination-free, and herd-free.
 - Almost all the gain is in the **second** sample; it's a default for large fleets and the single most useful idea in this document.
+
+---
+
+## 7. Hashing — Sending the Same Key to the Same Server
+
+Every algorithm so far has tried to *spread requests evenly*. Hashing sets out to do something different — sometimes the opposite. It tries to send **the same request to the same server, every time.**
+
+> **Hash-based selection computes a number from some attribute of the request — a key — and uses that number to pick a server, so that identical keys always land on the same server.**
+
+The key is whatever you choose to route by: the client's address, a user ID, a cache key, a session identifier. The rule is deterministic — the same key run through the same computation always yields the same server, with no state kept and no randomness. It's stateless selection, but where round-robin ignores the request entirely, hashing looks at one attribute of it and routes *by* that.
+
+### Why You'd Deliberately Not Spread Evenly
+
+Even distribution is usually the goal, so wanting the same key on the same server needs justifying. The reason is that a specific server may hold something valuable for that key:
+
+- **A warm cache.** If user 12345 always lands on the same server, that server keeps their data hot in memory, and their requests are fast. Spread them across ten servers and you get ten cold caches and ten times the misses.
+- **Locally-held state.** A server maintaining an in-progress session or a partial operation for a key can only continue it if the key's requests keep arriving there.
+- **Deduplicated work.** If identical requests reliably reach one server, that server can cache or coalesce the result instead of every server recomputing it.
+
+In each case, *locality* is worth more than perfect balance. Hashing trades some evenness for the payoff of a request reliably reaching the server that's ready for it.
+
+### Plain Modulo Hashing
+
+The simplest implementation, and the one whose behaviour you must understand before §8:
+
+1. Compute a number from the key — a hash function turns "user-12345" into a large, well-scrambled integer.
+2. Take that number **modulo the server count** — the remainder when divided by N gives a server index from 0 to N−1.
+3. Route to that server.
+
+```mermaid
+flowchart LR
+    K["🔑 key: user-12345"] --> H["hash() → 8837423"]
+    H --> M["mod 3 → 2"]
+    M --> S["🖥️ Server 2<br/>always, for this key"]
+```
+
+With a good hash function the keys scatter evenly across the servers, so you get *approximately* even distribution **and** the guarantee that each key sticks to one server. For a fixed pool it works well: fast, stateless, deterministic, no coordination.
+
+### Even Hashing Doesn't Mean Even Load
+
+One caveat before the big one. Hashing spreads *keys* evenly; it does not spread *load* evenly, because keys are not equally active. If one user, one tenant, or one cache key is dramatically busier than the rest — a **hot key** — every request for it lands on one server by design, and no amount of good hashing relieves that server, because sending the hot key elsewhere would break the very locality hashing exists to provide. Hashing concentrates a hot key by construction; it's the price of determinism, and it's why hashing suits workloads where load per key is fairly even.
+
+### The Assumption Waiting to Break
+
+Modulo hashing has a bet buried in step 2, and it's easy to miss because it's about the *arithmetic*, not the traffic:
+
+> **The server count, N, never changes.**
+
+Every key's destination is computed *modulo N*. The whole scheme assumes N is stable — that "mod 3" today is "mod 3" tomorrow. For a fixed pool, fine. But pools are not fixed: servers are added under load, removed on failure, replaced on deploy. The moment N changes, every `mod N` computation changes with it — and §8 is what that does.
+
+> 💡 **Key Insight**
+>
+> Hashing is the one family that pursues **locality over balance** — deliberately sending the same key to the same server so a warm cache, local state, or deduplicated work pays off. Plain modulo hashing delivers that cheaply and deterministically, but on **two** assumptions, not one: that load per key is fairly even (a hot key concentrates by design), and — the load-bearing one — that the server count never changes. That second assumption is false in every real system, and the consequence is severe enough to be its own section.
+
+### Quick Recap — Hashing
+
+- **Hash-based selection** routes by a key so identical keys always reach the same server — pursuing **locality**, not even spread.
+- It's worth trading balance for when a server holds something per-key: a **warm cache, local session state, or deduplicated work**.
+- **Plain modulo hashing** (`hash(key) mod N`) is fast, stateless, and deterministic, and scatters keys evenly — but **even key spread isn't even load**, since a **hot key** concentrates on one server by design.
+- Its load-bearing assumption is that **N, the server count, never changes** — false in every real system, and the subject of §8.
