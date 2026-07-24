@@ -205,3 +205,70 @@ It's the wrong tool for inequality that shifts *fast* — a server that's slow r
 - Weights should reflect **effective** capacity — hardware minus competing work — not raw specs alone.
 - They are a **static snapshot** that silently drifts as the fleet changes, so they decay and need periodic review or generation from live data.
 - Right for **real, slow-changing** inequality (mixed fleets, canaries); wrong for **fast-changing** load, which needs the stateful algorithms of §4.
+
+---
+
+## 4. Least-Connections — Reacting to Real State
+
+Round-robin and weighted are blind by design — they follow a fixed rule and never look at what the servers are doing. Least-connections is the first algorithm that opens its eyes.
+
+> **Least-connections sends each request to the server currently handling the fewest active connections.**
+
+Instead of a fixed rotation, the balancer keeps a live count of how many requests each server is still working on, and routes each new request to whichever count is lowest. This is stateful selection: the decision comes from *observed state*, not a predetermined pattern.
+
+```mermaid
+flowchart LR
+    R["📥 New request"] --> LB["📊 Least-connections<br/>reads live counts"]
+    LB -->|"❌ 8 active"| S1["🖥️ Server 1"]
+    LB -->|"❌ 6 active"| S2["🖥️ Server 2"]
+    LB -->|"✅ 2 active → send here"| S3["🖥️ Server 3"]
+```
+
+### Why This Fixes Round-Robin's Worst Break
+
+Recall round-robin's first failure: expensive requests pile onto a server and it keeps receiving its regular share anyway, because nothing looks at load. Least-connections closes exactly that gap.
+
+A server stuck with several slow requests has a *high* active-connection count — those requests haven't finished, so they're still counted. So least-connections naturally routes new requests *away* from it and toward servers whose counts are low because their work is completing quickly. The algorithm adapts to variable request cost without ever being told which requests are expensive — it infers it from the fact that costly requests linger and cheap ones clear.
+
+That's a real improvement, and it's why least-connections is the standard recommendation the moment request costs vary. It turns the connection count into a rough, self-maintaining proxy for how busy each server actually is.
+
+### The Bet It's Making
+
+Least-connections trades round-robin's assumption for a subtler one:
+
+> **A server's active-connection count reflects how loaded it is.**
+
+Usually true, and more often true than round-robin's "all requests cost the same." A busy server does tend to accumulate connections; an idle one doesn't. But "reflects load" is an *inference*, not a measurement — and there's one situation where the inference doesn't just weaken, it flips to the exact opposite of the truth.
+
+### The Inversion — When Broken Looks Idle
+
+Here is the failure that makes least-connections dangerous, and it's the most important paragraph in this section.
+
+A server starts failing *fast*. Not hanging — failing quickly: it hits an error and returns immediately, rejecting each request in a millisecond instead of doing the second of real work a healthy server would.
+
+Fast rejection means its connections close almost instantly. Which means its active-connection count drops to nearly zero. Which means, to least-connections, it looks like **the most available server in the pool** — so the algorithm sends it *more* traffic. Which it also fails, instantly, keeping its count lowest, pulling still more traffic toward itself.
+
+```mermaid
+flowchart TD
+    B["💥 Server starts failing fast<br/>errors in ~1ms"] --> C["🔌 Connections close instantly"]
+    C --> D["📉 Active count → near zero"]
+    D --> E["📊 Looks like the LEAST loaded"]
+    E --> F["➡️ Balancer sends it MORE"]
+    F --> B
+    F --> G["🕳️ A black hole:<br/>the pool funnels traffic<br/>into the one broken server"]
+```
+
+The broken server becomes a **black hole**, attracting a growing share of the pool's traffic *specifically because it's broken*. The signal least-connections trusts — low connection count means available — has inverted: here, low count means *failing*. A server that answered every request with an instant error would, under pure least-connections, draw the entire pool's traffic toward itself and fail all of it.
+
+This is the sharp edge of stateful selection from §1: an algorithm that acts on an observed signal fails badly when the signal lies, and it fails *worse* than a blind algorithm would, because it's confidently steering in the wrong direction. Round-robin would have kept sending the black hole only its regular one-third share; least-connections escalates.
+
+The defence isn't in the algorithm — it's that the balancer must know the fast-failing server is *unhealthy* and remove it from the pool entirely, so its connection count stops being consulted. That detection is a separate mechanism from selection, covered in its own topic; the point here is that **least-connections cannot save itself from this, because the very signal it relies on is the one that's compromised.**
+
+> ⚠️ **A stateful algorithm is only as trustworthy as the signal it reads, and connection count inverts under fast failure.** Low connections normally means "available" — but a server erroring out in a millisecond also has near-zero connections, so least-connections reads "broken" as "most available" and funnels traffic into it. The improvement over round-robin is real and so is this new failure mode; they're the same coin. Reading server state lets you react to reality, and it lets you react to a lie.
+
+### Quick Recap — Least-Connections
+
+- **Least-connections** routes to the server with the fewest active connections — the first **stateful** algorithm, deciding from observed load rather than a fixed rule.
+- It **fixes round-robin's worst break**: slow requests raise a server's count, so new traffic naturally flows away from busy servers — adapting to variable cost without being told costs.
+- Its bet is that **connection count reflects load**, which **inverts under fast failure**: a server erroring in ~1ms looks idle, so the algorithm funnels traffic into it — a **black hole**.
+- The inversion can't be fixed within the algorithm; it needs **health detection** (a separate mechanism) to remove the failing server so its count is no longer trusted.
