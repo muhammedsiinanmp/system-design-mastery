@@ -520,3 +520,60 @@ If you need key-to-server stickiness *and* your pool ever changes size — the c
 - That's a **catastrophe** because it detonates the locality hashing existed for — near-total cache wipeout, a **stampede** onto the backend, and stranded local state — all from one routine scaling or failure event.
 - **Consistent hashing** is the named fix: it remaps only about **1/N** of keys when the pool changes, keeping the rest in place. Its mechanism is covered in the scaling phase.
 - The boundary: **plain modulo only for permanently fixed pools; consistent hashing whenever you need stickiness and the pool can change** — which is most of the time.
+
+---
+
+## 9. Choosing — There Is No Default
+
+Seven sections of algorithms, each with a bet and a way that bet loses. The natural question — *so which one?* — has an answer, and the answer is not a name. It's a method.
+
+### Match the Algorithm to the Workload's Shape
+
+Every algorithm assumed something about the workload (§1). Choosing well is just identifying which assumptions your workload actually satisfies. Four questions settle almost every case:
+
+| Ask | If yes | If no |
+|---|---|---|
+| Do all requests cost about the same? | Round-robin / random are fine | Need load-reactive: least-connections or power-of-two |
+| Are all servers equal? | Any even rule | **Weighted**, or a reactive rule that notices |
+| Does a key need the same server each time? | **Hashing** (consistent, if the pool moves) | Spread freely |
+| Are there many balancers deciding at once? | **Power of two choices** (no herd, no coordination) | A single balancer can afford global-least |
+
+Notice these compose. A large fleet serving variable-cost requests with no stickiness need points at power-of-two. A mixed-hardware fleet of uniform requests points at weighted. A cache tier points at consistent hashing. The workload picks the algorithm; you just have to read the workload honestly.
+
+```mermaid
+flowchart TD
+    Q1{"Need the same key<br/>on the same server?"}
+    Q1 -->|yes| H["🔑 Hashing<br/>consistent if pool changes"]
+    Q1 -->|no| Q2{"Requests roughly<br/>equal cost?"}
+    Q2 -->|no| P["🎲 Power of two choices<br/>reactive, no herd"]
+    Q2 -->|yes| Q3{"Servers roughly<br/>equal capacity?"}
+    Q3 -->|no| W["⚖️ Weighted"]
+    Q3 -->|yes| RR["🔁 Round-robin / random"]
+```
+
+### Why "Round-Robin Because It's the Default" Is the Common Mistake
+
+Round-robin is the default in most tools, and defaults have gravity. The result is that enormous numbers of systems run round-robin not because their workload is uniform, but because nobody chose. When the workload happens to be uniform, that's harmless. When it isn't — variable request costs, which is *most* real systems — round-robin is quietly the wrong bet, distributing request counts evenly while load piles up unevenly (§2), and the symptom is a latency tail nobody connects back to the selection rule.
+
+The fix is rarely exotic. It's usually to notice that the default was never matched to the workload, and to move to a load-reactive algorithm. Which raises the modern shortcut.
+
+### The Safe Modern Pick
+
+If §6 landed, you can see why **power of two choices** has become many teams' default-of-choice rather than default-by-inertia. It reacts to real load, so it handles variable request costs that break round-robin. It doesn't herd, so it scales across many balancers where global-least fails. It needs almost no state, so it's cheap and hard to mislead. It has no single dramatic failure mode of its own to design around.
+
+It isn't universal — it does nothing for the *stickiness* that hashing provides, and for a small pool behind a single balancer with uniform requests, plain round-robin is simpler and just as good. But as a starting point for a large stateless fleet with realistic, varied traffic, it's the choice least likely to be wrong, which is the most you can ask of a default.
+
+### The Honest Summary
+
+There is no algorithm that is best everywhere, because each is optimal exactly when its assumption holds and harmful when it doesn't. "There is no default" is not a dodge — it's the actual finding. The competent move is not memorising which algorithm to use, but knowing what each one *assumes*, so that when you look at a workload you can see which assumptions it satisfies and which it violates.
+
+> 💡 **Key Insight**
+>
+> Choosing a balancing algorithm is not picking a favourite — it's **matching an algorithm's assumption to your workload's actual shape**, and the four questions (equal request cost? equal servers? need stickiness? many balancers?) settle nearly every case. The most common real-world error isn't picking the wrong clever algorithm; it's **never choosing at all** and inheriting round-robin against a workload that violates its one assumption. When in genuine doubt on a large fleet, **power of two choices** is the pick least likely to betray you.
+
+### Quick Recap — Choosing
+
+- There is **no universally best algorithm** — each is optimal when its assumption holds and harmful when violated, so choosing means reading the workload.
+- Four questions decide most cases: **equal request cost, equal servers, key stickiness, and many concurrent balancers**.
+- The most common mistake is **not choosing** — inheriting round-robin against variable-cost traffic and paying in an unexplained latency tail.
+- For a large stateless fleet with varied traffic, **power of two choices** is the safest starting point; hashing when you need stickiness, round-robin when the workload is genuinely uniform.
