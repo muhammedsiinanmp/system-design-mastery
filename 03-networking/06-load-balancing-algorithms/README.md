@@ -272,3 +272,57 @@ The defence isn't in the algorithm — it's that the balancer must know the fast
 - It **fixes round-robin's worst break**: slow requests raise a server's count, so new traffic naturally flows away from busy servers — adapting to variable cost without being told costs.
 - Its bet is that **connection count reflects load**, which **inverts under fast failure**: a server erroring in ~1ms looks idle, so the algorithm funnels traffic into it — a **black hole**.
 - The inversion can't be fixed within the algorithm; it needs **health detection** (a separate mechanism) to remove the failing server so its count is no longer trusted.
+
+---
+
+## 5. The Trouble With Counting Connections
+
+§4's inversion was the dramatic failure. This section is the quieter, more pervasive problem: even when nothing is broken, **a connection count is a rough proxy for load, and the gap between the proxy and the truth causes trouble in ordinary operation.**
+
+Least-connections is genuinely good. But its whole value rests on the equation *one connection ≈ one unit of load*, and that equation leaks.
+
+### A Connection Is Not a Unit of Work
+
+Count connections and you're assuming each represents roughly the same amount of server effort. Several common situations break that:
+
+- **A connection carries many requests.** Modern connections stay open and carry request after request. A server with 10 long-lived connections each sending constant requests is far busier than a server with 50 connections sitting mostly idle — but by connection count, the first looks *less* loaded. The balancer sends it more, exactly backwards.
+- **Requests within a connection vary wildly.** One open connection might be streaming a large file for minutes; another might be firing off instant cached reads. Both count as "one connection," and they are nowhere near one unit of load apiece.
+- **Idle connections count as load that isn't there.** A connection held open but not currently doing anything still increments the count, so a server holding many idle keep-alive connections looks busy while doing nothing.
+
+In each case the count and the reality diverge, and least-connections acts on the count. It's not wrong often enough to abandon — but it's wrong often enough that "least connections" and "least loaded" must not be treated as synonyms.
+
+### The Layer Matters
+
+There's a structural version of this problem that depends on *what* the balancer is counting. A balancer operating on raw connections and one operating on individual requests are counting different things:
+
+| Counting | "One unit" is | Trouble |
+|---|---|---|
+| **Connections** | A whole client connection | One connection may carry 1 or 10,000 requests |
+| **Requests** | A single request | Closer to real load, but needs to read each request |
+
+A balancer that only sees connections cannot count requests — it never looks inside the connection to know a request is happening. So on a fleet where connections carry very different request volumes, connection-counting is a coarse instrument, and the finer one requires a balancer that reads individual requests. Which instrument you have is a property of *where* the balancer operates, decided well before the algorithm is chosen, and it silently bounds how good "least-connections" can be.
+
+### Least-Response-Time — A Sharper Signal
+
+If connection count is an imperfect proxy for load, why not measure something closer to what you actually care about? **Least-response-time** does: it routes to the server with the best combination of few active requests and fast recent responses.
+
+Response time is a more direct signal of a struggling server — a machine slowing down reveals it in rising latency before its connection count necessarily shows anything. So least-response-time reacts to degradation that least-connections misses.
+
+But every added signal is another thing that can mislead. Response times must be measured over a window, and the window is a tradeoff: too short and normal variance makes it jumpy, routing on noise; too long and it reacts slowly to real change. A server that's fast because it's *failing fast* (§4) scores well on response time too — the inversion follows the signal. Reading more state buys sharper reactions and adds more ways for the reading to be wrong, which is §1's tension restated: **stateful selection's power and its fragility are the same property.**
+
+### The General Lesson
+
+Step back and a pattern connects §2 through §5. Round-robin reads *nothing* and can't react. Least-connections reads *one* signal and reacts, but the signal is a rough proxy. Least-response-time reads a *richer* signal and reacts better, and has more failure modes. Every step toward a more responsive algorithm is a step toward more dependence on a measurement being honest — and measurements of a system under stress are least honest exactly when stress is highest.
+
+This is why the next section takes a genuinely different route. Instead of reading a better signal, it asks: how well can you do while reading *almost none*?
+
+> 💡 **Key Insight**
+>
+> Connection count is a **proxy**, and the distance between the proxy and true load is where least-connections quietly errs even with nothing broken — long-lived connections, variable request sizes, and idle keep-alives all decouple "connections" from "work." Chasing a better proxy (least-response-time) sharpens the reaction and multiplies the ways to be fooled. That recurring cost of reading state is what makes the almost-stateless approach of §6 so surprising: it competes with these algorithms while trusting almost no signal at all.
+
+### Quick Recap — The Trouble With Counting Connections
+
+- A connection count is a **proxy for load**, and it leaks: one connection may carry many requests, requests vary hugely in cost, and idle keep-alives inflate the count.
+- What the balancer can count depends on **where it operates** — raw connections versus individual requests — which bounds how accurate "least-connections" can be, before any algorithm choice.
+- **Least-response-time** reads a sharper signal (latency) and catches degradation sooner, at the price of window-tuning and yet more ways to be misled.
+- The through-line of §2–§5: **more reactivity means more dependence on an honest measurement** — and measurements are least honest under stress, motivating §6.
