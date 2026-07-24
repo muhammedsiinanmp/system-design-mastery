@@ -577,3 +577,82 @@ There is no algorithm that is best everywhere, because each is optimal exactly w
 - Four questions decide most cases: **equal request cost, equal servers, key stickiness, and many concurrent balancers**.
 - The most common mistake is **not choosing** — inheriting round-robin against variable-cost traffic and paying in an unexplained latency tail.
 - For a large stateless fleet with varied traffic, **power of two choices** is the safest starting point; hashing when you need stickiness, round-robin when the workload is genuinely uniform.
+
+---
+
+## 10. Putting It All Together — The Algorithm That Wasn't the Problem
+
+A team runs a dozen servers behind a balancer set to round-robin — the default, never revisited. For two years it's been fine. Then, gradually, a problem appears that no dashboard explains.
+
+### The Symptom
+
+Overall metrics look healthy. Average response time is good. CPU across the fleet is moderate. But the **latency tail** — the slowest few percent of requests — is bad and getting worse, and it's not confined to any one endpoint. Users complain of occasional multi-second waits at random, and every investigation into the *slow requests themselves* comes up empty, because the requests aren't the problem.
+
+### Step 1 — What Round-Robin Was Actually Doing (§2)
+
+Someone finally looks not at the slow requests but at the *servers*, and finds the fleet wildly uneven. At any moment two or three servers are pinned near capacity while others idle — and which servers are hot keeps moving. Round-robin, supposedly the fairest algorithm, has produced a strikingly *unfair* distribution of load.
+
+The cause is §2's break. One reporting endpoint costs about **50× a normal request** — hundreds of milliseconds versus a few. Round-robin deals every server an equal *count* of requests, so each server receives the same number of these expensive ones — but they arrive at random moments, and whenever two or three land on the same server close together, that server is buried while round-robin keeps dealing it more at its regular turn. The tail latency is requests queued behind an expensive one on a momentarily-overloaded server.
+
+Round-robin wasn't malfunctioning. Its one assumption — equal request cost — was false by a factor of fifty, and it had no way to notice.
+
+### Step 2 — The Obvious Fix, and Its Surprise (§4)
+
+The diagnosis points straight at §4: switch to **least-connections**, so traffic flows away from servers stuck on expensive requests. They do, and it works — the tail drops sharply, load evens out, and for weeks it's clearly better. The expensive requests raise their servers' connection counts, new traffic routes elsewhere, exactly as intended.
+
+Then an incident. One server develops a fault and starts **failing fast** — erroring out in a millisecond. And the balancer, on least-connections, starts sending it *more and more* traffic, because its instant failures keep its connection count near zero and it looks like the most available server in the pool (§4's inversion). A single faulty server pulls a growing share of the fleet's traffic into itself and errors all of it. What had been one broken machine becomes a fleet-wide error spike.
+
+Health detection eventually removes the server and the incident ends, but the lesson lands hard: least-connections fixed the round-robin problem and introduced a new failure mode, exactly the tradeoff §4 described — the signal it trusts inverted under fast failure.
+
+### Step 3 — Landing on Power of Two (§6)
+
+Reviewing both — round-robin blind to load, least-connections vulnerable to the black-hole inversion and, at their scale of multiple balancers, prone to herding on the "least" server — they move to **power of two choices** (§6).
+
+It handles the expensive endpoint, because it reacts to real load like least-connections. It doesn't create a black hole, because no single server is "the least" that every balancer swarms — each decision samples its own random pair. And with several balancers running, it needs no shared counter to coordinate. The tail stays low, and the next fast-failure incident doesn't escalate the same way, because no balancer is greedily funnelling toward the apparently-idle broken server.
+
+### The Lesson
+
+The team spent weeks investigating slow requests, then broken servers — and the through-line was never any of those. It was the **selection algorithm meeting a workload that violated its assumption**, three times in a row:
+
+- Round-robin assumed equal request cost. One endpoint was 50× the rest.
+- Least-connections assumed connection count reflects load. Fast failure inverted it.
+- Power of two fit because it assumed the *least* — only that sampling two and taking the better avoids both the blindness and the herd.
+
+Nobody had ever chosen an algorithm. They'd inherited round-robin, then reacted to each failure with the next obvious option, until they understood the workload well enough to match it. Written down afterward:
+
+> **The workload had been telling us which algorithm it needed the whole time. A 50×-cost endpoint demands load-awareness; a fleet of many balancers demands no herd; fast failure demands not trusting a single greedy signal. We weren't choosing between algorithms — we were slowly learning to read what we already had.**
+
+That is §9's finding in narrative form: there was no default that would have been right, only a workload whose shape determined the answer once someone looked.
+
+---
+
+## 11. Final Recap
+
+| Algorithm | How It Decides | Assumption It Makes | Fails When |
+|---|---|---|---|
+| **Round-robin** | Next server in fixed rotation | Every request costs the same, every server equal | Requests vary in cost; servers vary in capacity |
+| **Weighted** | In proportion to per-server capacity numbers | The weights still match reality | The fleet drifts and the static weights decay |
+| **Least-connections** | Fewest active connections | Connection count reflects true load | A fast-failing server looks idle — the black-hole inversion |
+| **Least-response-time** | Best mix of few connections and low latency | Recent latency predicts current load | Noise over a short window; fast-failure still fools it |
+| **Random** | Uniformly at random | Volume evens it out; nothing needs coordination | Small scale; blind to actual load |
+| **Power of two choices** | Better of two random samples | A little choice ≈ near-optimal balance | Almost nowhere — needs a load signal for the two |
+| **Hashing (modulo)** | `hash(key) mod N` | The key's load is even *and* N never changes | A hot key; or the pool changes and ~80% remaps |
+| **Consistent hashing** | Key placed on a ring of servers | You need stickiness across a changing pool | (The fix for modulo — mechanism in the scaling phase) |
+
+### The One Thing to Remember
+
+> **Every load balancing algorithm is a bet about your workload — that requests cost the same, that connection count means load, that the server count never changes — and each is excellent right up until its bet loses, which is exactly when load or failure is highest and you can least afford it. So the skill is not memorising which algorithm to pick; it is knowing what each one assumes, so you can look at a real workload and see which assumptions it honours and which it breaks. Two ideas carry most of the practical weight: the most common mistake is inheriting round-robin without ever checking that its equal-cost assumption holds, and the most reliable escape from having to be clever is the power of two choices — because a single extra random sample buys almost all the benefit of perfect information, without the herd, the coordination, or the lie.**
+
+---
+
+## What's Next
+
+> **Phase 04 — APIs & Communication Deep Dives**
+
+This completes the networking deep-dives. Trace the arc: a name became an address (DNS), a protocol gave the conversation structure and cost (HTTP/HTTPS), a transport carried the bytes across an unreliable network (TCP/UDP), intermediaries reshaped the path (proxies), and the last two topics covered how traffic is spread across many servers and how the one server is chosen. The wire is now fully accounted for — from *where do I send this* down to *which exact machine answers.*
+
+Phase 03 also lists a seventh topic, **Checksums**, as a future idea rather than a scoped document; the wire-level arc above stands complete without it.
+
+What comes next moves up a layer. **Phase 04 — APIs & Communication** is about the *contracts* that ride on top of everything here: REST and its constraints, GraphQL, gRPC, the data formats they exchange, and the patterns — versioning, pagination, idempotency, gateways — that make an interface something other teams can build on. You've spent five topics on how bytes reach the right machine. Next: what those bytes are *agreeing to say.*
+
+---
