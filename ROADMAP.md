@@ -113,7 +113,7 @@ is Phase 02's topic.
 | 03 | TCP vs UDP | ✅ Done | `03-networking/03-tcp-vs-udp/README.md` |
 | 04 | Proxy vs Reverse Proxy | ✅ Done | `03-networking/04-proxy-vs-reverse-proxy/README.md` |
 | 05 | Load Balancers | ✅ Done | `03-networking/05-load-balancers/README.md` |
-| 06 | Load Balancing Algorithms | 🚧 In Progress | `03-networking/06-load-balancing-algorithms/README.md` |
+| 06 | Load Balancing Algorithms | ✅ Done | `03-networking/06-load-balancing-algorithms/README.md` |
 | 07 | Checksums | 💡 Idea | `03-networking/07-checksums/README.md` |
 
 ---
@@ -373,7 +373,7 @@ is Phase 02's topic.
 |---|---|---|---|---|---|---|
 | 01 | Introduction | 7 | 7 | 0 | 0 | 0 |
 | 02 | Core System Properties | 5 | 5 | 0 | 0 | 0 |
-| 03 | Networking | 7 | 5 | 1 | 0 | 1 |
+| 03 | Networking | 7 | 6 | 0 | 0 | 1 |
 | 04 | APIs & Communication | 15 | 0 | 0 | 14 | 1 |
 | 05 | Storage & Databases | 27 | 0 | 0 | 19 | 8 |
 | 06 | Scaling & Performance | 10 | 0 | 0 | 10 | 0 |
@@ -382,7 +382,7 @@ is Phase 02's topic.
 | 09 | Architecture & Microservices | 13 | 0 | 0 | 7 | 6 |
 | 10 | Observability & Security | 13 | 0 | 0 | 11 | 2 |
 | 11 | Interview Preparation | 21 | 0 | 0 | 4 | 17 |
-| **Total** | | **150** | **17** | **1** | **92** | **40** |
+| **Total** | | **150** | **18** | **0** | **92** | **40** |
 
 ---
 
