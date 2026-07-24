@@ -97,3 +97,60 @@ Real workloads are not like that. Requests vary enormously in cost — a cached 
 - The balancer is nearly **blind**: it doesn't know a request's cost or a server's true load when it decides, so every algorithm chooses under ignorance.
 - Algorithms split into **stateless** (fixed rule, can't react) and **stateful** (reads server state, can be misled) — the division the rest of the document follows.
 - The choice is **invisible under uniform load** and grows decisive exactly as requests and servers become uneven.
+
+---
+
+## 2. Round-Robin — Rotation and Its One Assumption
+
+Round-robin is the default nearly everywhere, and it's the right place to start because it's the simplest possible answer to §1's question.
+
+> **Round-robin hands each incoming request to the next server in a fixed rotation: server 1, server 2, server 3, back to server 1, forever.**
+
+No state, no measurement, no randomness. Keep a counter, increment it, wrap around. Over any run of requests each server receives an exactly equal *count* — with three servers, precisely one-third of requests each. It is stateless selection in its purest form, and its even division of request count is genuinely perfect.
+
+```mermaid
+flowchart LR
+    R["📥 Requests<br/>1 2 3 4 5 6"] --> LB["⚙️ Round-robin"]
+    LB -->|"1, 4"| S1["🖥️ Server 1"]
+    LB -->|"2, 5"| S2["🖥️ Server 2"]
+    LB -->|"3, 6"| S3["🖥️ Server 3"]
+```
+
+### The Assumption Hiding in "Equal Count"
+
+Round-robin distributes *requests* equally. What you actually care about is distributing *work* equally. Those are the same thing only if one sentence is true:
+
+> **Every request costs the same, and every server is equally able to handle it.**
+
+That is the bet round-robin makes, silently, on every single request. When it holds, equal request count *is* equal work, and round-robin is unimprovable. When it doesn't, round-robin keeps dealing requests out in perfect rotation while the actual load piles up wherever the expensive requests happened to land.
+
+And it holds far less often than it looks. Two ways it breaks, both common.
+
+### Break One — Requests Don't Cost the Same
+
+Imagine most requests are cheap 5-millisecond lookups, but one endpoint runs a 500-millisecond report. Round-robin doesn't know the difference — a request is a request. If the expensive requests happen to fall to server 1 several times in a row, server 1 is now doing vastly more work than servers 2 and 3, and round-robin *keeps sending it every third request anyway*, because its counter says server 1 is due.
+
+The balancer has no feedback loop. It cannot notice that server 1 is drowning, because noticing would require looking at server state, which round-robin by definition does not do. It will deal server 1 into the rotation at its regular turn even as that server falls over.
+
+This is the single most common way round-robin disappoints, and §10 is an extended example of exactly it.
+
+### Break Two — Servers Aren't Equal
+
+Fleets are rarely uniform. A cloud pool accumulates a mix of instance types over time; some machines are simply older or busier with other work. Round-robin sends a machine with half the capacity the same number of requests as its strongest peer, so the weak one saturates while the strong one coasts.
+
+The fix for *this* break is §3. The fix for the first break — variable request cost — needs a fundamentally different approach, and that's §4.
+
+### Where Round-Robin Is Genuinely Right
+
+None of this makes it a bad algorithm. When its assumption holds — uniform requests across uniform servers, which describes plenty of stateless web tiers serving similar work — round-robin is the correct choice. It is predictable, it needs no state, it can't be misled by a bad signal because it reads no signal, and it distributes perfectly. Reaching for something cleverer when round-robin's bet actually holds just adds cost and failure modes for no benefit.
+
+The mistake is not *using* round-robin. It's using it *without checking whether its assumption is true for your workload* — which, because it's the default, is what usually happens.
+
+> ⚠️ **Round-robin's evenness is a measurement of the wrong thing.** It equalises how many requests each server receives, and reports that as balance — but a server handling ten expensive requests is far more loaded than one handling ten cheap ones, and round-robin cannot tell them apart. When someone says "traffic is evenly balanced" and means "request counts are equal," that's the gap to probe. Equal counts are only equal load when every request costs the same.
+
+### Quick Recap — Round-Robin
+
+- **Round-robin** rotates through servers in fixed order — pure stateless selection, needing no state and distributing request *count* perfectly.
+- Its silent bet is that **every request costs the same and every server is equal**; equal count is equal work only when that holds.
+- It breaks when **requests vary in cost** (expensive ones pile up unnoticed, with no feedback loop to correct it) or when **servers vary in capacity** (§3 addresses the latter).
+- It remains the **right choice for genuinely uniform workloads** — the error is using it by default without confirming its assumption holds.
