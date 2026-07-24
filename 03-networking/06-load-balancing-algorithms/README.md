@@ -453,3 +453,70 @@ Every key's destination is computed *modulo N*. The whole scheme assumes N is st
 - It's worth trading balance for when a server holds something per-key: a **warm cache, local session state, or deduplicated work**.
 - **Plain modulo hashing** (`hash(key) mod N`) is fast, stateless, and deterministic, and scatters keys evenly — but **even key spread isn't even load**, since a **hot key** concentrates on one server by design.
 - Its load-bearing assumption is that **N, the server count, never changes** — false in every real system, and the subject of §8.
+
+---
+
+## 8. When the Pool Changes Size
+
+§7 ended on modulo hashing's buried assumption: N never changes. Here is what happens when it does — and it's dramatic enough that avoiding it is the entire reason a more sophisticated technique exists.
+
+### The Rehashing Catastrophe
+
+Take a pool of 4 servers, so keys route by `hash(key) mod 4`. Now one server is added — a routine scaling event — and the pool is 5, so keys route by `hash(key) mod 5`.
+
+Watch what happens to where keys land. The hash of each key hasn't changed at all; only the divisor did. But changing the divisor changes almost every remainder:
+
+| Key's hash | `mod 4` (old) | `mod 5` (new) | Moved? |
+|---|---|---|---|
+| 100 | 0 | 0 | — |
+| 101 | 1 | 1 | — |
+| 102 | 2 | 2 | — |
+| 103 | 3 | 3 | — |
+| 104 | 0 | 4 | ✅ |
+| 105 | 1 | 0 | ✅ |
+| 106 | 2 | 1 | ✅ |
+| 107 | 3 | 2 | ✅ |
+
+After the first few, nearly every key maps somewhere new. Adding one server to a pool of four doesn't move one-fifth of the keys — it moves **roughly 80% of them.** In general, changing N remaps almost all keys, not the small fraction you'd hope for. The arithmetic doesn't care that you only added one machine; `mod 5` is a completely different function from `mod 4`.
+
+```mermaid
+flowchart TD
+    A["🔧 Add 1 server to a pool of 4<br/>N: 4 → 5"] --> B["Every key now routed mod 5<br/>instead of mod 4"]
+    B --> C["🌀 ~80% of keys<br/>map to a different server"]
+    C --> D["🔥 Nearly every warm cache<br/>is now on the wrong server"]
+    C --> E["🔥 Nearly every pinned key<br/>lands somewhere new"]
+```
+
+### Why That's a Catastrophe, Not an Inconvenience
+
+Remember *why* you were hashing (§7): so each key reaches the server holding something for it — a warm cache, local state. Rehashing detonates exactly that.
+
+When ~80% of keys suddenly point at different servers:
+
+- **The caches are all cold.** Almost every key now lands on a server that has never seen it. Every one of those requests misses its cache and falls through to the slow path — the database, the origin, the expensive computation — all at once.
+- **The backend gets hit by everything simultaneously.** A cache that was absorbing most reads suddenly passes nearly all of them through, in a single moment. That surge frequently overwhelms whatever is behind the cache — a **stampede** that can take the backend down.
+- **Locally-held state is stranded.** Any key relying on reaching its specific server for in-progress work now reaches a stranger.
+
+The trigger for all of this was a single routine event: one server added, or one server failing. In a system that scales or that ever loses a machine — which is every real system — modulo hashing turns ordinary pool changes into fleet-wide cache wipeouts. **The very determinism that made hashing valuable is what makes its failure total.**
+
+### The Fix, Named
+
+The problem is sharply defined: when N changes, you want *almost all* keys to stay put and only a small, proportional fraction to move. Adding a 5th server to 4 should relocate about one-fifth of the keys — the share the new server ought to take — and leave the other four-fifths exactly where they are.
+
+There is a well-established technique that achieves precisely this. It's called **consistent hashing**, and its defining property is that adding or removing a server remaps only about `1/N` of the keys instead of nearly all of them — turning a catastrophic reshuffle into a proportional, survivable one.
+
+How it works — the ring of hash values, placing servers and keys on it, virtual nodes for even distribution — is a mechanism in its own right, and it earns a full treatment in the scaling phase (`06-scaling`) rather than a rushed paragraph here. What matters for *this* document, about *this* decision, is the boundary:
+
+- **Plain modulo hashing** gives you locality cheaply, and is correct only when the pool is genuinely fixed.
+- **Consistent hashing** gives you the same locality while surviving a changing pool, at the cost of more machinery.
+
+If you need key-to-server stickiness *and* your pool ever changes size — the common case — consistent hashing is the tool, and this is the point at which to reach for it.
+
+> ⚠️ **Plain modulo hashing is a trap in any system that scales or heals.** It looks perfect in testing, where the pool is fixed, and then the first time a server is added or lost in production it remaps ~80% of keys at once — cold caches everywhere, a stampede onto the backend, stranded state — all from one routine event. The rule is simple: if you hash to route *and* the pool can ever change, you do not want `mod N`, you want consistent hashing. Reserve plain modulo for pools that are truly, permanently fixed — which is far rarer than it first appears.
+
+### Quick Recap — When the Pool Changes Size
+
+- Modulo hashing routes by `hash(key) mod N`, so changing **N** changes almost every remainder: adding one server to four remaps **~80% of keys**, not one-fifth.
+- That's a **catastrophe** because it detonates the locality hashing existed for — near-total cache wipeout, a **stampede** onto the backend, and stranded local state — all from one routine scaling or failure event.
+- **Consistent hashing** is the named fix: it remaps only about **1/N** of keys when the pool changes, keeping the rest in place. Its mechanism is covered in the scaling phase.
+- The boundary: **plain modulo only for permanently fixed pools; consistent hashing whenever you need stickiness and the pool can change** — which is most of the time.
