@@ -326,3 +326,70 @@ This is why the next section takes a genuinely different route. Instead of readi
 - What the balancer can count depends on **where it operates** — raw connections versus individual requests — which bounds how accurate "least-connections" can be, before any algorithm choice.
 - **Least-response-time** reads a sharper signal (latency) and catches degradation sooner, at the price of window-tuning and yet more ways to be misled.
 - The through-line of §2–§5: **more reactivity means more dependence on an honest measurement** — and measurements are least honest under stress, motivating §6.
+
+---
+
+## 6. Random and the Power of Two Choices
+
+Everything so far has traded simplicity for reactivity and paid for reactivity with fragility. This section breaks that trade with an idea that is almost too simple to believe works — and it's the one to remember from the whole document.
+
+### Pure Random Is Better Than It Sounds
+
+Start with the crudest possible rule: **pick a server uniformly at random.** No counter, no state, no coordination.
+
+It feels like it should distribute badly, and over a handful of requests it does — randomness is lumpy at small scale. But over many requests it evens out, and it arrives at roughly equal *request count*, the same thing round-robin guarantees. With enough volume, random and round-robin are nearly indistinguishable in how evenly they spread requests.
+
+Random also has a quiet advantage round-robin lacks: **it needs no shared state.** Round-robin's rotation counter has to be coordinated — if ten balancers each keep their own counter, they can march in lockstep and all send request N to the same server. Random has nothing to coordinate; every decision is independent, which is why it scales cleanly across many balancers making decisions at once.
+
+What random shares with round-robin is the core weakness: it's blind. It can send a request to a server that's already the most loaded in the pool, because it isn't looking.
+
+### The Trap of "Just Pick the Least Loaded"
+
+The obvious fix is least-connections from §4: don't pick randomly, pick the *globally* least-loaded server. And for a single balancer with a perfect view, that's good.
+
+At scale it develops a vicious failure. Suppose many balancers all route to the globally least-loaded server. They all see the *same* least-loaded server at the same moment — and they all send it their next request simultaneously. The server that was least loaded is instantly swarmed by every balancer at once, becomes the *most* loaded, and now the next-lowest server gets the same treatment. The "best" choice, chosen by everyone at once, becomes the worst.
+
+This is a **herd** aimed by the algorithm itself: perfect information, used greedily and in parallel, actively creates the imbalance it was trying to prevent. Chasing the single best option is exactly what makes it stop being the best.
+
+### The Power of Two Choices
+
+Here is the resolution, and it is startling how small it is:
+
+> **Pick two servers at random. Send the request to whichever of those two has fewer active connections.**
+
+Not the best of all. The better of *two random samples*. That's the entire algorithm.
+
+```mermaid
+flowchart TD
+    R["📥 Request"] --> P["🎲 Pick 2 servers at random"]
+    P --> A["🖥️ Server A<br/>5 active"]
+    P --> B["🖥️ Server B<br/>2 active"]
+    A --> C{"fewer?"}
+    B --> C
+    C -->|"B wins"| S["✅ Send to B"]
+```
+
+The result is not a small improvement over random — it's dramatic and mathematically established. Pure random lets load imbalance grow substantially as the pool scales. Adding just the *second* choice collapses the worst-case imbalance from growing with the size of the pool to growing only with the logarithm of it — informally, from "some servers get badly overloaded" to "no server is ever more than a hair above average." A third choice barely improves on two; almost all the benefit is in going from one sample to two.
+
+And it keeps random's virtues while fixing least-connections' herd:
+
+- **It reads almost no state** — just the counts of the two it sampled, not a global view.
+- **It doesn't herd** — two balancers rarely sample the same pair, so they don't converge on one victim. There is no single "best" for everyone to swarm, because each is choosing between its own random pair.
+- **It scales cleanly** — decisions stay independent, like random, so it works across many balancers with no coordination.
+
+It is, for large stateless fleets, close to the best of every world: nearly the balance of global-least-connections, nearly the simplicity and scalability of random, without the herd of the first or the blindness of the second. This is why it has become a default in modern large-scale balancers, and why "use power of two choices" is rarely a wrong answer.
+
+### Why This Is the One to Remember
+
+The deeper lesson generalises past load balancing. The jump from "one random pick" to "the better of two random picks" is one of the highest-leverage small changes in systems design: a second sample, almost free, converts a mediocre distribution into a near-optimal one. And it gets there *without* the thing every §4–§5 algorithm needed — a trustworthy global signal. It sidesteps §5's entire problem by never trying to find the single best server, only to avoid the clearly-worse of two.
+
+> 💡 **Key Insight**
+>
+> **Two random choices beat both pure random and greedy global-least, and it isn't close.** Random is blind; picking the global best makes every balancer swarm the same server and manufactures the imbalance it meant to fix; sampling two and taking the better one avoids both — near-optimal balance, almost no state, no coordination, no herd. The counterintuitive core is that **a little bit of choice captures almost all the benefit of total information**, so the winning move is usually not a better global signal but a second cheap sample.
+
+### Quick Recap — Random and the Power of Two Choices
+
+- **Pure random** matches round-robin's evenness at scale and needs no shared state, but is blind and can pick an already-loaded server.
+- **Greedy "pick the global least"** herds — many balancers swarm the same least-loaded server at once and make it the most loaded.
+- **Power of two choices** — sample two at random, take the less loaded — collapses worst-case imbalance dramatically while staying stateless-ish, coordination-free, and herd-free.
+- Almost all the gain is in the **second** sample; it's a default for large fleets and the single most useful idea in this document.
