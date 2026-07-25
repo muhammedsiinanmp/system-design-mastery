@@ -457,3 +457,58 @@ This is also why a whole category of infrastructure exists to sit *at* this boun
 - **Cross-cutting concerns** — authentication (who), authorization (what), rate limiting (how much), logging — belong there because they apply to every operation at once.
 - Enforcing them at the boundary lets the code behind it **assume callers are already known, permitted, and bounded**, instead of re-checking everywhere.
 - The boundary **concentrates control and risk together**; purpose-built infrastructure (the API gateway, a later topic) exists to stand in that door.
+
+---
+
+## 8. Public, Private, and Partner APIs
+
+Everything so far — the immovable contract (§5), the retry-safety obligation (§6), the control point (§7) — applies with wildly different force depending on one question: **who is allowed to call this?** The same technical API is an easy thing to run or a nearly-frozen liability depending only on its audience.
+
+### Three Audiences
+
+APIs are commonly sorted by who their callers are:
+
+| Type | Callers | Who they are |
+|---|---|---|
+| **Private / internal** | Other teams in your own organisation | Known, reachable, on your side |
+| **Partner** | A limited set of external organisations | Known, contractually bound, finite |
+| **Public / open** | Anyone on the internet | Unknown, unreachable, unbounded |
+
+The technology can be identical across all three. What changes is everything *around* the contract — and it changes because of one variable: **how much you know about and can influence your callers.**
+
+### The Variable That Changes Everything — Can You Reach the Callers?
+
+Recall §5's core constraint: you can't force callers to upgrade. That constraint has a *volume knob*, and the audience sets it.
+
+- For a **private** API, you can't force an upgrade, but you can *reach* everyone who calls you — they're down the hall or on a channel you share. A breaking change is a coordination problem: announce it, help teams migrate, pick a cutover. Painful, bounded, survivable. An internal API can change weekly if the teams involved agree.
+- For a **partner** API, callers are external but *known and finite*. You have contracts, contacts, and a list. Change is slower and more formal — real notice periods, agreed timelines — but still coordinated, because you know exactly who is affected.
+- For a **public** API, you have **no idea who your callers are** and no way to reach them. Anyone may have built on it; you can't enumerate them, warn them, or help them migrate. A breaking change doesn't inconvenience a known list — it silently breaks an unknown population, some of whom you'll only hear from when their system fails.
+
+```mermaid
+flowchart TD
+    Q["Who calls this API?"] --> P["🏠 Private<br/>known + reachable<br/>→ change by coordination"]
+    Q --> PT["🤝 Partner<br/>known + finite<br/>→ change by agreement"]
+    Q --> PUB["🌍 Public<br/>unknown + unreachable<br/>→ change breaks strangers"]
+    P --> E["The more callers you<br/>can't reach, the more<br/>frozen the contract"]
+    PT --> E
+    PUB --> E
+```
+
+### Blast Radius Scales With Audience
+
+The consequence is a spectrum of rigidity. The blast radius of a breaking change — how much damage shipping it causes — grows directly with how unknown and unbounded your callers are. Internally, a mistake in the contract is a bad afternoon of coordination. Publicly, the same mistake is permanent: whatever you exposed, someone built on, and you can never safely take it back.
+
+This reframes §4's "expose the least surface" advice as *audience-dependent*. On an internal API, over-exposing a detail is a manageable risk you can walk back with a few conversations. On a public API, every exposed detail is effectively forever, because the callers depending on it are strangers you can't coordinate with. **The wider the audience, the more expensive every design mistake, and the more the contract must be treated as permanent from the day it ships.**
+
+### The Practical Upshot
+
+This is why the *same* engineer designs the *same* kind of API very differently based on audience — and why "make it public" is a far larger decision than it sounds. Publishing an API isn't a deployment setting; it's a commitment to callers you'll never meet, under a contract you can no longer freely change. The rigor each concern in this document demands — backward compatibility, retry-safety, rate limiting — scales up precisely as the audience widens, because the cost of getting them wrong scales with how little you know about who's affected.
+
+> ⚠️ **"Who can call this?" silently sets how permanent everything else is.** The identical contract that's a manageable, changeable thing behind an internal boundary becomes a near-frozen liability once it's public — not because the technology differs, but because you can no longer reach the people depending on it. Treat making an API public as what it is: an irreversible commitment to an unknown audience. The narrower the audience, the more freedom you keep; the wider it is, the more every earlier section of this document tightens from advice into obligation.
+
+### Quick Recap — Public, Private, and Partner APIs
+
+- The same API is easy or nearly-frozen depending only on its audience: **private** (known, reachable), **partner** (known, finite), **public** (unknown, unreachable).
+- The governing variable is **whether you can reach your callers** — it's the volume knob on §5's "you can't force an upgrade."
+- **Blast radius scales with audience**: a breaking change is a coordination problem internally and a permanent, silent break publicly.
+- Going **public is an irreversible commitment**, which is why backward compatibility, retry-safety, and rate limiting all tighten from advice into obligation as the audience widens.
