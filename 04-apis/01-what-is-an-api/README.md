@@ -100,3 +100,71 @@ All four are the same idea: a stable surface over a hidden interior. The differe
 - The core split is **interface** (the fixed, public surface) versus **implementation** (the private, changeable machinery).
 - Its value is that the two move independently — **the inside can change freely while the outside keeps its promise**.
 - The concept spans every scale — function, library, OS, network service — and the network case is hard not because of the interface but because of what sits under it (§2).
+
+---
+
+## 2. The Leap — Local Calls vs Remote Calls
+
+Here is the center of the entire subject. Put the two calls side by side:
+
+```
+balance = get_account_balance(account_id)        # a function in your program
+balance = accounts_api.get_balance(account_id)    # a service across a network
+```
+
+They look the same. In many systems they're *written* to look deliberately identical — the whole point of some frameworks is to make a remote call read like a local one. That resemblance is a trap, because underneath they could hardly be more different.
+
+### What the Local Call Guarantees
+
+When `get_account_balance` runs in your own program, a set of things are true so reliably you never think about them:
+
+- **It returns essentially instantly** — nanoseconds to microseconds. Fast enough to treat as free.
+- **It either runs or it doesn't, with you.** If the function is present, it executes. If it's broken, your whole program is broken too — there's no world where it half-happens or vanishes while you keep going.
+- **You always know the outcome.** It returns a value or it raises an error. There is no third state.
+- **It's the exact version you compiled against.** The code you call is the code you shipped.
+
+Every one of these quietly disappears when the call crosses a network.
+
+### What the Remote Call Actually Faces
+
+The remote version travels out of your process, across a network, to a machine owned by someone else, and back. Each of those guarantees inverts:
+
+| | Local call | Remote call |
+|---|---|---|
+| Time | Nanoseconds | Milliseconds to seconds — and unpredictable |
+| Failure | Shares your fate | **Fails independently of you** |
+| Outcome | Always known | Can be **genuinely unknowable** |
+| Version | Exactly yours | Whatever they've deployed |
+| The other side | Always there | May be down, moved, or overloaded |
+
+The second and third rows are the ones that reshape everything.
+
+**Independent failure** is the heart of it. Your code is running fine, and the service you called is on fire — those are now separate facts. The callee can crash, restart, get overloaded, or be cut off by a network fault entirely on its own, while your program keeps executing and has to decide what to do about a call that isn't coming back. A local function can't do this to you; a remote one does it routinely.
+
+**The unknowable outcome** is the strangest and most consequential. Consider what happens when you send a request and hear nothing back:
+
+```mermaid
+flowchart TD
+    A["📤 You send: charge the card"] --> B{"⏳ silence..."}
+    B --> C["Did the request never arrive?<br/>→ nothing happened"]
+    B --> D["Did it arrive, succeed,<br/>and the reply got lost?<br/>→ it DID happen"]
+    C --> E["❓ You cannot tell<br/>these apart"]
+    D --> E
+```
+
+A lost request and a lost *response* look identical from where you stand — silence. In the first case nothing happened; in the second the work completed and you'll never know. This is not a rare edge case; it is a fundamental property of talking over a network, and it is why "did it work?" can have no answer. Everything in §6 grows out of this single fact.
+
+### The Comforting Lie
+
+There's a famous set of false assumptions that people bring from local programming to networked systems — that the network is reliable, that latency is zero, that bandwidth is infinite, that the far end is always up. Each is true *enough* locally to be invisible, and each is false over a network in a way that eventually causes an outage. The remote call that was written to look local carries all of these assumptions silently until the day the network makes one of them false.
+
+The deep lesson: **making a remote call look like a local call hides the difference but does not remove it.** The convenience is real and so is the danger — the code reads simply while quietly depending on a network behaving like local memory, which it never will.
+
+> ⚠️ **A remote call is not a slow function call — it is a different thing wearing the same syntax.** The identical-looking line hides that the callee now fails on its own, answers on its own schedule, runs a version you didn't choose, and can leave you unable to know whether your request took effect. Treat the resemblance as a convenience for *writing* the call and a liability for *reasoning* about it. Every later section of this document is a consequence that a local call never forced you to consider.
+
+### Quick Recap — The Leap
+
+- A local call and a remote call can look identical in code and are fundamentally different underneath — the resemblance is a trap.
+- A local call **shares your fate**; a remote call **fails independently** — the callee can be down, slow, or overloaded while your code runs on.
+- A network makes the outcome **genuinely unknowable**: a lost request and a lost response both appear as silence, so "did it work?" may have no answer (→ §6).
+- The assumptions that hold locally — reliable, instant, always-up — are all **false over a network**, and making the call *look* local hides that without removing it.
