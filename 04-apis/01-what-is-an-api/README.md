@@ -119,6 +119,8 @@ They look the same. In many systems they're *written* to look deliberately ident
 When `get_account_balance` runs in your own program, a set of things are true so reliably you never think about them:
 
 - **It returns essentially instantly** — nanoseconds to microseconds. Fast enough to treat as free.
+
+  The gap here is not small, and it's worth feeling its size. A local function call resolves in roughly a nanosecond. A call to a service in the same data centre takes on the order of hundreds of microseconds to a millisecond — a few hundred thousand times slower. A call to a service across the world takes hundreds of milliseconds — closer to a hundred million times slower than the local call it resembles in code. Writing the two the same way papers over a difference of eight orders of magnitude.
 - **It either runs or it doesn't, with you.** If the function is present, it executes. If it's broken, your whole program is broken too — there's no world where it half-happens or vanishes while you keep going.
 - **You always know the outcome.** It returns a value or it raises an error. There is no third state.
 - **It's the exact version you compiled against.** The code you call is the code you shipped.
@@ -319,6 +321,8 @@ The pattern underneath: **additions are usually safe; removals and changes usual
 
 The subtle killer is the last row on the right: **changing what an operation means** (§3's semantics) is a breaking change that no schema check will catch. If `create_order` used to reserve inventory and quietly stops, every field is identical and every caller relying on the old behaviour is now wrong. Semantic breaks are the most dangerous because they're invisible to tooling.
 
+One more trap hides inside "additions are safe": it holds only if callers genuinely ignore what they don't recognise. A caller that validates responses strictly — rejecting any field it wasn't expecting — will break when you add an optional field, turning a supposedly safe change into an outage. This is why a durable convention across long-lived APIs is *be strict in what you send, lenient in what you accept*: tolerate unknown fields so the other side can add them without coordinating with you. The safety of additive change is a property of how *both* sides behave, not of the addition alone.
+
 ### Backward Compatibility as an Obligation
 
 The property you're protecting has a name: **backward compatibility** — new versions of the API continue to work for callers written against older versions. When you keep it, old callers keep running while new callers use the new capabilities, and the transition happens gradually and safely. When you break it, someone's system fails at the moment you deploy, through no action of their own.
@@ -377,6 +381,8 @@ But retrying collides directly with the unknown outcome. If the first attempt ac
 - Retry a "charge the card" whose success reply was lost → the customer is charged twice.
 - Retry a "create order" → two orders.
 - Retry a "send message" → they get it twice.
+
+The window for this is wider than intuition suggests. A caller doesn't wait forever for silence — it sets a timeout, often a few seconds, and retries when the timeout expires. But a slow server might genuinely still be working at the moment the caller gives up: the request succeeds a heartbeat *after* the caller has already decided it failed and fired a retry. So duplicates arise not only from lost responses but from responses that were merely *late* — which means shrinking the timeout to react faster actually *increases* the duplicate rate, and lengthening it to reduce duplicates makes the caller hang longer on real failures. There is no timeout value that escapes the trade; only idempotency does.
 
 So the caller is trapped between two bad options: don't retry and risk *losing* an operation that failed, or retry and risk *duplicating* one that secretly succeeded. Over a network, one of these risks is unavoidable — the unknown outcome guarantees it.
 
