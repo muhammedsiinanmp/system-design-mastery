@@ -404,3 +404,56 @@ Step back and the theme of §3 returns with force. Because failure is common and
 - The unknown forces **retries**, but retrying an operation whose success reply was merely lost **duplicates** it — double charges, double orders.
 - **Idempotency** — a repeated operation having the same effect as a single one — is the escape, making retries safe; its *mechanism* is a later topic.
 - Failure is common and partly unknowable over a network, so **how an API fails and whether it's retry-safe are part of its contract**, not an afterthought.
+
+---
+
+## 7. Boundaries Are Control Points
+
+So far the network has looked like nothing but trouble — independent failure, unknowable outcomes, contracts that must not break. This section is the compensation. The same boundary that creates all those problems is also the single place where you can *control* who reaches your system and how. A local function call has no such place; a network API has exactly one, and a great deal of a system's protection lives there.
+
+### The Boundary Is Where Everyone Must Pass
+
+When your capability is a local function, anyone with your code can call it however they like — there's no chokepoint. When it's a network API, every caller in the world reaches it through the same door. That door is a **control point**: a single location every request must pass through before touching anything behind it.
+
+That turns out to be enormously valuable, because a set of concerns that would otherwise have to live in *every* piece of code behind the API can instead be enforced once, at the entrance.
+
+### What Gets Enforced There
+
+Three questions the boundary is the natural place to answer:
+
+| Concern | The question it answers | Why it belongs at the boundary |
+|---|---|---|
+| **Authentication** | *Who* is calling? | Establish identity once, before any work happens |
+| **Authorization** | What are they *allowed* to do? | Enforce permission uniformly, not per-feature |
+| **Rate limiting** | *How much* may they call? | Protect everything behind it from abuse or a runaway client |
+
+There are more — request logging, metrics, input validation, quota accounting — but the shape is the same for all of them: they are **cross-cutting**, meaning they apply to every operation rather than belonging to any one, and the boundary is the one place they can be applied to everything at once.
+
+**Authentication and authorization** answer *who are you* and *what may you do* — and a network boundary is where they have to happen, because behind it you want code that can assume the caller is already known and permitted. Their full treatment (identity, tokens, permission models) is security's subject, later in the curriculum; here they're named as things the boundary exists to enforce.
+
+**Rate limiting** answers *how much*. A local function can't be called too often in a way that threatens the system — it's your own code calling it. A public boundary can be hammered by a buggy client, a scraper, or an attacker, and without a limit a single caller can consume all the capacity meant for everyone. Limiting how much any one caller may consume is therefore a boundary concern by nature. How it's actually built is its own topic later in this phase; the point here is *why* it lives at the door.
+
+```mermaid
+flowchart LR
+    C1["👤 Caller"] --> D["🚪 The API boundary<br/>one door everyone passes"]
+    C2["👤 Caller"] --> D
+    C3["🤖 Runaway client"] --> D
+    D -->|"who? · allowed? · how much?"| B["⚙️ Everything behind it<br/>can assume: known, permitted, bounded"]
+```
+
+### The Boundary Concentrates Control the Way It Concentrates Risk
+
+There's a symmetry worth naming. Earlier phases of this kind of system design return again and again to the idea that a single point everything flows through is dangerous — it's a place that can fail for everyone at once. The API boundary is exactly such a point. But the same concentration that makes it a risk makes it powerful: because everything flows through it, it's the one place you can impose a rule on everything. You accept a concentrated point of control in exchange for concentrated protection — the same trade a front-line entrance always represents.
+
+This is also why a whole category of infrastructure exists to sit *at* this boundary and enforce these concerns on behalf of the services behind it, so individual services don't each re-implement authentication, rate limiting, and logging. That infrastructure — the API gateway — is a topic later in this phase. What matters now is recognising that it's a natural consequence of the boundary being a control point: once you have one door doing this work, you build something purpose-made to stand in it.
+
+> 💡 **Key Insight**
+>
+> The network boundary that causes every problem in this document is also the one thing a local call never gives you: **a single place every caller must pass, where you can enforce identity, permission, and limits once instead of everywhere.** Cross-cutting concerns cluster there because it's the only spot that touches every request. It's the same point that's dangerous for concentrating failure — and that's not a contradiction: concentrated flow is simultaneously your biggest risk and your best lever for control.
+
+### Quick Recap — Boundaries Are Control Points
+
+- A network API is a **single door every caller passes through** — a control point a local function call never provides.
+- **Cross-cutting concerns** — authentication (who), authorization (what), rate limiting (how much), logging — belong there because they apply to every operation at once.
+- Enforcing them at the boundary lets the code behind it **assume callers are already known, permitted, and bounded**, instead of re-checking everywhere.
+- The boundary **concentrates control and risk together**; purpose-built infrastructure (the API gateway, a later topic) exists to stand in that door.
