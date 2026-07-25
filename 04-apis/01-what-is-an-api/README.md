@@ -289,3 +289,58 @@ This is why an over-exposed API is a lasting liability. Every internal detail th
 - It lets the owner **change the entire inside freely** while the promise holds, which is what allows many teams to build one system in parallel.
 - An API is a **coupling-control device**: it points callers at the small, stable interface instead of the large, volatile implementation.
 - The cost is that the **boundary must be designed and defended** — everything you expose becomes a commitment, so exposing the least useful surface is the discipline (→ §5).
+
+---
+
+## 5. The Contract Must Survive Change
+
+§4 ended on a tension: the interface has to hold still so callers can depend on it, but no interface stays right forever. Requirements change, mistakes need fixing, new capabilities arrive. So the contract must *change* — while somehow not breaking the people depending on it. That balance is one of the hardest things about running an API, and it starts from a fact about who you can control.
+
+### You Cannot Force an Upgrade
+
+With a local function, changing it is trivial: you edit it and its callers in the same change, compile, done. Everyone is on the new version instantly because there *is* only one version.
+
+An API has callers you don't control and can't update. A public API might be called by thousands of applications written by people you've never met. Even a private API inside your own company is called by other teams on their own schedules. When you change the contract, **you cannot make anyone adopt the change** — you can announce it, you can beg, but their software keeps calling the old contract until they choose to update it, which may be never.
+
+This is the constraint that makes API evolution its own discipline: **the old callers don't go away when you ship the new version.** Both must work at once.
+
+### Breaking vs Non-Breaking Change
+
+The line that governs everything here is whether a change breaks existing callers:
+
+| Non-breaking (safe) | Breaking (dangerous) |
+|---|---|
+| Adding a new optional field | Removing a field |
+| Adding a new operation | Renaming a field or operation |
+| Adding an optional input | Making an optional input required |
+| A new value callers can ignore | Changing a type, or an operation's meaning |
+
+The pattern underneath: **additions are usually safe; removals and changes usually break.** A caller that ignores fields it doesn't recognise is unaffected when you add one — but any caller depending on something you removed or renamed shatters the moment you ship.
+
+The subtle killer is the last row on the right: **changing what an operation means** (§3's semantics) is a breaking change that no schema check will catch. If `create_order` used to reserve inventory and quietly stops, every field is identical and every caller relying on the old behaviour is now wrong. Semantic breaks are the most dangerous because they're invisible to tooling.
+
+### Backward Compatibility as an Obligation
+
+The property you're protecting has a name: **backward compatibility** — new versions of the API continue to work for callers written against older versions. When you keep it, old callers keep running while new callers use the new capabilities, and the transition happens gradually and safely. When you break it, someone's system fails at the moment you deploy, through no action of their own.
+
+```mermaid
+flowchart TD
+    C["📤 Contract change"] --> Q{"Do old callers<br/>still work?"}
+    Q -->|"yes — backward compatible"| S["🟢 Safe: both old and<br/>new callers coexist"]
+    Q -->|"no — breaking"| B["🔴 Someone's system fails<br/>the moment you deploy"]
+```
+
+For anything with real consumers, backward compatibility stops being a courtesy and becomes an obligation — the practical meaning of "the interface holds still" from §4. It's why mature APIs accrete rather than change: they add the new way beside the old one and leave the old one working, because removing it would break the callers they can't control.
+
+### When You Genuinely Must Break It
+
+Sometimes a change is necessary and cannot be made compatible. You can't hold every old contract forever, and occasionally the interface really does have to change in a breaking way. That situation — running the old and new contracts side by side, giving callers time to migrate, and eventually retiring the old one — is exactly what **API versioning** is for. It's a substantial topic in its own right, covered later in this phase; what matters here is *why* it has to exist at all: because you can't force an upgrade, so the only way to make a breaking change safely is to not break the old thing until everyone has voluntarily left it.
+
+> ⚠️ **The callers you can't see are the ones the contract exists to protect.** Because you can't force anyone to upgrade, every change you publish must assume old callers are still out there calling the old way — which makes "is this backward compatible?" the first question about any API change, and makes semantic changes (§3) the most dangerous, since they break callers while passing every schema check. When a change genuinely can't be made compatible, that's not a failure of discipline — it's precisely the problem **versioning** exists to manage.
+
+### Quick Recap — The Contract Must Survive Change
+
+- You **cannot force callers to upgrade**, so old and new versions of the contract must work at the same time — the constraint that makes API evolution hard.
+- **Additions are usually safe; removals and changes usually break** — and the worst breaks are **semantic**, invisible to any schema check (§3).
+- **Backward compatibility** — old callers keep working against new versions — is an obligation for any API with real consumers, which is why mature APIs accrete rather than mutate.
+- When a breaking change is truly unavoidable, running old and new side by side until callers migrate is what **API versioning** (a later topic) exists to handle.
