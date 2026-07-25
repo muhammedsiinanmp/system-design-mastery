@@ -390,7 +390,7 @@ So the caller is trapped between two bad options: don't retry and risk *losing* 
 
 There is a way out, and naming it is the point of this section even though its mechanism belongs to a later topic. The trap only exists because a *second* execution has a *second* effect. Remove that, and the trap disappears:
 
-> **An operation is idempotent when doing it more than once has the same effect as doing it once.**
+> **An operation is idempotent when running it repeatedly leaves the system in exactly the state a single run would — the first execution changes things, and every execution after it changes nothing.**
 
 If "charge the card" is idempotent, then retrying it after lost silence is *safe* — a duplicate attempt lands as a no-op, because the operation was built so that the second execution changes nothing. The caller can retry freely, the unknown outcome stops being dangerous, and reliability over an unreliable network becomes achievable.
 
