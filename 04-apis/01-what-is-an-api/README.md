@@ -512,3 +512,67 @@ This is why the *same* engineer designs the *same* kind of API very differently 
 - The governing variable is **whether you can reach your callers** — it's the volume knob on §5's "you can't force an upgrade."
 - **Blast radius scales with audience**: a breaking change is a coordination problem internally and a permanent, silent break publicly.
 - Going **public is an irreversible commitment**, which is why backward compatibility, retry-safety, and rate limiting all tighten from advice into obligation as the audience widens.
+
+---
+
+## 9. The Shapes a Contract Can Take
+
+Every example so far has assumed one interaction pattern: you ask, you wait, you get an answer. That's the most common shape, but it isn't the only one — and knowing the small set of shapes is what makes the rest of this phase navigable, because every named style you'll meet is one of these shapes with specific choices filled in.
+
+This section is deliberately **style-agnostic**. It maps the *shapes*; the styles that implement them — REST, GraphQL, gRPC, WebSockets, webhooks — are each their own later topic.
+
+### Four Shapes
+
+Communication patterns sort into a handful of fundamentally different arrangements, distinguished by *who initiates* and *how many messages flow*:
+
+| Shape | Who speaks | The pattern | Fits |
+|---|---|---|---|
+| **Request/response** | Client asks, server answers | One request, one reply | The default — fetch, submit, most APIs |
+| **Streaming** | One side sends many over time | One request, a flow of replies | Live feeds, large results, progress |
+| **Server push** | Server initiates | Server speaks without being asked | Notifications, real-time updates |
+| **Fire-and-forget** | Client tells, doesn't wait | One message, no reply expected | Events, logs, "just record this" |
+
+```mermaid
+flowchart LR
+    subgraph RR["Request / response"]
+        A1["Client"] -->|ask| B1["Server"]
+        B1 -->|answer| A1
+    end
+    subgraph ST["Streaming"]
+        A2["Client"] -->|ask once| B2["Server"]
+        B2 -->|"reply… reply… reply…"| A2
+    end
+    subgraph SP["Server push"]
+        B3["Server"] -->|"unprompted"| A3["Client"]
+    end
+    subgraph FF["Fire-and-forget"]
+        A4["Client"] -->|"tell, don't wait"| B4["Server"]
+    end
+```
+
+### Why the Shape Is the First Choice
+
+The shape is a more fundamental decision than the style, because it's dictated by the *problem*, not by taste. Two questions settle it: **who needs to initiate**, and **whether the caller waits for a result.**
+
+- If the client always initiates and needs an answer, request/response fits, and most of this phase's styles are variations on it.
+- If the *server* needs to initiate — something happened and the client must know now — request/response can't express it. The client would have to ask repeatedly ("anything yet? anything yet?"), which is wasteful and laggy. That mismatch is the entire reason server-push and streaming shapes exist.
+- If the caller genuinely doesn't need a result — recording an event, emitting a log — waiting for one is pure cost, and fire-and-forget removes it (with the tradeoff that you've given up knowing it worked, §6).
+
+Pick the wrong shape and no amount of good style choice rescues it: polling a request/response API to fake server-push is a workaround for having chosen the wrong shape for the problem.
+
+### The Shapes Inherit Everything Above
+
+Crucially, none of these shapes escape sections 2 through 8. Whichever you choose, it still runs over a network that fails independently (§2), still rests on a contract that must survive change (§5), still faces the unknowable outcome (§6), and still passes a boundary that controls access (§7). The shape changes *the pattern of messages*; it doesn't change the fact that they cross a network. A streaming API still needs versioning; a fire-and-forget event still has an unclear delivery outcome; server push still needs authentication.
+
+This is the bridge into the rest of the phase. Every upcoming topic is a **style** — a concrete, opinionated way of implementing one or more of these shapes, with specific decisions about format, addressing, and conventions. REST is a particular way of doing request/response over the web. Streaming and push have their own styles. Fire-and-forget underlies event-driven communication. Knowing the shapes means that when each style arrives, you can see past its specifics to the pattern it's implementing and the tradeoffs it inherited from this document.
+
+> 💡 **Key Insight**
+>
+> Before any style, there's a **shape** — request/response, streaming, server push, or fire-and-forget — set by two problem-driven questions: *who initiates*, and *does the caller wait for a result?* The shape is the deeper choice because it's dictated by the problem, and choosing it wrong can't be patched by style. But no shape escapes this document: whichever you pick still crosses a failing network under a contract that must not break — the shape decides the message pattern, not whether the hard parts apply.
+
+### Quick Recap — The Shapes a Contract Can Take
+
+- Beneath every named style are four **shapes**: request/response, streaming, server push, and fire-and-forget.
+- The shape is set by two questions — **who initiates** and **whether the caller waits** — and it's dictated by the problem, so it's a deeper choice than the style.
+- Choosing the wrong shape can't be fixed by the style: **polling to fake server-push** is the classic symptom of a shape mismatch.
+- Every shape still **inherits §2–§8** — network failure, contract stability, unknown outcomes, boundary control — so the later style topics build on this document rather than replacing it.
