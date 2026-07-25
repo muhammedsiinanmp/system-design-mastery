@@ -229,3 +229,63 @@ Pulling this together: when you publish an API, the artifact other people build 
 - **Errors are part of the promise**: callers must be able to tell "never going to work" from "try again," or they retry blindly (→ §6).
 - **Semantics** — what an operation means and does — are captured by *no schema*, so identical signatures can hide completely different behaviour.
 - The contract, not the code or data, is **the actual product** others build on — which is why styles, formats, and versioning all exist to serve it.
+
+---
+
+## 4. Encapsulation — The Whole Point
+
+§1 said an API's value is that the interface and the implementation move independently. This section is about *why* that's worth so much — and what it costs to get.
+
+The technical name for hiding the implementation behind an interface is **encapsulation**, and it is not a side benefit of having an API. It is the reason to have one.
+
+### The Freedom to Change the Inside
+
+Consider what a caller of `get_balance` depends on: the operation exists, it takes an account ID, it returns a balance. That's all. So behind that interface, the team that owns it can do essentially anything:
+
+- Rewrite it in a different language.
+- Move the data from one database to another.
+- Add a cache, shard the storage, split it into three services.
+- Fix bugs, change algorithms, restructure everything.
+
+None of it reaches the caller, **as long as the interface keeps its promise.** The implementation is free precisely because it is hidden. A team can improve, rewrite, or completely replace what's behind their API on their own schedule, and every consumer keeps working without knowing anything changed.
+
+This is what lets large systems be built by many teams at once. Each team owns what's behind its APIs and can move independently, coordinating only when a *contract* changes rather than every time any code changes. Without encapsulation, every internal change would ripple into everyone who depends on you, and no large system could be worked on by more than a few people.
+
+```mermaid
+flowchart LR
+    subgraph Stable["What callers see (must not break)"]
+        I["🔲 get_balance(id) → balance"]
+    end
+    subgraph Free["What the owner can change freely"]
+        A["language"] ~~~ B["database"]
+        B ~~~ C["caching"]
+        C ~~~ D["internal services"]
+    end
+    I -.->|"promise held"| Free
+```
+
+### Coupling — What You're Really Controlling
+
+Underneath encapsulation is a deeper idea worth naming: **coupling**, how much one thing depends on the details of another. Two pieces of software are tightly coupled when a change to one forces a change to the other; loosely coupled when each can change alone.
+
+An API is a **coupling-control device.** It lets callers couple to the *interface* — the small, stable, deliberately-designed surface — instead of to the *implementation* — the large, volatile interior. You can't eliminate the dependency (the caller genuinely needs the capability), but you can aim it at the part that's designed to hold still. Good API design is, in large part, the art of exposing the least surface that's still useful, so callers depend on as little as possible.
+
+### The Cost — The Boundary Is Now Yours to Defend
+
+Encapsulation isn't free, and the cost is the mirror of the benefit. The moment you draw that boundary and let others depend on it, **the boundary becomes a thing you must design deliberately and then defend indefinitely.**
+
+- Whatever you expose, you're committed to. If you leak an internal detail into the interface — a database ID, an internal status code, an implementation quirk — callers will depend on it, and now it's part of your contract whether you meant it to be or not.
+- The interface can no longer change as freely as the internals precisely *because* people depend on it. You've traded internal freedom for external stability, which is exactly the trade you wanted — but it means the boundary is where your freedom stops.
+
+This is why an over-exposed API is a lasting liability. Every internal detail that escapes into the interface is a future constraint, because someone will build on it and you'll be unable to change it without breaking them (§5). The discipline of encapsulation is as much about what you *refuse* to expose as what you offer.
+
+> 💡 **Key Insight**
+>
+> Encapsulation — hiding the implementation behind the interface — is not a feature of APIs, it *is* the point: it lets the inside change freely while the outside holds still, which is the only reason many teams can build one system without constantly breaking each other. But it works by moving your freedom to a boundary and then freezing that boundary. So the craft is exposing the **least** surface that's still useful — because everything you expose, you have promised to keep, and every internal detail that leaks out becomes a constraint you can't take back.
+
+### Quick Recap — Encapsulation
+
+- **Encapsulation** — hiding the implementation behind the interface — is the reason to have an API, not a side effect of one.
+- It lets the owner **change the entire inside freely** while the promise holds, which is what allows many teams to build one system in parallel.
+- An API is a **coupling-control device**: it points callers at the small, stable interface instead of the large, volatile implementation.
+- The cost is that the **boundary must be designed and defended** — everything you expose becomes a commitment, so exposing the least useful surface is the discipline (→ §5).
