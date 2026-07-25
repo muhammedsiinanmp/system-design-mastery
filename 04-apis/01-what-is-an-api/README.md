@@ -344,3 +344,63 @@ Sometimes a change is necessary and cannot be made compatible. You can't hold ev
 - **Additions are usually safe; removals and changes usually break** — and the worst breaks are **semantic**, invisible to any schema check (§3).
 - **Backward compatibility** — old callers keep working against new versions — is an obligation for any API with real consumers, which is why mature APIs accrete rather than mutate.
 - When a breaking change is truly unavoidable, running old and new side by side until callers migrate is what **API versioning** (a later topic) exists to handle.
+
+---
+
+## 6. Failure Is Now a First-Class Case
+
+§2 established that a network call can fail independently and, worse, leave you unable to know whether it worked. This section follows that fact to its conclusion, because it forces a design obligation onto every API that changes anything.
+
+With a local function, failure is simple: it works or it throws, and you know which. Over a network, failure is a whole landscape, and the API's contract has to account for all of it.
+
+### The Three Outcomes of a Remote Call
+
+A local call has two outcomes: success or error. A remote call has **three**, and the third is the problem:
+
+```mermaid
+flowchart TD
+    R["📤 Remote call"] --> S["✅ Success<br/>you got a response"]
+    R --> F["❌ Clear failure<br/>you got an error"]
+    R --> U["❓ Unknown<br/>silence — timed out"]
+    U --> U1["Maybe it never arrived<br/>(nothing happened)"]
+    U --> U2["Maybe it succeeded and<br/>the reply was lost<br/>(it DID happen)"]
+```
+
+The first two you can handle. The third — **the unknown** — is the one with no local equivalent. You sent a request, you waited, and nothing came back before your timeout. The operation may have completed, or may never have started, and *you cannot tell which.*
+
+### Why the Unknown Forces Retries
+
+Faced with silence, what does a caller do? It has to do *something*, and the only real options are give up or try again. For anything important, it tries again — retrying is the fundamental response to network failure, and it's usually correct.
+
+But retrying collides directly with the unknown outcome. If the first attempt actually *succeeded* and only its response was lost, then retrying does the operation **a second time.** For a read, harmless. For anything that changes state, potentially a disaster:
+
+- Retry a "charge the card" whose success reply was lost → the customer is charged twice.
+- Retry a "create order" → two orders.
+- Retry a "send message" → they get it twice.
+
+So the caller is trapped between two bad options: don't retry and risk *losing* an operation that failed, or retry and risk *duplicating* one that secretly succeeded. Over a network, one of these risks is unavoidable — the unknown outcome guarantees it.
+
+### Idempotency — The Escape
+
+There is a way out, and naming it is the point of this section even though its mechanism belongs to a later topic. The trap only exists because a *second* execution has a *second* effect. Remove that, and the trap disappears:
+
+> **An operation is idempotent when doing it more than once has the same effect as doing it once.**
+
+If "charge the card" is idempotent, then retrying it after lost silence is *safe* — a duplicate attempt lands as a no-op, because the operation was built so that the second execution changes nothing. The caller can retry freely, the unknown outcome stops being dangerous, and reliability over an unreliable network becomes achievable.
+
+This is why idempotency is one of the most important properties in networked systems, and why it recurs throughout this curriculum. Notice where it comes from: not from the data format, not from the API style, but straight from §2's unavoidable fact that a network can hide whether your request took effect. **Idempotency is the design response to the unknown outcome.** *How* you actually build it — idempotency keys, deduplication, designing operations to be naturally repeatable — is a substantial topic later in this phase; what matters here is seeing why every serious API that changes state is eventually forced to care about it.
+
+### Failure Belongs in the Contract
+
+Step back and the theme of §3 returns with force. Because failure is common and partly unknowable, an API's handling of failure isn't an implementation detail — it's part of the contract (§3's error surface) and part of the operation's design (whether it's safe to retry). An API that only specifies its happy path has left its callers to guess about the situation that matters most. Designing an API means designing what happens when it *doesn't* work, because over a network, that's not the edge case — it's a routine one.
+
+> 💡 **Key Insight**
+>
+> A network call has three outcomes, not two, and the third — **success or failure, unknowable** — has no local equivalent and drives everything. It forces callers to retry, retries risk duplicating operations that secretly succeeded, and the only clean escape is **idempotency**: building operations so a second execution changes nothing. That property isn't a nicety bolted on later; it's the direct, necessary answer to a fact about networks, which is why "what happens when this is retried?" is a question every state-changing API must answer.
+
+### Quick Recap — Failure Is a First-Class Case
+
+- A remote call has **three** outcomes — success, clear failure, and **unknown** — and the unknown (silence) has no local equivalent.
+- The unknown forces **retries**, but retrying an operation whose success reply was merely lost **duplicates** it — double charges, double orders.
+- **Idempotency** — a repeated operation having the same effect as a single one — is the escape, making retries safe; its *mechanism* is a later topic.
+- Failure is common and partly unknowable over a network, so **how an API fails and whether it's retry-safe are part of its contract**, not an afterthought.
