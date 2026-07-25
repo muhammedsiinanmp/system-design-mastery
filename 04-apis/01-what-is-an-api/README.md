@@ -40,3 +40,63 @@ It is not the same, and the entire difficulty of APIs lives in the difference. T
 9. [The Shapes a Contract Can Take](#9-the-shapes-a-contract-can-take)
 10. [Putting It All Together — Turning an Internal Function Into a Public API](#10-putting-it-all-together--turning-an-internal-function-into-a-public-api)
 11. [Final Recap](#11-final-recap)
+
+---
+
+## 1. What an API Actually Is
+
+Start somewhere unglamorous and completely familiar: a function you call in your own code.
+
+```
+balance = get_account_balance(account_id)
+```
+
+You call `get_account_balance`. You pass an account ID. You get a balance back. And here is the part that matters: **you have no idea how it works, and you don't need to.** Maybe it reads a variable. Maybe it queries a database. Maybe it performs a calculation across a dozen tables. You know its *name*, what to *give* it, and what you *get* — and nothing else. You couldn't describe its internals if asked, and your code works anyway.
+
+That is already an API.
+
+> **An API — Application Programming Interface — is the set of operations one piece of software exposes for others to use, together with the rules for using them, deliberately separated from how those operations actually work.**
+
+The word doing the heavy lifting is **interface**. An interface is the *surface* of something — the parts you're meant to touch — as distinct from its **implementation**, the machinery behind that surface. `get_account_balance` is an interface: a name, an expected input, a promised output. Everything inside it is implementation, and the whole point is that you are kept on the outside of it.
+
+### Interface Versus Implementation
+
+This split is the foundational idea, so it's worth stating sharply. Every API draws a line with two sides:
+
+| The interface (the API) | The implementation (behind it) |
+|---|---|
+| What you call and how | How the work is actually done |
+| Fixed — others depend on it | Free to change |
+| The promise | The fulfilment of the promise |
+| Small, deliberate, documented | Large, private, whatever it needs to be |
+
+The value is entirely in keeping these apart. Because callers depend only on the interface, the implementation behind it can be rewritten, optimised, or replaced completely, and as long as the interface keeps behaving the same, nothing that depends on it notices. That freedom — **change the inside without disturbing the outside** — is what an API buys, and everything else in this document is a consequence or a complication of it.
+
+### APIs Are Everywhere, at Every Scale
+
+"API" gets used most often for the web kind — a service you reach over a network. But the concept is far broader, and seeing that is what makes the network case's difficulty visible by contrast:
+
+- A **function** is an API to the code that calls it.
+- A **library** is an API — a set of functions exposing capability while hiding its internals.
+- An **operating system** exposes an API so programs can open files without knowing how the disk works.
+- A **service across a network** exposes an API so other systems can use it without sharing its code or database.
+
+```mermaid
+flowchart LR
+    C["📞 Caller"] -->|"uses the interface"| I["🔲 API<br/>the exposed surface"]
+    I -.->|"hides"| M["⚙️ Implementation<br/>the private machinery"]
+    C -.->|"❌ cannot see or touch"| M
+```
+
+All four are the same idea: a stable surface over a hidden interior. The difference — the *entire* difference this phase is built on — is what sits between the caller and the interface. For a function, nothing. For a network service, a network. And a network changes everything, which is §2.
+
+> 💡 **Key Insight**
+>
+> An API is the deliberate separation of **interface** (what you expose) from **implementation** (how it works), and its whole value is that the two can change independently — you can rewrite the inside freely as long as the outside keeps its promise. A function already is one. That's worth holding onto, because it means the hard parts of APIs that follow are *not* inherent to the idea of an interface — they're what happens when you take this simple, safe local concept and stretch it across a network that can fail.
+
+### Quick Recap — What an API Actually Is
+
+- An **API** is the exposed set of operations plus the rules for using them, kept separate from how they actually work.
+- The core split is **interface** (the fixed, public surface) versus **implementation** (the private, changeable machinery).
+- Its value is that the two move independently — **the inside can change freely while the outside keeps its promise**.
+- The concept spans every scale — function, library, OS, network service — and the network case is hard not because of the interface but because of what sits under it (§2).
