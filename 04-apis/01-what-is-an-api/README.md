@@ -576,3 +576,77 @@ This is the bridge into the rest of the phase. Every upcoming topic is a **style
 - The shape is set by two questions — **who initiates** and **whether the caller waits** — and it's dictated by the problem, so it's a deeper choice than the style.
 - Choosing the wrong shape can't be fixed by the style: **polling to fake server-push** is the classic symptom of a shape mismatch.
 - Every shape still **inherits §2–§8** — network failure, contract stability, unknown outcomes, boundary control — so the later style topics build on this document rather than replacing it.
+
+---
+
+## 10. Putting It All Together — Turning an Internal Function Into a Public API
+
+A team has a function. Inside their application, `calculate_shipping(order)` returns a shipping cost. It's been called millions of times, always correctly, and nobody has ever thought about it as an API — it's just a function.
+
+Then a partnership lands: an external company wants to use that shipping calculation in their own checkout. The function needs to become a network API. Watch each section of this document arrive, uninvited, in order.
+
+### It Starts Looking Identical (§1, §2)
+
+They wrap the function in an endpoint. The external team calls it instead of importing it, and at first it seems trivial — same inputs, same output, a thin layer of network in between. The code on both sides reads almost the same as a function call.
+
+The resemblance lasts until the first bad afternoon. The external team reports intermittent failures the internal team can't reproduce, because the function *never* fails for them — it's the *network* between the two companies that's failing (§2). For the first time, "does `calculate_shipping` work?" has a new answer: *it depends whose network you ask from.* The function that shared its callers' fate now fails independently of them.
+
+### The Contract Stops Being Free to Change (§3, §5)
+
+Months in, the internal team wants to improve the calculation — it now returns cost plus an estimated delivery date, and they rename a field to something clearer.
+
+Internally, that was a one-line change across their own code. Now it breaks the partner's checkout the moment it deploys, because the partner is a caller they **can't force to upgrade** (§5). What was a trivial refactor is now a breaking change to a contract someone else depends on. They learn to add the new field beside the old one and leave the old name working — backward compatibility (§5) — and they discover that the *meaning* of "shipping cost" (does it include tax? handling?) was never written down, only assumed, and the partner assumed differently (§3's semantics). The bug wasn't in anyone's code; it was in the contract's unstated meaning.
+
+### A Retry Charges Twice (§6)
+
+The endpoint gets a companion: `reserve_shipping_slot`, which actually books capacity. One day the partner's request succeeds, but the *response* is lost to a network blip. The partner, seeing only silence, does the reasonable thing and retries (§6) — and books a second slot. A duplicate, born entirely from the unknowable outcome (§6): the operation succeeded and the caller couldn't tell.
+
+The fix isn't to stop retrying — retrying is correct. It's to make the booking **idempotent** (§6) so a repeated request lands as a no-op. They note it as a real design change to make, and that it's a whole topic of its own.
+
+### The Boundary Earns Its Keep (§7, §8)
+
+Word spreads and more partners sign on. Now the endpoint faces callers the team doesn't fully know — the API has drifted from private toward partner-facing, and its blast radius has grown with its audience (§8).
+
+Problems arrive that a function never had: one partner's buggy client hammers the endpoint thousands of times a second, threatening everyone else's capacity. The team adds **rate limiting** (§7) at the boundary. They add **authentication** so they know which partner each call belongs to (§7). The boundary that the network forced on them turns out to be the one place they can impose all of this at once — the compensation (§7) for everything the network took away.
+
+### The Payoff
+
+A year later the shipping calculation is a real API with multiple partners, a versioned contract, idempotent state changes, authentication, and rate limits. None of that was in the original function, and none of it was optional — each piece was forced by the same underlying event: **the function's callers moved to the other side of a network.**
+
+The lesson the team writes down:
+
+> **We thought we were "exposing a function over HTTP." We were actually taking on every consequence of two systems failing independently. The function never changed — `calculate_shipping` computes the same number it always did. Everything hard came from *where the caller now stands.* An API isn't a function you can call remotely; it's a relationship with someone you can't control, over a connection that can fail, governed by a promise you can no longer freely break.**
+
+That is the whole of this document in one migration: the interface stayed simple, and the network turned it into a contract with obligations.
+
+---
+
+## 11. Final Recap
+
+| Concept | Core Insight | Biggest Tradeoff |
+|---|---|---|
+| **What an API is** | Interface (exposed surface) separated from implementation (hidden machinery) | The boundary you gain must be designed and defended forever |
+| **Local vs remote** | The same-looking call fails independently and answers on its own schedule | Making it *look* local hides the danger without removing it |
+| **The contract** | Operations, inputs, outputs, errors — and **semantics** no schema captures | Identical signatures can mean different things; meaning breaks silently |
+| **Encapsulation** | Hiding the inside lets it change freely while the promise holds | Everything you expose becomes a permanent commitment |
+| **Surviving change** | You can't force callers to upgrade, so old and new must coexist | Backward compatibility turns from courtesy into obligation |
+| **Failure first-class** | A remote call's third outcome — *unknown* — forces retries | Retries duplicate; the escape is **idempotency** |
+| **Boundaries** | The one door every caller passes is where control is enforced | It concentrates control and risk in the same place |
+| **Audience** | Who can call it sets how permanent the contract is | Going public is an irreversible commitment to strangers |
+| **Shapes** | Request/response, streaming, push, fire-and-forget — set by the problem | Wrong shape can't be patched by style choice |
+
+### The One Thing to Remember
+
+> **An API is not a function you can call remotely — it is a contract between two parties who fail independently, and every hard thing about it flows from that one fact rather than from the data or the format. A local call shares your fate; a network call splits it, so the other side can be slow, gone, changed, or a version you've never seen while your code runs on and must cope. That single separation is why the contract can't freely change (callers you can't force to upgrade), why "did it work?" can be unanswerable (the unknown outcome, escaped only by idempotency), why the boundary becomes your one place to enforce identity and limits, and why making an API public is an irreversible promise. Design the contract, not the endpoint — because the endpoint is easy and the contract is the thing everyone else is standing on.**
+
+---
+
+## What's Next
+
+> **Topic 02 — Data Formats (JSON, XML, Protobuf)**
+
+This document treated the contract's inputs and outputs abstractly — "a balance, as a number, with a currency." But two machines that fail independently and share no memory have to turn those values into *bytes* to send them, and turn the bytes back into values on the far side. They must agree, exactly, on how.
+
+That agreement is the **data format**, and it's the next topic. JSON and its readability, XML and its heritage, Protocol Buffers and its compact contract-first binary — each makes a different trade between human-readability, size on the wire, speed to parse, and how strictly it enforces the shape the contract (§3) promised. You've seen *what* a contract is. Next: how its values actually cross the gap.
+
+---
