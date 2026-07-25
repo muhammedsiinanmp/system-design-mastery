@@ -168,3 +168,64 @@ The deep lesson: **making a remote call look like a local call hides the differe
 - A local call **shares your fate**; a remote call **fails independently** — the callee can be down, slow, or overloaded while your code runs on.
 - A network makes the outcome **genuinely unknowable**: a lost request and a lost response both appear as silence, so "did it work?" may have no answer (→ §6).
 - The assumptions that hold locally — reliable, instant, always-up — are all **false over a network**, and making the call *look* local hides that without removing it.
+
+---
+
+## 3. The Contract and Its Parts
+
+If an API is a promise between two parties, it's worth being exact about what, specifically, is being promised. People reach for the word **contract**, and it's the right word — but the contract is bigger than most people picture, and the parts they forget are the ones that cause the trouble.
+
+### What Both Sides Are Agreeing To
+
+A complete API contract has more terms than "here's the URL and the fields":
+
+| Part of the contract | What it fixes | Example |
+|---|---|---|
+| **Operations** | What you're allowed to ask for | "Fetch a balance," "create an order" |
+| **Inputs** | What you must supply, and in what shape | An account ID, as a string |
+| **Outputs** | What comes back, and in what shape | A balance, as a number, with a currency |
+| **Errors** | How failure is reported, and which failures exist | "Not found," "not allowed," "try later" |
+| **Semantics** | What the operation actually *means* and *does* | Does "create order" also charge the card? |
+
+The first three are the obvious ones, and they're the parts a schema or documentation captures well. The last two are where contracts quietly fail.
+
+### Errors Are Part of the Promise
+
+A contract that only describes success describes half of what callers depend on. Over a network, failure is common (§2), so *how* an API fails is as much a part of its interface as how it succeeds.
+
+If callers can't tell "the account doesn't exist" from "you're not allowed to see it" from "the service is briefly overloaded," they can't respond correctly — and the natural wrong response to an ambiguous error is to retry, which turns a small problem into a bigger one. A well-designed error surface tells the caller not just *that* something failed but *which kind* of failure it was, so they can distinguish "give up, this will never work" from "wait and try again." Defining those categories is designing the contract, not an afterthought to it.
+
+### Semantics — The Part No Schema Captures
+
+Here is the subtlest and most important part. A schema can tell you an operation is called `create_order` and takes a cart ID and returns an order ID. It cannot tell you what `create_order` *means*:
+
+- Does it also charge the customer's card, or just record intent?
+- Does calling it twice make two orders, or is the second call ignored?
+- Does it reserve inventory? Send an email? Nothing until a later step?
+
+Two APIs with byte-for-byte identical inputs and outputs can behave completely differently, because the *meaning* of the operation lives in none of the visible parts. This is why reading an API's type signatures is never enough to use it correctly — the signature is the grammar, and the semantics are what the sentence means.
+
+```mermaid
+flowchart TD
+    S["📋 The contract"] --> V["Visible parts<br/>operations · inputs · outputs · errors"]
+    S --> H["Hidden part<br/>SEMANTICS: what it means & does"]
+    V -->|"a schema captures this"| OK["✅ machine-checkable"]
+    H -->|"a schema cannot capture this"| RISK["⚠️ lives in docs, names, and assumptions"]
+```
+
+The semantics are carried in documentation, in careful naming, and — dangerously — in the caller's *assumptions* when the documentation is silent. An enormous share of integration bugs are semantic: both sides implemented the schema perfectly and disagreed about what an operation was supposed to do.
+
+### The Contract Is the Real Product
+
+Pulling this together: when you publish an API, the artifact other people build on is not your code and not your data — it's this contract. They depend on the operations existing, the shapes holding, the errors being distinguishable, and above all the *meaning* staying stable. That's why later topics in this phase exist at all: styles like REST and gRPC are different ways of *expressing* this contract, formats like JSON are ways of *serializing* its inputs and outputs, and versioning (§5) is how the contract is allowed to *change*. All of them are in service of this one thing — the agreement about what interacting looks like.
+
+> 💡 **Key Insight**
+>
+> A contract is more than its schema. Operations, inputs, and outputs are the machine-checkable part, but **errors** and **semantics** — how it fails and what it actually means — are equally binding and largely uncheckable. Two APIs with identical signatures can do entirely different things, so the deepest part of the promise is the part no type system enforces. When integrations break between teams who both "followed the spec," the disagreement is almost always here: in meaning, not in shape.
+
+### Quick Recap — The Contract and Its Parts
+
+- An API contract has five parts: **operations, inputs, outputs, errors, and semantics** — not just the URL and fields.
+- **Errors are part of the promise**: callers must be able to tell "never going to work" from "try again," or they retry blindly (→ §6).
+- **Semantics** — what an operation means and does — are captured by *no schema*, so identical signatures can hide completely different behaviour.
+- The contract, not the code or data, is **the actual product** others build on — which is why styles, formats, and versioning all exist to serve it.
