@@ -125,7 +125,7 @@ is Phase 02's topic.
 
 | # | Topic | Status | File |
 |---|---|---|---|
-| 01 | What is an API? | 🚧 In Progress | `04-apis/01-what-is-an-api/README.md` |
+| 01 | What is an API? | ✅ Done | `04-apis/01-what-is-an-api/README.md` |
 | 02 | Data Formats (JSON, XML, Protobuf) | 📋 Planned | `04-apis/02-data-formats/README.md` |
 | 03 | API Architectural Styles | 📋 Planned | `04-apis/03-api-architectural-styles/README.md` |
 | 04 | REST API Design | 📋 Planned | `04-apis/04-rest-api-design/README.md` |
@@ -374,7 +374,7 @@ is Phase 02's topic.
 | 01 | Introduction | 7 | 7 | 0 | 0 | 0 |
 | 02 | Core System Properties | 5 | 5 | 0 | 0 | 0 |
 | 03 | Networking | 7 | 6 | 0 | 0 | 1 |
-| 04 | APIs & Communication | 15 | 0 | 1 | 13 | 1 |
+| 04 | APIs & Communication | 15 | 1 | 0 | 13 | 1 |
 | 05 | Storage & Databases | 27 | 0 | 0 | 19 | 8 |
 | 06 | Scaling & Performance | 10 | 0 | 0 | 10 | 0 |
 | 07 | Async & Events | 13 | 0 | 0 | 12 | 1 |
@@ -382,7 +382,7 @@ is Phase 02's topic.
 | 09 | Architecture & Microservices | 13 | 0 | 0 | 7 | 6 |
 | 10 | Observability & Security | 13 | 0 | 0 | 11 | 2 |
 | 11 | Interview Preparation | 21 | 0 | 0 | 4 | 17 |
-| **Total** | | **150** | **18** | **1** | **91** | **40** |
+| **Total** | | **150** | **19** | **0** | **91** | **40** |
 
 ---
 
