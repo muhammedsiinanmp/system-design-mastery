@@ -603,3 +603,76 @@ A final reframing: this is not a one-format decision for a whole system. A matur
 - Common defaults: **JSON** for public/low-volume, **Protobuf** for internal high-volume, **XML** where it's entrenched or strict validation is required.
 - The frequent mistake is the **non-decision** — JSON everywhere by inertia — which is wrong exactly on the high-volume hops that matter; the mirror mistake is over-optimizing where efficiency is free anyway.
 - Format is a **per-hop** choice: mature systems mix JSON at the edge with protobuf on hot internal paths, translating between them.
+
+---
+
+## 10. Putting It All Together — One Payload, Three Formats, Three Outcomes
+
+A team runs a product-catalog system. At the center is one data structure — a product, with a name, price, description, and a list of variants — and it travels three different journeys. Watch the two axes decide each one.
+
+### Journey 1 — The Public API (JSON is right)
+
+External developers integrate against a public endpoint to fetch product data. The team uses JSON, and it's the correct call for every reason in §4: the callers are developers who need to read responses while building against them (§2's readability), they're on browsers and every language under the sun (universality), and the traffic is human-scale — someone loads a product page. The payload's size is noise next to the round trip it rode in on (§8).
+
+Nobody thinks hard about this and nobody needs to. This is exactly the hop where JSON's defaults are right and the format choice is genuinely low-stakes.
+
+### Journey 2 — The Internal Fan-Out (JSON silently hurts)
+
+Behind that endpoint, rendering one product page fans out to a dozen internal services — pricing, inventory, recommendations, reviews — each returning product data, many returning *lists* of it. All of it is JSON, because that's what the public edge used and nobody made a second decision (§9's non-decision).
+
+At scale it bites. The recommendation service alone returns hundreds of products per call, millions of times a day, and each product's JSON repeats `"name"`, `"price"`, `"description"` as field-name strings over and over (§8) — most of the bytes are structure, not content. Two symptoms show up on dashboards nobody initially connects to the format: internal bandwidth is far higher than the data warrants, and services burn measurable CPU just parsing JSON text into objects (§8's parse cost).
+
+They move the hot internal hops to **protobuf**. The same product data, schema-defined once (§6), drops to roughly a fifth the size, and parse CPU falls with it. The public edge stays JSON — they translate at the boundary (§9). Bandwidth and CPU both drop sharply, and no external caller notices anything, because nothing they touch changed.
+
+### Journey 3 — The Schema Change That Proves the Point (§7)
+
+Months later, a requirement: split `name` into `short_name` and `full_name`.
+
+On the **public JSON** side, this is handled as an additive change — they *add* the two new fields and leave `name` in place, because renaming or removing it would break external callers who look for `name` by that exact string (§7). JSON's evolution is convention-only, so they can't remove the old field for a long time, if ever — they're stuck carrying all three.
+
+On the **internal protobuf** side, the same change is clean. Because fields are keyed by number (§7), they add `short_name` and `full_name` as new numbered fields; old services that don't know them preserve them as unknown fields and keep working (forward compatibility), and new services reading old data get defaults (backward compatibility). No lockstep deploy, no coordination window. The evolution that was a permanent liability in JSON is a routine, safe change in protobuf.
+
+### The Payoff
+
+One data structure, three journeys, three correct-but-different answers — all produced by the same two questions. Public edge: human readers, modest volume → text, schemaless → JSON. Internal fan-out: machines, huge volume → binary, schema → protobuf. And the schema change exposed the deepest difference (§7): the format didn't just change the byte size, it changed whether a routine evolution was *safe*.
+
+The lesson the team writes down:
+
+> **We thought "what format?" was one decision for the system. It's a decision *per hop*, and the same data structure wanted a different answer at the public edge than on the internal fan-out — not because one format is better, but because the readers and the volume were different. The format we picked by inertia was right in one place and quietly expensive in another, and we only found out when the bill and a schema change forced us to look. Ask the two questions at each boundary, not once for the whole system.**
+
+That is this document in one system: the format is a position on two axes, chosen to fit who reads the bytes and how many there are — and the right answer legitimately differs from one hop to the next.
+
+---
+
+## 11. Final Recap
+
+| Format | Axes (text/binary · schema?) | Best For | Biggest Cost |
+|---|---|---|---|
+| **JSON** | Text · schemaless | Public/web APIs, low-volume, anything human-read | Verbose; no enforced schema; thin, fuzzy types |
+| **XML** | Text · schema-capable (XSD) | Enterprise, legacy, strict-contract, documents | Heavy and complex; poor fit to code |
+| **Protocol Buffers** | Binary · schema-first | Internal high-volume, service-to-service | Opaque; needs schema + build step + coordination |
+
+| Idea | Core Insight |
+|---|---|
+| **Serialization** | A value in memory is private; crossing to another process always needs encoding to agreed bytes, and fidelity can be lost in translation |
+| **Text vs binary** | Same properties traded opposite ways: readability vs size-and-speed — no universal winner |
+| **Schema vs schemaless** | Shape enforced on write (safe, coordinated) vs discovered on read (flexible, unprotected) |
+| **Schema evolution** | The deepest difference: protobuf makes safe change *structural* (field numbers); JSON leaves it to *convention* |
+| **Size and speed** | A real 4–5× multiplier — decisive at volume, noise for one small response; compression narrows size not parse cost |
+| **Choosing** | No best format, only a fit; decide per hop from who reads the bytes and how many there are |
+
+### The One Thing to Remember
+
+> **A data format is not a default to inherit — it is a position on two axes, text-versus-binary and schema-versus-schemaless, and the right position is dictated by who reads the bytes and how many of them there are. JSON is text and schemaless: readable, universal, and correct for the public web and anything low-volume, at the cost of verbosity, no enforced shape, and a type system that quietly mangles big numbers and dates. Protocol Buffers is its mirror — binary and schema-first: compact, fast, type-safe, and cleanly evolvable because fields are keyed by number rather than name, at the cost of readability, a build step, and coordination. XML is the heritage corner, still right where strict contracts and entrenchment outweigh its weight. There is no best format, only a fit — and because a single system's readers and volumes differ from one hop to the next, the honest answer is usually to use more than one, chosen deliberately each time by asking the two questions.**
+
+---
+
+## What's Next
+
+> **Topic 03 — API Architectural Styles**
+
+This document covered how values become bytes — the *format*. But a format is only one of the choices an API makes. Once you can serialize a product, you still have to decide how a caller *asks* for it: one endpoint per resource, or one flexible query? A rigid contract, or a schema the client shapes? Ask-and-wait, or a stream?
+
+Those are questions of **architectural style**, and it's the next topic — the map of the major styles (the request/response family, query-based, streaming), what each optimizes for, and how to choose among them. You've seen how the bytes are shaped. Next: how the conversation that carries them is shaped.
+
+---
