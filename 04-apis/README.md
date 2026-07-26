@@ -35,7 +35,7 @@ fail — so the two phases are read together.
 | # | Topic | The question it answers |
 |---|---|---|
 | 1 | [What Is an API?](01-what-is-an-api/README.md) | What actually changes when the function you're calling lives on another machine, owned by another team, that can fail or change without warning? *(standalone — assumes no prior reading)* |
-| 2 | Data Formats (JSON, XML, Protobuf) *(coming)* | How the two sides serialize meaning into bytes — and what each format trades away |
+| 2 | [Data Formats (JSON, XML, Protobuf)](02-data-formats/README.md) | How does a value cross the gap between two programs — and why is "just use JSON" a decision with consequences? *(standalone — assumes no prior reading)* |
 | 3 | API Architectural Styles *(coming)* | The map of the styles — request/response, query, streaming — and how to choose |
 | 4 | REST API Design *(coming)* | Resources, methods, and the constraints that make an interface predictable |
 | 5 | REST vs GraphQL *(coming)* | Over-fetching, under-fetching, and who decides the shape of a response |
