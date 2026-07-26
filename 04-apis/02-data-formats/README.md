@@ -90,3 +90,67 @@ None of these are network failures; the bytes arrive perfectly. The loss happens
 - A format is the **agreement** on what those bytes mean — both sides must apply the same rules, which is why formats can't be mixed.
 - **Fidelity** is a real axis of difference: numbers, dates, and precision can be silently altered in translation even when every byte arrives.
 - Every format in this document — JSON, XML, Protobuf — is a different answer to the one question serialization poses: *what does the byte sequence look like?*
+
+---
+
+## 2. The First Axis — Text vs Binary
+
+Formats vary in a hundred small ways, but two decisions explain almost everything that matters, and the rest of this document is organized around them. This section is the first: **is the byte sequence text a human can read, or binary tuned for a machine?**
+
+### What "Text" and "Binary" Actually Mean
+
+A **text format** encodes everything as human-readable characters. The number 36 is written as the characters `3` and `6`; `true` is written as the letters `t-r-u-e`. Open the bytes in any text editor and you see something you can read.
+
+A **binary format** encodes values directly as bytes with no readable representation. The number 36 might be a single byte with value `36`; a boolean might be one bit. Open the bytes in a text editor and you see garbage — because they were never meant for your eyes, only for a program that knows the layout.
+
+```
+Text (JSON):    {"age":36}          ← 10 characters you can read
+Binary (proto): 08 24               ← 2 bytes: "field 1 = 36", unreadable
+```
+
+Both encode "age is 36." One is legible and ten bytes; the other is opaque and two.
+
+### What Text Buys You
+
+Readability is not a cosmetic nicety — it has real operational weight:
+
+- **You can debug by looking.** Print the payload, read it, see the bug. No special tooling.
+- **Anything can produce and consume it.** A text format works from any language, any shell, `curl`, a log grep, a copy-paste into a ticket.
+- **It's self-explanatory.** A new engineer sees `{"status":"shipped"}` and understands it instantly.
+
+The cost is everywhere and constant: text is **bigger** (the number 1000000 is 7 characters instead of a few bytes) and **slower to parse** (the reader must scan characters, find delimiters, and convert `"36"` the text into 36 the number, every field, every time).
+
+### What Binary Buys You
+
+Binary inverts every term:
+
+- **Smaller** — values are stored directly, no characters, no quotes, no whitespace. Often several times fewer bytes for the same data.
+- **Faster to parse** — the reader copies bytes into values rather than scanning and converting. No delimiter hunting, no text-to-number parsing.
+- **Richer types natively** — a binary format can distinguish an integer from a float from a raw blob at the byte level, without the text-format tricks.
+
+The cost is the mirror image: you **can't read it**, so debugging needs tooling that knows the format, and you usually need the schema (§3) even to decode it at all.
+
+```mermaid
+flowchart TD
+    T["📄 Text format<br/>JSON, XML"] --> TP["🟢 readable · debuggable · universal"]
+    T --> TC["🔴 bigger · slower to parse"]
+    B["🔢 Binary format<br/>Protobuf"] --> BP["🟢 compact · fast · rich types"]
+    B --> BC["🔴 opaque · needs tooling to read"]
+```
+
+### The Trade Is Real and Has No Winner
+
+Notice these are the *same* properties traded in opposite directions. Text spends bytes and CPU to buy human access; binary spends human access to buy bytes and CPU. Neither is better in the abstract — the right choice depends entirely on **who reads the bytes and how many there are**, which is exactly §9's question.
+
+A public API called occasionally by developers integrating against it lives or dies on debuggability — text wins easily, and the size cost is noise. A service serializing the same structure a million times a second between machines that never need a human to read it — binary's size and parse savings are the difference between one server and ten, and the lost readability costs nothing because nobody was going to read it anyway. Same trade, opposite answers, because the reader and the volume differ.
+
+> 💡 **Key Insight**
+>
+> Text versus binary is the same set of properties — size, parse speed, readability — sold in opposite directions: text pays bytes and CPU for human access; binary sells human access for bytes and CPU. There's no universal winner, only a fit to circumstance. The question that resolves it is never "which is better" but **"is a human going to read these bytes, and how many of them are there?"** — and that answer flips completely between a public API and a high-volume internal hop.
+
+### Quick Recap — Text vs Binary
+
+- **Text formats** encode values as readable characters; **binary formats** encode them directly as bytes with no readable form.
+- Text buys **debuggability and universality** at the cost of **size and parse speed**; binary buys **size and speed** at the cost of **readability**.
+- They are the same properties traded in opposite directions — **neither wins in the abstract**.
+- The decider is **who reads the bytes and at what volume** — noise for a public API, decisive for a high-volume internal hop (§9).
