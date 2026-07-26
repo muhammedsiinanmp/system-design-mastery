@@ -481,3 +481,67 @@ There's a bigger version of this problem — changing an API's whole contract, r
 - **Protobuf evolves cleanly** because fields are keyed by **number**: adding is safe, renaming is free, unknown fields are preserved — with two rules (never reuse a number, never change a type).
 - **JSON evolves by convention only**: additive change is safe *if* readers ignore unknowns, renames always break, and nothing is enforced — discipline, not guarantee.
 - This is **format-level** evolution of one message; changing the whole contract is **API versioning** (a later topic) — layers, not competitors.
+
+---
+
+## 8. Size and Speed — What the Wire Actually Costs
+
+Sections 2 through 7 kept asserting that binary is "smaller and faster." This section makes that concrete, because the size-and-speed gap is real, measurable, and — critically — matters enormously in some places and not at all in others. Knowing which is which is the difference between a wise optimization and a pointless one.
+
+### The Same Payload, Measured
+
+Take one modest `User` object. Approximate serialized sizes:
+
+| Format | Approx. bytes | Relative |
+|---|---|---|
+| XML | ~150 | largest |
+| JSON | ~90 | baseline |
+| JSON (minified) | ~75 | a bit smaller |
+| Protobuf | ~20 | ~4–5× smaller than JSON |
+
+The exact numbers vary with the data, but the *shape* is stable: XML heaviest, JSON in the middle, protobuf several times smaller. Two things drive the gap, both from earlier sections — protobuf carries **no field names** (numbers instead, §6) and **no text encoding** (values as raw bytes, §2), while XML pays for both *and* closing tags.
+
+### Where the Bytes Come From
+
+It's worth seeing that most of a text payload often isn't the data:
+
+- In `{"name":"Ada"}`, the actual datum is `Ada` — three characters. The other ten are `"name":` and the braces and quotes: **structure, not content.**
+- Multiply by every field and every object. In a list of a thousand small records, the field names alone — repeated a thousand times — can outweigh the values.
+
+This is why the savings compound with volume and repetition: the per-object overhead that's trivial for one record becomes the dominant cost for a million.
+
+### Parse Cost, Not Just Size
+
+Size is bandwidth; parse cost is CPU, and it's the half people forget. Reading JSON means scanning characters, finding delimiters, and converting text to typed values — `"36"` the string into 36 the integer — for every field, every message. Reading protobuf means largely copying bytes into already-typed fields, guided by the schema. For a service parsing huge volumes of messages, that difference shows up directly as CPU burned and latency added, independent of the bandwidth saved.
+
+### When It Matters — and When It's Noise
+
+Here is the judgment the whole section exists to support:
+
+**Size and speed matter when:**
+- **Volume is high** — millions of messages, where 4–5× compounds into real bandwidth and CPU bills, and fewer servers.
+- **Fan-out is large** — one request triggers many internal calls, multiplying every message's cost.
+- **The network is constrained** — mobile clients on slow or metered connections, where every byte is felt by the user.
+- **Latency is tight** — high-frequency internal calls where parse time is a measurable fraction of the budget.
+
+**Size and speed are noise when:**
+- **One small response** to a human-triggered action — the user's click already cost more time than any format difference will.
+- **The payload is dominated by a big opaque blob** — a large text field or an image reference — where format overhead is a rounding error on the real payload.
+- **Development speed matters more** — an internal tool, a low-traffic endpoint, where JSON's debuggability is worth far more than bytes saved.
+
+> ⚠️ **The size-and-speed advantage of binary is real and routinely spent in the wrong place.** Switching a low-traffic public API from JSON to protobuf to "save bytes" trades away debuggability and universality for a saving no one will ever measure — a bad deal. The same switch on a million-times-a-second internal hop is the difference between one server rack and five. The format's efficiency is only worth its costs (§6) *at scale*; below that scale you're paying protobuf's price for a benefit you don't need.
+
+### Compression Is a Separate Lever
+
+One caveat that prevents a common mistake: **compression** (gzip and similar) is orthogonal to format choice. Text formats compress well — their repetition is exactly what compressors exploit — so JSON-plus-compression closes much of the *size* gap with protobuf on the wire. It does **not** close the *parse-cost* gap (you still decompress and then parse text), and it adds CPU of its own. Compression is a real tool and a separate decision from format; it's covered where transport efficiency is the subject, not here. The point for now: "JSON is bigger" is partly answered by compression, "JSON is slower to parse" is not.
+
+> 💡 **Key Insight**
+>
+> Binary's size-and-speed edge over text is real — commonly 4–5× smaller and materially faster to parse — but it's a *multiplier*, so it's decisive exactly where the multiplicand is large (high volume, big fan-out, tight latency, constrained networks) and irrelevant where it's small (one human-triggered response). Spending protobuf's readability and tooling costs to save bytes on a low-traffic API is optimizing the wrong quantity. And remember size and parse-cost are separate: compression narrows the first, never the second.
+
+### Quick Recap — Size and Speed
+
+- The same payload is roughly **XML > JSON > protobuf (~4–5× smaller than JSON)**, driven by protobuf carrying no field names and no text encoding.
+- Much of a text payload is **structure, not content** — repeated field names dominate at volume, which is why the gap compounds with scale.
+- **Parse cost** (CPU) is a separate axis from size (bandwidth): binary is faster to parse because it skips text-to-value conversion.
+- The advantage is a **multiplier** — decisive at high volume/fan-out/tight latency, noise for a single small response — and **compression** narrows size but not parse cost.
