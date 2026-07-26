@@ -642,7 +642,7 @@ One data structure, three journeys, three correct-but-different answers — all 
 
 The lesson the team writes down:
 
-> **We thought "what format?" was one decision for the system. It's a decision *per hop*, and the same data structure wanted a different answer at the public edge than on the internal fan-out — not because one format is better, but because the readers and the volume were different. The format we picked by inertia was right in one place and quietly expensive in another, and we only found out when the bill and a schema change forced us to look. Ask the two questions at each boundary, not once for the whole system.**
+> **"What format?" felt like one decision for the whole system. It's really a decision *per hop* — the same data structure wanted a different answer at the public edge than on the internal fan-out, not because one format is better but because the readers and the volume differed. The format we'd picked by inertia was right in one place and quietly expensive in another, and we only found out when the bandwidth bill and a schema change forced us to look. Ask the two questions at each boundary, not once for the whole system.**
 
 That is this document in one system: the format is a position on two axes, chosen to fit who reads the bytes and how many there are — and the right answer legitimately differs from one hop to the next.
 
