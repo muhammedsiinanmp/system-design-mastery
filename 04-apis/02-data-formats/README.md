@@ -154,3 +154,68 @@ A public API called occasionally by developers integrating against it lives or d
 - Text buys **debuggability and universality** at the cost of **size and parse speed**; binary buys **size and speed** at the cost of **readability**.
 - They are the same properties traded in opposite directions — **neither wins in the abstract**.
 - The decider is **who reads the bytes and at what volume** — noise for a public API, decisive for a high-volume internal hop (§9).
+
+---
+
+## 3. The Second Axis — Schema vs Schemaless
+
+The second decision is independent of the first and just as consequential: **is the shape of the data agreed on in advance, or discovered as you read it?**
+
+A **schema** is a formal, separate definition of what the data must look like — which fields exist, what type each is, which are required. A format is **schema-based** when that definition exists apart from the data and both sides use it. A format is **schemaless** when it doesn't — the data carries its own structure inline, and you learn the shape only by parsing it.
+
+### Schema-on-Write vs Schema-on-Read
+
+The cleanest way to see the difference is *when* the shape is enforced:
+
+- **Schema-on-write** (schema-based): the shape is checked when the data is *created*. You can't serialize a value that violates the schema — the wrong type or a missing required field fails up front, before anything is sent. The data that goes on the wire is guaranteed to match the agreed shape.
+- **Schema-on-read** (schemaless): the shape is whatever the reader finds when parsing. Nothing was enforced at write time; the receiver takes what arrives and copes — checking fields exist, guessing types, handling surprises. Validity is the reader's problem, discovered at read time.
+
+```mermaid
+flowchart LR
+    subgraph SW["Schema-on-write (schema-based)"]
+        W1["✍️ Write"] -->|"validated here"| W2["📦 Guaranteed-valid bytes"]
+        W2 --> W3["📖 Read: trust the shape"]
+    end
+    subgraph SR["Schema-on-read (schemaless)"]
+        R1["✍️ Write anything"] --> R2["📦 Self-describing bytes"]
+        R2 -->|"validated here, maybe"| R3["📖 Read: check and cope"]
+    end
+```
+
+### What Each Buys
+
+The trade parallels §2's but along a different dimension — **safety and self-description vs flexibility and independence**:
+
+| | Schema-based | Schemaless |
+|---|---|---|
+| Shape enforced | At write time, guaranteed | At read time, if at all |
+| The data is | Terse — field names may not even be in the bytes | Self-describing — names travel with values |
+| Changing the shape | Coordinated through the schema (§7) | Just start sending the new field |
+| A wrong/missing field | Caught early, by the format | Found late, by your code (or not) |
+| You need the schema to | Decode the data at all (often) | Nothing — the data explains itself |
+
+Schema-based formats catch mistakes early and can be extremely compact, because if both sides already know the shape, the bytes don't need to carry field names — position or a numeric tag is enough. The cost is coordination: there's a separate definition to manage, share, and keep in sync, and you generally can't read the data without it.
+
+Schemaless formats are flexible and self-contained: the data describes itself, so you can send new fields without anyone agreeing first, and you can read it with nothing but the bytes. The cost is that nothing protects you — a typo'd field name, a string where a number was expected, a missing value all sail through serialization and become the reader's problem at runtime.
+
+### The Two Axes Make the Map
+
+Text/binary (§2) and schema/schemaless are independent, so together they place every format on a grid — and that grid is the whole point of this document:
+
+|  | **Schemaless** | **Schema-based** |
+|---|---|---|
+| **Text** | JSON | XML (with XSD) |
+| **Binary** | *(rare)* | Protocol Buffers |
+
+JSON is text and schemaless — readable and flexible, unsafe and verbose. XML is text and can be schema-based — readable and validated, but heavy. Protocol Buffers is binary and schema-based — compact and safe, but opaque and coordination-heavy. Three corners of the grid, three different sets of answers, and the sections that follow are each corner in turn.
+
+> 💡 **Key Insight**
+>
+> The second axis is *when the shape is enforced*: **schema-on-write** guarantees valid, terse data at the cost of a shared definition you must coordinate; **schema-on-read** gives flexibility and self-describing data at the cost of catching every mistake late, in your own code. Combined with text-vs-binary, these two independent axes place JSON, XML, and Protobuf at three different corners of a grid — which is why they aren't ranked but *positioned*, and why the right one is wherever your needs land on the two axes.
+
+### Quick Recap — Schema vs Schemaless
+
+- A **schema** is a separate, formal definition of the data's shape; **schema-based** formats use one, **schemaless** formats carry structure inline.
+- **Schema-on-write** validates when data is created (guaranteed shape, needs coordination); **schema-on-read** leaves validity to the receiver (flexible, mistakes found late).
+- Schema-based data can be **terse** (no field names needed on the wire) but usually **needs the schema to decode**; schemaless data is **self-describing** but unprotected.
+- Combined with **text vs binary**, this axis maps the three formats to three grid corners: **JSON** (text/schemaless), **XML** (text/schema), **Protobuf** (binary/schema).
