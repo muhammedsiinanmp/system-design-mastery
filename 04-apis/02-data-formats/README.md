@@ -545,3 +545,61 @@ One caveat that prevents a common mistake: **compression** (gzip and similar) is
 - Much of a text payload is **structure, not content** — repeated field names dominate at volume, which is why the gap compounds with scale.
 - **Parse cost** (CPU) is a separate axis from size (bandwidth): binary is faster to parse because it skips text-to-value conversion.
 - The advantage is a **multiplier** — decisive at high volume/fan-out/tight latency, noise for a single small response — and **compression** narrows size but not parse cost.
+
+---
+
+## 9. Choosing — Match the Format to the Reader
+
+Eight sections of properties resolve into one decision, and — as with most real engineering choices — the answer isn't a favorite format but a *method* for reading the situation. The two axes from §2 and §3 are that method.
+
+### The Two Questions That Decide
+
+Everything reduces to the two axes, each answered by a fact about your situation, not a preference:
+
+- **Text or binary?** → *Will a human need to read these bytes, and does the volume make size and parse cost matter?* Human readers or modest volume push to text; machine-only readers at high volume push to binary.
+- **Schema or schemaless?** → *Do you need the shape enforced and cleanly evolvable, or do you need flexibility and zero setup?* Strictness and safe evolution push to schema; speed of development and looseness push to schemaless.
+
+Answer those two honestly about *your* data, *your* readers, and *your* volume, and the format falls out.
+
+```mermaid
+flowchart TD
+    Q1{"Will a human read it,<br/>or is volume modest?"}
+    Q1 -->|"yes → text"| Q2{"Need enforced shape<br/>+ clean evolution?"}
+    Q1 -->|"no → binary, high volume"| PB["🔢 Protocol Buffers"]
+    Q2 -->|"no"| JS["📄 JSON"]
+    Q2 -->|"yes, and heritage/strict"| XM["📐 XML"]
+```
+
+### The Common Cases
+
+The axes land on a small set of defaults that cover most real systems:
+
+| Situation | Format | Why |
+|---|---|---|
+| **Public / web-facing API** | **JSON** | Readable, universal, browser-native; size is noise at human scale (§4) |
+| **Internal, high-volume service-to-service** | **Protobuf** | 4–5× smaller, faster to parse, type-safe, clean evolution — where the multiplier bites (§6, §8) |
+| **Enterprise / legacy / strict-contract** | **XML** | Entrenched, and XSD validation where it's genuinely required (§5) |
+| **Internal tool, low traffic** | **JSON** | Debuggability beats efficiency; the savings would never be felt |
+
+The pattern: **JSON is the right default for anything public or low-volume; protobuf earns its costs specifically at internal high volume; XML is a fit where it's already the standard.** Most systems use more than one — JSON at the public edge, protobuf on the hot internal paths — because the right answer differs by hop.
+
+### The Non-Decision to Avoid
+
+The most common mistake isn't picking the wrong format — it's **not choosing at all** and inheriting JSON everywhere because it's the default. That's correct for most hops and quietly wrong for the few that matter: the internal service serializing millions of messages a second in JSON is burning bandwidth and CPU (§8) on a format chosen by inertia, not fit. The fix is not "use protobuf everywhere" — that would spend readability where it's valuable to save bytes where they're free. It's to *notice* the high-volume hops and match the format to them specifically.
+
+The symmetric mistake is over-optimizing: reaching for protobuf on a public API or a low-traffic endpoint because it's "more efficient," and paying its readability and tooling costs for a benefit no one will measure. Both mistakes come from treating the format as a global default instead of a per-situation fit.
+
+### Mixing Is Normal
+
+A final reframing: this is not a one-format decision for a whole system. A mature architecture routinely runs JSON at its public boundary — where callers are humans and browsers — and protobuf on its internal high-throughput paths, translating at the edge. Choosing a format is a *per-hop* decision driven by that hop's readers and volume, not a company-wide religion. The two axes are how you make that call each time.
+
+> 💡 **Key Insight**
+>
+> There is no best format, only a best *fit*, and two questions produce it: **will a human read these bytes at meaningful volume** (text vs binary) and **do you need enforced, cleanly-evolvable shape** (schema vs schemaless). JSON fits public and low-volume, protobuf fits internal high-volume, XML fits entrenched-and-strict — and most systems use several, per hop. The real error is treating the format as one global default to inherit rather than a per-situation choice; both under-thinking (JSON everywhere) and over-optimizing (protobuf everywhere) come from skipping the two questions.
+
+### Quick Recap — Choosing
+
+- The choice reduces to the **two axes**, each set by a fact not a preference: human-readable/high-volume (text vs binary) and enforced-and-evolvable (schema vs schemaless).
+- Common defaults: **JSON** for public/low-volume, **Protobuf** for internal high-volume, **XML** where it's entrenched or strict validation is required.
+- The frequent mistake is the **non-decision** — JSON everywhere by inertia — which is wrong exactly on the high-volume hops that matter; the mirror mistake is over-optimizing where efficiency is free anyway.
+- Format is a **per-hop** choice: mature systems mix JSON at the edge with protobuf on hot internal paths, translating between them.
