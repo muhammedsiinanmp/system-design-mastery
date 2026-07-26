@@ -257,7 +257,7 @@ Every one of JSON's strengths has a matching cost, and they're the reasons you'd
 - **It's verbose.** Field names repeat in *every* object — send a thousand users and the strings `"name"`, `"age"`, `"admin"` ship a thousand times each. Text encoding (§2) adds its overhead on top.
 - **It's schemaless by default.** Nothing enforces shape (§3). A misspelled field, a missing value, a string where you expected a number — all valid JSON, all discovered at read time by your code. (There are add-on schema languages, but they're optional bolt-ons, not part of JSON itself.)
 - **Its type system is thin, and that bites.** JSON has objects, arrays, strings, one number type, booleans, and null. That's it. The consequences are real:
-  - **No integer/float distinction** — one `number` type, and large integers can silently lose precision when a parser treats them as floating-point. Identifiers and money are the classic casualties.
+  - **No integer/float distinction** — one `number` type, and large integers can silently lose precision when a parser treats them as floating-point. The concrete edge: JSON numbers are commonly parsed as 64-bit floats, which hold only about 15–16 significant digits exactly, so any integer beyond roughly 9 quadrillion (2⁵³) can come back *changed* — a 19-digit ID arrives as a nearby wrong number. Identifiers and money are the classic casualties, which is why large IDs are so often sent as strings.
   - **No date type** — dates travel as strings, and the sender and receiver must agree on the string format out-of-band or one of them guesses wrong.
   - **No raw-bytes type** — binary data has to be encoded into text (inflating it), because JSON can only carry characters.
 
@@ -372,6 +372,8 @@ This is the source of truth for the data's shape, and it's *separate* from any d
 - **Every field has a fixed type** (`string`, `int32`, `bool`). Types are declared and enforced, and the format has many precise numeric types — unlike JSON's single fuzzy `number` (§4).
 
 From that schema, a build step **generates code** in your language — classes for reading and writing `User` values — so you work with native objects and the generated code handles serialization. That build step is real overhead JSON doesn't have, and it's the price of everything that follows.
+
+The field numbers also explain a detail of the byte layout worth seeing once. In the serialized output, each field is preceded by a single tag byte that packs *both* the field number and its wire type — for field 1, the tag encodes "field 1, length-delimited"; for field 2, "field 2, variable-length integer." That's how a reader with the schema knows a value belongs to `name` versus `age` without any field name present: the tag says "field 1," and the schema says field 1 is `name`. The name genuinely never travels.
 
 ### What the Bytes Look Like
 
@@ -500,6 +502,8 @@ Take one modest `User` object. Approximate serialized sizes:
 | Protobuf | ~20 | ~4–5× smaller than JSON |
 
 The exact numbers vary with the data, but the *shape* is stable: XML heaviest, JSON in the middle, protobuf several times smaller. Two things drive the gap, both from earlier sections — protobuf carries **no field names** (numbers instead, §6) and **no text encoding** (values as raw bytes, §2), while XML pays for both *and* closing tags.
+
+To make the field-name overhead concrete: the boolean `admin: true` costs 1 bit of actual information. In JSON, `"admin":true` is 12 bytes — 96 bits — of which the datum is a rounding error and the rest is the field name and punctuation. In protobuf the same field is 2 bytes: one for the field-number-and-type tag, one for the value. That ~50 %-to-a-few-percent ratio of content-to-overhead is exactly what compounds across millions of records.
 
 ### Where the Bytes Come From
 
