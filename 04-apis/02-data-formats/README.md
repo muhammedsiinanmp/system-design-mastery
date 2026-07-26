@@ -423,3 +423,61 @@ Protobuf is not free, and the costs are exactly the reasons not to use it everyw
 - The **`.proto` schema comes first** and is the source of truth; a build step generates read/write code, and every field has a **number** and a **fixed type**.
 - The bytes are **compact and fast** because the shared schema lets them omit field names and store values directly — and **opaque**, undecodable without the schema.
 - It buys **size, speed, type safety, and clean evolution (§7)** at the cost of **readability, a build step, and coordination** — the inverse of JSON's trade.
+
+---
+
+## 7. Schema Evolution — Changing the Shape Without Breaking Readers
+
+This is the section that most distinguishes the three formats, and the one that matters most in a long-lived system. The setup: your data's shape is never final. You'll add fields, rename things, drop what you no longer need. The problem: **the programs reading your data don't all update at the same moment you do.** An older reader will receive data written by a newer writer, and a newer reader will receive data written by an older writer — both, constantly, in any real system.
+
+Schema evolution is how a format lets the shape change while readers on *both* sides of the change keep working. Formats differ enormously here, and it's the sharpest reason to prefer one.
+
+### Two Directions of Compatibility
+
+There are two ways old and new meet, and a robust format handles both:
+
+- **Backward compatibility** — a *new* reader can read data written by an *old* writer. (You upgraded the reader first; it must still understand yesterday's data.)
+- **Forward compatibility** — an *old* reader can read data written by a *new* writer. (You upgraded the writer first; yesterday's reader must not choke on tomorrow's data.)
+
+```mermaid
+flowchart LR
+    OW["✍️ Old writer"] -->|"backward compat"| NR["📖 New reader<br/>reads old data ✅"]
+    NW["✍️ New writer"] -->|"forward compat"| OR["📖 Old reader<br/>reads new data ✅"]
+```
+
+Forward compatibility is the harder and more valuable one: it means you can deploy a change to writers *without* having already updated every reader — which, with readers you don't control, is the only way change is ever safe.
+
+### How Protobuf Evolves Cleanly
+
+Recall §6: protobuf identifies each field by a **number**, not its name, and that number is the entire mechanism of evolution.
+
+- **Adding a field** is safe. Give it a new, unused number. An old reader receives the new field, doesn't recognize the number, and — this is the crucial behavior — **preserves it as an unknown field and ignores it** rather than failing. Forward compatibility, by construction. A new reader reading old data simply finds the field absent and uses a default. Backward compatibility, too.
+- **Renaming a field** is a non-event. The name on the wire is the *number*, not the text, so changing `name` to `full_name` in the schema — keeping number `1` — changes nothing in the bytes. Readers key off the number and never notice. (In JSON this same rename is a breaking change; here it's free.)
+- **The rules that keep it safe:** never reuse a field number, and never change a field's type. Both would make new bytes mean something different to a reader expecting the old meaning. Protobuf even lets you `reserve` retired numbers so nobody accidentally recycles one.
+
+The design goal was evolution from the start, and it shows: the common changes are safe by default, and the dangerous ones are the ones you're explicitly told not to do.
+
+### How JSON Evolves — By Convention Only
+
+JSON has *no* built-in evolution mechanism, because it has no schema to evolve (§3). What it has instead is conventions, and conventions hold only as well as everyone follows them:
+
+- **Adding a field** is usually safe — *if* every reader ignores fields it doesn't recognize. That's the near-universal convention, and it's why additive change is JSON's safe move. But a strict reader that rejects unknown fields turns the same addition into a break (a trap noted back in Topic 01). The safety lives in reader behavior, not in the format.
+- **Renaming a field** is *always* breaking. The field name is what's on the wire (§4), so any reader looking for the old name stops finding it the instant you rename. There's no number to hide behind.
+- **Nothing is enforced.** No field number prevents a mistake, no type-check catches a changed type, nothing reserves a retired name. Every evolution rule is a team agreement, and every agreement is one forgetful commit from being violated in production.
+
+JSON *can* evolve safely, but only through discipline the format doesn't help you keep — which at scale is exactly where it fails.
+
+### Where This Sits Relative to Versioning
+
+There's a bigger version of this problem — changing an API's whole contract, running `/v1` and `/v2` side by side, deprecating old endpoints. That is **API versioning**, a topic later in this phase, and it operates at the level of the contract as a whole (Topic 01's subject). What *this* section is about is narrower and underneath it: how the **data format itself** absorbs shape changes to a single message. Format-level evolution is the tool that lets you *avoid* a new contract version for the common case — add a field without a `/v2` — and versioning is what you reach for when a change is too big for the format to absorb. They're layers, not competitors.
+
+> 💡 **Key Insight**
+>
+> Schema evolution is where the format choice pays off most over a system's life, because readers and writers never upgrade in lockstep. Protobuf builds evolution in: fields are identified by **number**, so adding fields and renaming them are safe by construction, and unknown fields are preserved rather than fatal — forward *and* backward compatible by default. JSON has no such mechanism, only the **convention** that readers ignore unknown fields, which holds until one reader is strict or one field is renamed. The deepest difference between the formats isn't size or speed — it's whether safe change is *guaranteed by the format* or *left to everyone's discipline*.
+
+### Quick Recap — Schema Evolution
+
+- Readers and writers never upgrade together, so a format must handle **backward** (new reader, old data) and **forward** (old reader, new data) compatibility — forward is the harder, more valuable one.
+- **Protobuf evolves cleanly** because fields are keyed by **number**: adding is safe, renaming is free, unknown fields are preserved — with two rules (never reuse a number, never change a type).
+- **JSON evolves by convention only**: additive change is safe *if* readers ignore unknowns, renames always break, and nothing is enforced — discipline, not guarantee.
+- This is **format-level** evolution of one message; changing the whole contract is **API versioning** (a later topic) — layers, not competitors.
