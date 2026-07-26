@@ -279,3 +279,68 @@ For a **public, web-facing API** read by developers you'll never meet, JSON is c
 - It won on **readability, a native fit to objects/arrays, browser support, and simplicity**.
 - Those strengths cost **verbosity, no enforced schema, and a thin type system** — no int/float distinction, no date type, no raw bytes — which surface as precision bugs and late-caught shape errors.
 - It's the right default where **scale is modest and flexibility helps** (public web APIs); its weaknesses are all about scale and strictness (§8, §9).
+
+---
+
+## 5. XML — The Heritage Format
+
+Before JSON, the default was **XML** — text, and capable of being rigorously schema-based (§3). It's easy to dismiss as obsolete, but that misreads it: XML is a different set of tradeoffs that were dominant for good reasons and still fit some niches. Understanding it sharpens the axes, because XML is text like JSON but sits on the *opposite* end of the schema axis.
+
+The same value, as XML:
+
+```xml
+<user>
+  <name>Ada</name>
+  <age>36</age>
+  <admin>true</admin>
+  <roles>
+    <role>dev</role>
+    <role>ops</role>
+  </roles>
+</user>
+```
+
+Readable, like JSON — and visibly heavier, every field wrapped in an opening and closing tag.
+
+### What XML Got Right
+
+XML's capabilities were genuinely ahead of what replaced it, and they're why it anchored enterprise systems for two decades:
+
+- **Real schemas.** XML has a mature schema language (XSD) that defines exactly what a document must contain — types, required fields, allowed values, nesting rules — and validates a document against it (§3's schema-on-write, done thoroughly). This was serious contract enforcement long before JSON had any.
+- **Namespaces.** XML can combine vocabularies from different sources in one document without name collisions — a real need in large, composed enterprise data.
+- **Mixed content.** It represents text-with-markup naturally (a paragraph with emphasis inside it), which is why document formats and publishing systems use it.
+- **Mature tooling.** Decades of validators, transformers (XSLT), and query languages (XPath) grew up around it.
+
+For a large organization needing strict, validated, richly-typed contracts across many teams, XML offered in the 2000s what nothing else did.
+
+### Why It Faded
+
+XML lost the web not because it was wrong but because it was **heavy**, and the web valued light:
+
+- **Verbosity.** Every element is wrapped in `<tag>...</tag>`, and closing tags repeat the name. The example above is markedly larger than the JSON for the same data, and most of the extra bytes are structure, not content.
+- **Complexity.** The full XML ecosystem — namespaces, schemas, transformations, entities, processing instructions — is large and intricate. Powerful for those who need it, heavy overhead for those who don't, and most APIs don't.
+- **Awkward fit to code.** XML documents don't map cleanly onto the objects and arrays programming languages use, so working with XML often means a translation layer that JSON simply doesn't need.
+- **The browser chose JSON.** As the web moved to JavaScript front-ends, JSON's native fit (§4) made it the obvious choice, and the default shifted with the web's center of gravity.
+
+The pattern: XML's power *is* its weight, and when the web wanted the opposite of weight, a lighter format won the mainstream even though it gave up real capabilities.
+
+### Where XML Still Lives — Legitimately
+
+XML isn't a museum piece; it's entrenched where its strengths still pay:
+
+- **Enterprise, banking, government, healthcare** — systems built when XML was the standard, where the cost of rewriting working integrations dwarfs any benefit, and where XSD's strict validation is genuinely valued.
+- **Document formats** — office documents and publishing pipelines, where mixed content and mature transformation tooling matter.
+- **SOAP-based services** — an older XML-based service protocol still present in those same enterprise niches.
+
+Meeting XML in a new system is unusual; meeting it in an existing one is routine, and "it's old" is not the same as "it's wrong for what it does."
+
+> 💡 **Key Insight**
+>
+> XML is the proof that a format is a *set of tradeoffs*, not a point on a quality line. It sits at text-and-schema-based (§3) — the same text axis as JSON, the opposite schema axis — and everything about it follows: strict validation, namespaces, and rich tooling on the plus side; verbosity and complexity on the minus. It didn't lose because it was bad; it lost the *web* because the web wanted lightness and XML's power is weight. Where strict contracts and mature tooling outweigh bytes, it's still the right answer.
+
+### Quick Recap — XML
+
+- XML is **text and schema-capable** — the same text axis as JSON, the opposite end of the schema axis.
+- Its strengths are real: **rigorous schemas (XSD), namespaces, mixed content, and mature tooling** — serious contract enforcement before JSON had any.
+- It faded on the web for being **verbose and complex** and a poor fit to code, as the browser pulled the default toward JSON.
+- It remains correct in **enterprise, government, document, and SOAP** systems where strict validation and entrenchment outweigh its weight — old is not the same as wrong.
