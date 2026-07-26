@@ -219,3 +219,63 @@ JSON is text and schemaless — readable and flexible, unsafe and verbose. XML i
 - **Schema-on-write** validates when data is created (guaranteed shape, needs coordination); **schema-on-read** leaves validity to the receiver (flexible, mistakes found late).
 - Schema-based data can be **terse** (no field names needed on the wire) but usually **needs the schema to decode**; schemaless data is **self-describing** but unprotected.
 - Combined with **text vs binary**, this axis maps the three formats to three grid corners: **JSON** (text/schemaless), **XML** (text/schema), **Protobuf** (binary/schema).
+
+---
+
+## 4. JSON — Readable, Schemaless, Everywhere
+
+JSON sits at the text-and-schemaless corner (§2, §3), and it is the default format of the modern web by an enormous margin. Understanding *why* it won, and what that win costs, is the point of this section.
+
+Here is the value from §1, as JSON:
+
+```json
+{
+  "name": "Ada",
+  "age": 36,
+  "admin": true,
+  "roles": ["dev", "ops"]
+}
+```
+
+You can read it without knowing anything about JSON. That legibility is most of its appeal.
+
+### Why It Took Over
+
+JSON's dominance isn't an accident of fashion — it's a stack of advantages that compound:
+
+- **It's readable and self-describing.** Field names travel with the data, so the payload explains itself (§3). Debugging is looking.
+- **It maps onto how programmers already think.** Objects (key–value pairs) and arrays (ordered lists) are the two structures every language already has, so JSON feels native everywhere.
+- **It's native to the browser.** Web front-ends are JavaScript, JSON *is* JavaScript object notation, and that made it the frictionless choice for web APIs — which is where most public APIs live.
+- **It's simple.** The entire specification is tiny. There's very little to learn, misimplement, or argue about.
+
+The combination — readable, universal, browser-native, dead simple — is why "we'll use JSON" is the default that needs no defending for a public web API.
+
+### What Simplicity Costs
+
+Every one of JSON's strengths has a matching cost, and they're the reasons you'd ever leave it:
+
+- **It's verbose.** Field names repeat in *every* object — send a thousand users and the strings `"name"`, `"age"`, `"admin"` ship a thousand times each. Text encoding (§2) adds its overhead on top.
+- **It's schemaless by default.** Nothing enforces shape (§3). A misspelled field, a missing value, a string where you expected a number — all valid JSON, all discovered at read time by your code. (There are add-on schema languages, but they're optional bolt-ons, not part of JSON itself.)
+- **Its type system is thin, and that bites.** JSON has objects, arrays, strings, one number type, booleans, and null. That's it. The consequences are real:
+  - **No integer/float distinction** — one `number` type, and large integers can silently lose precision when a parser treats them as floating-point. Identifiers and money are the classic casualties.
+  - **No date type** — dates travel as strings, and the sender and receiver must agree on the string format out-of-band or one of them guesses wrong.
+  - **No raw-bytes type** — binary data has to be encoded into text (inflating it), because JSON can only carry characters.
+
+These are §1's fidelity problem made concrete: the bytes arrive, but "a big integer" or "a date" may not survive as what it was.
+
+> ⚠️ **JSON's forgiving, schemaless nature is a benefit at small scale and a liability at large scale.** When a few developers integrate against a readable API, "just send the fields" is a feature — flexible, fast to build, easy to debug. When hundreds of services exchange JSON at volume, the absence of an enforced schema means shape mismatches are found in production instead of at build time, the precision traps surface as corrupted IDs and money, and the verbosity becomes a real bandwidth and CPU bill (§8). Nothing about JSON breaks as you grow; it just quietly stops being free.
+
+### Where JSON Is Right
+
+For a **public, web-facing API** read by developers you'll never meet, JSON is close to unbeatable: its readability is exactly the property that matters most (§9), its universality means every caller can consume it, and the size cost is usually noise on a human-triggered request. The rule of thumb worth carrying: JSON's weaknesses are all about *scale and strictness*, so it's the right default precisely where scale is modest and flexibility helps — which describes a large share of all APIs.
+
+> 💡 **Key Insight**
+>
+> JSON won because *readable, universal, browser-native, and simple* is an unbeatable combination for the public web — and every one of those strengths is also its ceiling. Simple means a thin type system that mangles big integers and has no dates; schemaless means shape errors surface in production; text means verbose. None of it matters at small scale, and all of it matters at large scale, which is why JSON is simultaneously the correct default for most APIs and the thing high-volume internal systems eventually move off of.
+
+### Quick Recap — JSON
+
+- JSON is **text and schemaless** — readable, self-describing, and the default of the web.
+- It won on **readability, a native fit to objects/arrays, browser support, and simplicity**.
+- Those strengths cost **verbosity, no enforced schema, and a thin type system** — no int/float distinction, no date type, no raw bytes — which surface as precision bugs and late-caught shape errors.
+- It's the right default where **scale is modest and flexibility helps** (public web APIs); its weaknesses are all about scale and strictness (§8, §9).
