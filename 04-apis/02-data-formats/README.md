@@ -344,3 +344,82 @@ Meeting XML in a new system is unusual; meeting it in an existing one is routine
 - Its strengths are real: **rigorous schemas (XSD), namespaces, mixed content, and mature tooling** — serious contract enforcement before JSON had any.
 - It faded on the web for being **verbose and complex** and a poor fit to code, as the browser pulled the default toward JSON.
 - It remains correct in **enterprise, government, document, and SOAP** systems where strict validation and entrenchment outweigh its weight — old is not the same as wrong.
+
+---
+
+## 6. Protocol Buffers — Compact, Binary, Contract-First
+
+The third corner of the grid (§3) is **binary and schema-based**, and the dominant format there is **Protocol Buffers** — usually shortened to *protobuf*. It inverts almost everything about JSON, and understanding that inversion is the point of this section.
+
+One clarification first, because it's a common confusion. Protobuf is a **data format** — a way of turning values into bytes, exactly like JSON and XML. It is often used together with **gRPC**, a framework for making service-to-service calls, but they're separate things: gRPC is the caller-and-transport machinery, protobuf is the bytes it sends. This document is about the format. gRPC is a later topic in this phase.
+
+### The Schema Comes First
+
+With JSON you just write the data. With protobuf you first write a **schema** — a `.proto` file that defines the shape:
+
+```proto
+message User {
+  string name  = 1;
+  int32  age   = 2;
+  bool   admin = 3;
+  repeated string roles = 4;
+}
+```
+
+This is the source of truth for the data's shape, and it's *separate* from any data. Two things about it drive everything else:
+
+- **Every field has a number** (`= 1`, `= 2`, …). That number, not the field name, is what identifies the field in the bytes. This is the key to schema evolution — the entire subject of §7.
+- **Every field has a fixed type** (`string`, `int32`, `bool`). Types are declared and enforced, and the format has many precise numeric types — unlike JSON's single fuzzy `number` (§4).
+
+From that schema, a build step **generates code** in your language — classes for reading and writing `User` values — so you work with native objects and the generated code handles serialization. That build step is real overhead JSON doesn't have, and it's the price of everything that follows.
+
+### What the Bytes Look Like
+
+The same `User`, serialized, is a handful of bytes with no readable form:
+
+```
+Protobuf:  0a 03 41 64 61 10 24 18 01 ...   (unreadable — needs the schema to decode)
+JSON:      {"name":"Ada","age":36,"admin":true,...}   (readable, ~5× larger)
+```
+
+The savings come from two places, both flowing from the schema being known to both sides:
+
+- **No field names on the wire.** The bytes carry field *number* `1`, not the string `"name"` — because the schema says number 1 is `name`. Every object drops the repeated field-name strings that JSON pays for.
+- **Values stored directly as bytes.** 36 is a byte, not the characters `3` and `6`; `true` is a bit. No text encoding, no quotes, no delimiters.
+
+The result is compact and fast to parse (§8), and completely opaque: **you cannot decode the bytes without the schema.** The field names literally aren't there — the schema is what maps number `1` back to `name`. Lose the schema and the data is unrecoverable noise.
+
+### The Inversion
+
+Protobuf is the mirror image of JSON on both axes at once, which is the cleanest way to hold it in mind:
+
+| | JSON | Protocol Buffers |
+|---|---|---|
+| Readable? | Yes | No |
+| Schema | Optional bolt-on | Required, source of truth |
+| Field names on the wire | Every time | Never (numbers instead) |
+| Types | Thin, fuzzy | Rich, precise, enforced |
+| Size | Verbose | Compact |
+| Cost of entry | None — just write data | A `.proto` file and a build step |
+| Debugging | Read it | Need tooling and the schema |
+
+The shape of the trade should feel familiar from §2 and §3: protobuf spends **readability and simplicity** to buy **size, speed, type safety, and — crucially — clean evolution.**
+
+### What It Costs
+
+Protobuf is not free, and the costs are exactly the reasons not to use it everywhere:
+
+- **You can't just look at the data.** Debugging, log inspection, and ad-hoc tooling all need the schema and a decoder. The `curl`-and-read workflow is gone.
+- **The schema must be shared and coordinated.** Both sides need the `.proto`, and a build step turns it into code. That's real machinery and process overhead that JSON's "just send an object" avoids entirely.
+- **It's a poor fit for the open web.** Browsers speak JSON natively; a public API in protobuf asks every caller to adopt your schema and toolchain, which is friction most public APIs can't justify.
+
+> 💡 **Key Insight**
+>
+> Protocol Buffers is JSON inverted on both axes — binary and schema-first instead of text and schemaless — and every difference traces to one decision: **the schema is known to both sides in advance.** That's what lets the bytes drop field names, store values directly, enforce precise types, and evolve cleanly (§7); and it's what costs the readability, the build step, and the coordination. It's the right tool exactly where JSON is the wrong one — high-volume, internal, machine-to-machine — and the wrong tool exactly where JSON shines.
+
+### Quick Recap — Protocol Buffers
+
+- Protobuf is **binary and schema-based** — a data format (distinct from gRPC, the framework that uses it).
+- The **`.proto` schema comes first** and is the source of truth; a build step generates read/write code, and every field has a **number** and a **fixed type**.
+- The bytes are **compact and fast** because the shared schema lets them omit field names and store values directly — and **opaque**, undecodable without the schema.
+- It buys **size, speed, type safety, and clean evolution (§7)** at the cost of **readability, a build step, and coordination** — the inverse of JSON's trade.
