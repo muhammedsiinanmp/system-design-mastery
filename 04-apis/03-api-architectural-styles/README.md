@@ -450,3 +450,54 @@ The **contract** axis deserves a last note because it recurs across this phase. 
 - Treating a bundled default as the style's essence causes the classic confusions (**"REST is JSON," "gRPC is fast because it's RPC"**).
 - Separating the axes lets you **keep a paradigm while swapping an axis**, and see the *real* source of a property like performance (format + transport).
 - The **contract** axis — machine schema vs documentation — is the schema-vs-schemaless trade one level up, buying generated tooling and safety at the cost of coordination.
+
+---
+
+## 8. Public vs Internal — The Audience Bends the Choice
+
+The unit is the first thing a style choice depends on (§1), but there's a powerful second force that often decides between two units that would both technically work: **who is going to call this API?** The same interaction can want a different style depending on whether its callers are strangers on the open web or your own services on a private network.
+
+### Why Audience Pushes So Hard
+
+Recall the core fact about a public API: its callers are unknown, unreachable, and can't be forced to adopt anything (an idea developed in this phase's first topic). That single fact filters styles hard:
+
+- A public caller might be a browser, a script in any language, or a third party you'll never meet. The style has to work **with no special tooling** — anything they already have must be able to call it.
+- You can't ask the world to install your schema, generate a client, or speak your binary protocol. Whatever the style bundles (§7) has to be universally available.
+- Public contracts are near-permanent, so styles whose evolution story is gentle and additive are safer.
+
+An internal API inverts every one of those: the callers are your own services, on both ends of which you control the code, the deploy, and the tooling. You *can* mandate a schema and a generated client, *can* use a binary protocol, and *can* coordinate changes across teams. The constraint that dominates public choice simply lifts.
+
+### How the Styles Sort by Audience
+
+Put those forces together and the styles fall into a clear gradient:
+
+| Audience | Pulls toward | Because |
+|---|---|---|
+| **Public / browser-facing** | Resource (REST) | Universal, no tooling needed, cacheable, familiar to every developer |
+| **Diverse clients, rich data** | Query (GraphQL) | Many client shapes served from one API without per-client endpoints |
+| **Internal service-to-service** | Procedure (gRPC) | Performance and a strict generated contract, viable because you own both ends |
+| **Real-time / event delivery** | Channel / callback | Driven by the interaction shape (§6) more than audience |
+
+The top and bottom rows are the sharpest split, and it's the same split §3 and §4 hinted at from the paradigm side: **resources face outward, procedures face inward.** REST's universality is wasted effort inside a data center where you control both ends and want speed; gRPC's binary efficiency is unusable on a public web where callers are browsers and strangers. Each is optimal exactly where the other is impractical.
+
+```mermaid
+flowchart LR
+    PUB["🌍 Public / browser<br/>unknown callers"] --> REST["📦 Resource (REST)<br/>universal, no tooling"]
+    INT["🏠 Internal services<br/>you own both ends"] --> GRPC["⚙️ Procedure (gRPC)<br/>fast, schema-bound"]
+    DIV["📱 Diverse clients"] --> GQL["❓ Query (GraphQL)"]
+```
+
+### Audience Doesn't Override the Unit — It Breaks Ties
+
+The important subtlety: audience doesn't *replace* the unit question (§1), it refines it. If the natural unit is unmistakably a conversation, you need a channel regardless of audience (§6). But when two units would both serve — and they often would; plenty of interactions could reasonably be modeled as resources *or* procedures — audience is the tie-breaker. "It's genuinely a thing *and* it's public" points firmly at resources; "it's genuinely a thing but it's a hot internal path" may point at procedures for the performance. Unit first, audience to break the tie.
+
+> 💡 **Key Insight**
+>
+> Audience is the second great force on style, and it sorts the paradigms cleanly: **public and browser-facing pulls toward resources** (universal, no tooling, cacheable), **internal service-to-service opens procedures** (fast, schema-bound, viable only because you own both ends), and **diverse clients pull toward queries**. The mechanism is the public-caller fact from earlier in this phase — you can't make strangers adopt tooling — so the universality a public API *must* have is wasted inside a system that wants speed instead. Unit first; audience breaks the tie.
+
+### Quick Recap — Public vs Internal
+
+- **Audience** is the second major force on style: public callers are unknown and can't be made to adopt tooling, which filters styles hard.
+- **Public/browser** pulls toward **resources** (universal, cacheable, no client needed); **internal service-to-service** opens **procedures** (fast, schema-bound, you own both ends).
+- The split is sharp because each is impractical where the other is optimal — **resources face outward, procedures face inward**.
+- Audience **breaks ties** between units that would both work; it doesn't override a unit the interaction clearly demands (§6).
