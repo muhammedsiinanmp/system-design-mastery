@@ -132,6 +132,8 @@ flowchart TD
 
 Notice those three lines express nearly the same intent — *get order 42* — and each names something different: a resource path, a procedure call, a query for specific fields. That's the whole divergence in miniature, and §3–§5 take each in turn.
 
+There's a historical throughline worth noticing too. The procedure paradigm is the *oldest* — remote-procedure-call systems predate the web, because "call a function on another machine" was the first thing anyone wanted. The resource paradigm rose with the web itself, trading raw call-efficiency for the web's uniformity and reach. The query paradigm is the most recent, born specifically from the pain of assembling rich mobile screens out of many resource calls. Each arrived to fix something about its predecessor, which is why they coexist rather than supersede: they're answers to different eras' dominant problem, and all three problems are still around.
+
 ### Why the Family Dominates
 
 Request-response is the default for good reasons, and they're worth naming so the exceptions in §6 stand out by contrast:
@@ -244,7 +246,7 @@ The procedure model trades the resource paradigm's uniformity for directness and
 
 - **Natural fit for actions.** Operations that were awkward as resources (§3) — "transcode," "recalculate," "send" — are just functions here. The model matches the intent instead of contorting it.
 - **A tight, explicit contract.** RPC systems are typically **contract-first**: you define the available procedures and their exact types in a schema, and both sides generate code from it. The caller gets a real function to call, checked at build time, not a URL to assemble by hand.
-- **Performance.** The modern exemplar pairs this with a compact binary format and an efficient transport, making calls small and fast — which is why it shines for **high-volume internal service-to-service** traffic where every millisecond and byte is multiplied across enormous call counts.
+- **Performance.** The modern exemplar pairs this with a compact binary format and an efficient transport, making calls small and fast — which is why it shines for **high-volume internal service-to-service** traffic where every millisecond and byte is multiplied across enormous call counts. Concretely: at a large service that fields, say, a million internal calls a second, shaving a few hundred microseconds and a few hundred bytes off each call isn't a micro-optimization — it's the difference between a modest fleet and a large one, and it's felt directly in the latency budget of anything that fans out across many internal hops.
 
 This combination — action-shaped, strongly-typed, fast — is why procedure-oriented APIs dominate *inside* systems, between services a single organization controls on both ends.
 
@@ -307,7 +309,7 @@ The query model targets the resource paradigm's exact weaknesses:
 - **No under-fetching.** Related data that would be many resource calls is assembled server-side and returned in one round trip. One request fills a whole screen.
 - **Client independence.** Different clients — a mobile app, a web dashboard, a partner integration — each ask for the slice they need from the *same* API, without the server building a custom endpoint per client. This is the paradigm's strongest fit: **many clients with divergent, evolving data needs.**
 
-For a product with varied front-ends over a rich, interconnected data model, this is a genuinely different capability, not a marginal improvement.
+For a product with varied front-ends over a rich, interconnected data model, this is a genuinely different capability, not a marginal improvement. The paradigm's own origin makes the point: it came out of the problem of rendering data-dense mobile screens, where a single view might need a dozen related pieces of data and the resource approach meant a dozen sequential round trips over a slow mobile connection — the collapse from *N requests* to *one* is the entire reason the paradigm exists.
 
 ### The Signature Failure
 
