@@ -274,3 +274,66 @@ flowchart LR
 - Optimizes for **action-shaped operations, a contract-first typed interface, and performance** — ideal for high-volume internal service-to-service calls.
 - Its costs are **tighter coupling, little free web caching, and poor browser/stranger reach** — the mirror of the resource paradigm's strengths.
 - gRPC's mechanics are a later topic; the audience split it implies (internal vs public) is developed in §8.
+
+---
+
+## 5. Query-Oriented — Describing What You Want
+
+The third request-response paradigm organizes the API around a **query** — the caller describes the exact data it wants, and the server returns precisely that shape. Its exemplar is **GraphQL**, and it exists largely to solve the over- and under-fetching that the resource paradigm struggles with (§3).
+
+*This section teaches the paradigm. GraphQL's internals — schema, resolvers, the N+1 problem — are a later topic, and the direct REST-versus-GraphQL comparison is its own topic too. Here it's placed on the map, not dissected.*
+
+### The Core Idea
+
+With resources, the server decides what each endpoint returns and the caller takes it or makes several calls (§3). The query paradigm inverts that: there's typically **one endpoint**, and the *caller* sends a description of exactly the fields it wants, however nested, across whatever related data — in a single request.
+
+```
+{
+  order(id: 42) {
+    total
+    customer { name }
+    items { name price }
+  }
+}
+```
+
+That one query asks for an order's total, its customer's name, and each line item's name and price — data that was three resources and three round trips in §3 — and gets back exactly those fields, nothing more, in one response shaped to match the request. The unit is neither a thing nor an action but a **question**: "give me this specific slice of the data graph."
+
+### What It Optimizes For
+
+The query model targets the resource paradigm's exact weaknesses:
+
+- **No over-fetching.** The caller lists the fields it wants, so the response carries those and no others. The wasted bytes of §3 disappear.
+- **No under-fetching.** Related data that would be many resource calls is assembled server-side and returned in one round trip. One request fills a whole screen.
+- **Client independence.** Different clients — a mobile app, a web dashboard, a partner integration — each ask for the slice they need from the *same* API, without the server building a custom endpoint per client. This is the paradigm's strongest fit: **many clients with divergent, evolving data needs.**
+
+For a product with varied front-ends over a rich, interconnected data model, this is a genuinely different capability, not a marginal improvement.
+
+### The Signature Failure
+
+The flexibility the client gains becomes the server's burden, and that trade is the paradigm's whole character:
+
+- **Server complexity moves up sharply.** The server must resolve arbitrary combinations of nested fields the client composes on the fly — far more involved than returning a fixed resource.
+- **Caching is harder.** The resource paradigm cached for free because each URL named a fixed thing (§3). When every request is a unique query shape against one endpoint, the web's "cache this address" machinery no longer applies cleanly, and caching must be rebuilt at another layer.
+- **Cost control becomes a real concern.** Because a client can request deeply nested, expensive data in one query, the server has to guard against queries that are accidentally or deliberately too costly — a class of problem the fixed-response paradigms simply don't have.
+
+```mermaid
+flowchart LR
+    M["📱 Mobile: wants 3 fields"] --> E["❓ One endpoint"]
+    W["💻 Dashboard: wants 20 fields"] --> E
+    E --> R["🟢 Each gets exactly<br/>its shape, one round trip"]
+    E -.->|"cost: server complexity,<br/>harder caching, query limits"| X["⚙️"]
+```
+
+Whether that trade is worth it versus the resource paradigm is the most common real API debate — common enough that this curriculum gives the head-to-head its own dedicated topic. Here the point is only to place the query paradigm: it moves power and shape-decisions to the client, and moves complexity and cost-control to the server.
+
+> 💡 **Key Insight**
+>
+> The query paradigm inverts who decides the response shape: the **client** describes the exact slice of the data graph it wants, killing the over- and under-fetching that resources suffer (§3) and letting many different clients share one API. The bill for that flexibility lands entirely on the server — more complexity, harder caching, and new query-cost defenses. It's the paradigm to reach for when you have **diverse clients with divergent data needs over a rich graph**, and overkill when you don't, because you'd take on all that server-side cost to solve a problem you didn't have.
+
+### Quick Recap — Query-Oriented
+
+- Organizes the API around a **query**: one endpoint, the client describes the exact data shape it wants, the server returns precisely that. GraphQL is the exemplar.
+- Optimizes away **over- and under-fetching** (§3) and lets **many divergent clients** share one API — its strongest fit.
+- The cost moves to the server: **more complexity, harder caching, and the need for query-cost limits**.
+- Internals and the direct REST-vs-query comparison are later topics; here it's placed as the paradigm that **trades server simplicity for client flexibility**.
