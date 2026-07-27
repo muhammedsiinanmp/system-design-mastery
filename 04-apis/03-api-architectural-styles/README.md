@@ -156,3 +156,64 @@ The three paradigms are not three quality tiers with REST at the bottom and Grap
 - **Resource** (REST) names a thing, **procedure** (RPC/gRPC) names an action, **query** (GraphQL) names a data shape — often expressing the same intent three ways.
 - The family dominates because ask-and-wait **fits most interactions** and reuses the web's caching, proxies, and tooling for free.
 - The three are a matter of **fit, not quality** — each has a natural home (things / actions / varying data) and a signature failure, covered next (§3–§5).
+
+---
+
+## 3. Resource-Oriented — Acting on Things
+
+The first and most common paradigm organizes the API around **resources** — things, named by nouns — and a small, fixed set of actions you can take on any of them. Its exemplar is **REST**, and it's the default style of the public web.
+
+*This section teaches the paradigm — the mental model and its fit. How to actually design a resource API well — naming, relationships, status codes, the maturity levels — is a topic of its own later in this phase.*
+
+### The Core Idea
+
+Instead of inventing an operation for every need, you model your domain as a set of **resources** and reuse the *same* handful of actions on all of them:
+
+```
+GET    /orders/42      → read order 42
+POST   /orders         → create an order
+PUT    /orders/42      → replace order 42
+DELETE /orders/42      → remove order 42
+```
+
+The verbs are fixed and universal; only the noun changes. Every resource — orders, users, products — is addressed and manipulated the same way. That uniformity is the paradigm's defining bet: *if every thing behaves like every other thing, the whole API becomes predictable once you've learned one corner of it.*
+
+### What It Optimizes For
+
+The resource model buys a cluster of advantages, most flowing from that uniformity:
+
+- **Predictability.** Learn the pattern once and you can guess the rest — `/products/7` works like `/orders/42` because everything is a resource with the same verbs.
+- **It rides the web's machinery.** Reads map cleanly to the web's native "fetch this thing" operation, so resource reads are **cacheable** by the existing infrastructure with no extra work — a large, free performance win.
+- **Evolvability.** New resources are new nouns; they don't disturb existing ones. The API grows by addition.
+- **Universality.** Every language and tool can call it with no special client, because it's just addressed reads and writes over the web's default protocol.
+
+This combination is why resource-oriented is the default for public APIs (§8): it's familiar, needs no tooling, and caches for free.
+
+### The Signature Failure
+
+The paradigm's weakness is the mirror of its strength: when the thing you want *isn't* one resource with a standard action, the model strains.
+
+- **Over-fetching** — a resource returns its whole representation, but the caller needed three fields. The extra bytes ship anyway.
+- **Under-fetching and chattiness** — the caller needs an order, its customer, and its line items, which are three resources, so it makes three (or more) round trips. A screen assembled from many resources becomes many requests.
+- **Actions that aren't things** — "transcode this video," "recalculate the forecast." Forcing an inherently verb-shaped operation into a noun-and-standard-action model produces awkward contortions, and it's the clearest sign you may be reaching for the wrong paradigm (§4).
+
+```mermaid
+flowchart LR
+    S["📱 One screen needs:<br/>order + customer + items"] --> R1["GET /orders/42"]
+    S --> R2["GET /customers/7"]
+    S --> R3["GET /orders/42/items"]
+    R1 & R2 & R3 --> P["😕 3 round trips<br/>+ fields you didn't need"]
+```
+
+That over/under-fetching problem is exactly what the query paradigm (§5) was invented to solve — and comparing the two directly is common enough to be its own topic later in this phase.
+
+> 💡 **Key Insight**
+>
+> Resource-orientation bets everything on **uniformity**: model the world as things, act on them all with the same fixed verbs, and the API becomes predictable and rides the web's caching for free. That bet pays beautifully when your domain really is a set of things — and strains exactly where it isn't: complex multi-resource reads turn chatty, and operations that are inherently *actions* rather than *things* have to be contorted into the noun model. When you notice that contortion, it's not a sign you're doing REST wrong — it's a sign the interaction's unit might be a procedure, not a resource.
+
+### Quick Recap — Resource-Oriented
+
+- Organizes the API around **resources (nouns)** with a small, fixed set of universal actions — REST is the exemplar.
+- Optimizes for **predictability, free caching, evolvability, and universality** — which is why it's the public-web default (§8).
+- Its signature failures are **over/under-fetching** (chatty multi-resource reads) and **actions that aren't things** contorted into nouns.
+- Design mechanics are a later topic; the over-fetching problem motivates the **query paradigm** (§5), and the action mismatch motivates the **procedure paradigm** (§4).
