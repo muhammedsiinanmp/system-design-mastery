@@ -230,7 +230,7 @@ you will likely find this useful.
 [ROADMAP.md](ROADMAP.md) is the **source of truth** for status — this table is a
 summary of it. If the two ever disagree, the roadmap is right.
 
-*Status as of 2026-07-24.*
+*Status as of 2026-07-27.*
 
 ---
 
