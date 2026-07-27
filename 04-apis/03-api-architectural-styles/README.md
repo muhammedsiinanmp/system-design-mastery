@@ -554,3 +554,85 @@ The corollary is that mature systems **mix styles by surface**, and that's a sig
 - **One style everywhere** is the common error; it guarantees a mismatch somewhere, and the symptom is always **contortion** (fake resources, polling, per-client endpoints).
 - When you're fighting the style, the fix is a **different style for that surface**, not more cleverness within the wrong one.
 - Mature systems **mix styles by surface** deliberately — the consistency that matters is "each surface fits," not "everything is the same."
+
+---
+
+## 10. Putting It All Together — One System, Several Styles
+
+A team builds a food-delivery product. It's a single system, and by the time it's mature it speaks *five* styles — not from indecision, but because it has five kinds of interaction with five different units and audiences. Walk the surfaces and watch the decision procedure (§9) produce each one.
+
+### Surface 1 — The Public API (Resource)
+
+Third-party partners — restaurants, analytics tools — need to read and manage orders, menus, and deliveries. Run the procedure: ask-and-wait (yes), unit (these are *things* — orders, menus), audience (public, unknown callers). Every arrow points at **resources / REST** (§3, §8). The partners are strangers on the open web; REST's universality and zero-tooling reach are exactly what a public surface needs, and menu reads cache for free.
+
+### Surface 2 — Between Internal Services (Procedure)
+
+Behind the API, a dozen services talk constantly — the order service calls pricing, dispatch, inventory, millions of times a day. Run the procedure: ask-and-wait (yes), unit (these are *actions* — "price this cart," "assign a courier"), audience (internal, both ends owned). This is **procedure / gRPC** territory (§4, §8): the operations are verb-shaped, the volume makes the binary format's size and speed savings compound, and a generated contract is an asset when you control every caller. REST's universality here would be paying for reach nobody needs at the cost of speed everybody feels.
+
+### Surface 3 — The Mobile App (Query)
+
+The customer app has many screens — order tracking, restaurant browse, profile, history — each needing a different slice of a rich, interconnected data model, and the app ships updates faster than the backend wants to add endpoints. Run the procedure: ask-and-wait (yes), unit (a flexible *question* over a data graph), audience (one first-party client, diverse needs). This is **query / GraphQL** (§5): each screen asks for exactly its fields in one round trip, and new screens need no new endpoints. The over-fetching that plagued the idea of doing this with resources (§3) is gone.
+
+### Surface 4 — Notifying Partners (Callback)
+
+When an order's status changes, partner systems need to know — but they're not going to poll the API every second. Run the procedure: ask-and-wait (**no** — the *server* knows the event, §6), unit (a *notification*), audience (server-to-server). This is an **inverted callback / webhooks** (§6): the delivery system calls the partner's endpoint when status changes. Polling would have been the tell that this wasn't ask-and-wait; the team recognized it and left the request-response family.
+
+### Surface 5 — Live Order Tracking (Channel)
+
+While an order is out for delivery, the customer watches the courier move on a map in real time. Run the procedure: ask-and-wait (**no** — continuous updates, §6), unit (a *conversation*), audience (the app). This is a **persistent channel / WebSockets** (§6): a live connection pushes location updates as they happen. They accept the operational cost of holding connections open (§6) because the feature genuinely requires real-time.
+
+```mermaid
+flowchart TD
+    SYS["🍔 One delivery system"]
+    SYS --> A["🌍 Partners → REST (things, public)"]
+    SYS --> B["⚙️ Internal services → gRPC (actions, internal)"]
+    SYS --> C["📱 Mobile app → GraphQL (varying data)"]
+    SYS --> D["📣 Partner alerts → webhooks (notify)"]
+    SYS --> E["🗺️ Live tracking → WebSockets (conversation)"]
+```
+
+### The Payoff
+
+Five surfaces, five styles, and not one of them chosen by tribe. Each came from the same two questions — *what's the unit, and who calls it* — sometimes landing inside request-response and sometimes outside it. A team that was "a REST shop" would have shipped a slower internal tier, a polling hack for tracking, and a mobile app fighting over- and under-fetching on every screen — all correct-looking REST, all quietly mismatched.
+
+The lesson the team writes down:
+
+> **"What style?" was never a system-wide decision with one answer. It's a decision per surface, and our five surfaces genuinely wanted five different units — things, actions, questions, notifications, a conversation. The styles we'd have argued about in the abstract sorted themselves the moment we asked what each interaction was actually about and who was on the other end. We didn't choose styles; we identified units, and the styles followed.**
+
+That's this document in one system: name the unit, check the audience, and the style stops being a matter of allegiance and becomes a matter of fit — surface by surface.
+
+---
+
+## 11. Final Recap
+
+| Style | Unit of Interaction | Optimizes For | Signature Cost |
+|---|---|---|---|
+| **Resource (REST)** | A thing (noun) | Uniformity, free caching, universality, public reach | Over/under-fetching; actions contorted into nouns |
+| **Procedure (RPC/gRPC)** | An action (verb) | Action-fit, performance, strict generated contract | Tighter coupling; little free caching; poor browser reach |
+| **Query (GraphQL)** | A question | No over/under-fetch; many clients, one API | Server complexity; harder caching; query-cost limits |
+| **Channel (WebSockets)** | A conversation | Real-time, bidirectional, low-latency | Stateful open connections; harder to scale |
+| **Callback (webhooks)** | A notification | Server-initiated events without polling | Server-to-server only; delivery/retry complexity |
+
+| Idea | Core Insight |
+|---|---|
+| **Style vs shape vs format** | Three separable layers; styles differ on *how the interaction is organized*, not who initiates or how bytes are encoded |
+| **The unit** | Every style is one answer to *what does the caller name* — thing, action, question, conversation, notification |
+| **Orthogonal axes** | Transport, format, and contract are bundled defaults, not the style's essence — most confusion mistakes a default for the definition |
+| **Audience** | Public pulls to resources, internal opens procedures, diverse clients pull to queries — a tie-breaker, not an override |
+| **Choosing** | Ask-and-wait? → unit? → audience? → axes; the error is one house style, and its symptom is contortion |
+
+### The One Thing to Remember
+
+> **API styles get argued about like allegiances, but every one of them is just a different answer to a single question: what is the unit of interaction — a thing, an action, a question, a conversation, or a notification? Name the unit the interaction actually wants and the style follows on its own: things become resources (REST), actions become procedures (gRPC), flexible questions become queries (GraphQL), conversations become channels (WebSockets), notifications become callbacks (webhooks). Audience breaks ties — public reach pulls toward resources, internal performance opens procedures — and transport, format, and contract are swappable tuning, not the essence. There is no best style, only a fit per surface, which is why a healthy system speaks several. When you find yourself fighting a style — faking a resource, polling for push, building an endpoint per client — you haven't chosen the wrong technology, you've named the wrong unit.**
+
+---
+
+## What's Next
+
+> **Topic 04 — REST API Design**
+
+This document mapped the styles and argued that when the unit is a *thing* and the audience is the open web, the resource paradigm — REST — is the natural fit. That's most public APIs, which is why it earns the next and deepest treatment.
+
+Knowing REST is *right* for a surface is not the same as designing it *well*. The next topic goes from paradigm to practice: how to model resources and their relationships, how to use the uniform actions correctly, what the status codes really mean, how to handle collections and errors and evolution — the craft that separates a REST API that's a pleasure to build against from one that's technically REST and miserable to use. You've placed the style on the map. Next: how to do it properly.
+
+---
