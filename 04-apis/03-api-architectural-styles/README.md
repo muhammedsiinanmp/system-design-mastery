@@ -103,3 +103,56 @@ Everything else about a style — its URLs or lack of them, its verbs, its tooli
 - It's distinct from **shape** (who initiates, does the caller wait) and **format** (how values become bytes); conflating the three is the root of most style confusion.
 - Every style answers one question: **what is the unit of interaction** — a resource, a procedure, a query, a channel, or a callback.
 - Everything else about a style **follows from its chosen unit**, which is why naming the unit is the first and most decisive step.
+
+---
+
+## 2. The Request-Response Family — One Shape, Three Paradigms
+
+Most APIs you'll ever build or call share the same shape (§1): the client asks, waits, and gets one answer back. **Request-response** — ask-and-wait — is the default interaction of the web, and it's where three of the five units from §1 live. Before looking at the styles that break this shape (§6), it's worth seeing that the request-response world is not one thing but three, and they differ on the unit.
+
+### Same Shape, Different Unit
+
+Every request-response API does the same dance: one request out, one response back, then the exchange is over. What changes between styles is *what the request names* — and there are three answers, each a full paradigm:
+
+| Paradigm | The unit | The request essentially says | Exemplar |
+|---|---|---|---|
+| **Resource-oriented** | A thing (noun) | "Here's a thing; do a standard action to it" | REST |
+| **Procedure-oriented** | An action (verb) | "Run this specific operation with these arguments" | RPC / gRPC |
+| **Query-oriented** | A question | "Here's the exact shape of data I want; fill it in" | GraphQL |
+
+All three ask and wait. All three can carry the same data. They feel different to use because they've made different choices about the *unit* — and that single difference cascades into how you address them, how they're cached, how they fail, and which problems they make easy or awkward.
+
+```mermaid
+flowchart TD
+    RR["📨 Request-response shape<br/>(ask, wait, one answer)"]
+    RR --> A["📦 Resource: name a thing<br/>GET /orders/42"]
+    RR --> B["⚙️ Procedure: name an action<br/>getOrder(42)"]
+    RR --> C["❓ Query: name a data shape<br/>{ order(42) { total } }"]
+```
+
+Notice those three lines express nearly the same intent — *get order 42* — and each names something different: a resource path, a procedure call, a query for specific fields. That's the whole divergence in miniature, and §3–§5 take each in turn.
+
+### Why the Family Dominates
+
+Request-response is the default for good reasons, and they're worth naming so the exceptions in §6 stand out by contrast:
+
+- **It matches how most interactions actually work** — a client needs something, asks, and uses the answer. Fetching a page, submitting a form, loading a profile: all naturally ask-and-wait.
+- **It's simple to reason about.** One request, one response, a clear success or failure. The mental model is small.
+- **It rides the web's existing machinery.** The request-response model is what the web's foundational protocol already speaks, so this family gets caching, proxies, and tooling essentially for free.
+
+Because it fits so much and costs so little, request-response is the right default — and the interesting question is usually *which of its three paradigms*, not whether to leave the family at all. You leave it only when the interaction genuinely isn't ask-and-wait (§6).
+
+### The Divergence Is About Fit, Not Quality
+
+The three paradigms are not three quality tiers with REST at the bottom and GraphQL at the top, or any other ranking. They're three shapes of the same conversation, each fitting some interactions naturally and others awkwardly. A system built around *things* (users, orders, products) fits resources. A system built around *actions* (transcode this, recalculate that) fits procedures. A client that needs wildly varying slices of a data graph fits queries. The next three sections are each paradigm's natural home and its signature failure — the two things you need to place it on the map.
+
+> 💡 **Key Insight**
+>
+> The request-response family is one *shape* — ask and wait — split into three *paradigms* by what the request names: a **resource** (REST), a **procedure** (RPC/gRPC), or a **query** (GraphQL). They dominate because ask-and-wait fits most interactions and rides the web's existing machinery for free. So the common choice isn't "which style" in the abstract — it's "which of these three units fits what I'm modeling," and you only leave the family when the interaction genuinely isn't ask-and-wait (§6).
+
+### Quick Recap — The Request-Response Family
+
+- **Request-response** (ask-and-wait) is the dominant shape; three full paradigms live inside it, differing only on the **unit**.
+- **Resource** (REST) names a thing, **procedure** (RPC/gRPC) names an action, **query** (GraphQL) names a data shape — often expressing the same intent three ways.
+- The family dominates because ask-and-wait **fits most interactions** and reuses the web's caching, proxies, and tooling for free.
+- The three are a matter of **fit, not quality** — each has a natural home (things / actions / varying data) and a signature failure, covered next (§3–§5).
