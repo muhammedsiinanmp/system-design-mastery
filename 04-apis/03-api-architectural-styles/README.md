@@ -501,3 +501,56 @@ The important subtlety: audience doesn't *replace* the unit question (§1), it r
 - **Public/browser** pulls toward **resources** (universal, cacheable, no client needed); **internal service-to-service** opens **procedures** (fast, schema-bound, you own both ends).
 - The split is sharp because each is impractical where the other is optimal — **resources face outward, procedures face inward**.
 - Audience **breaks ties** between units that would both work; it doesn't override a unit the interaction clearly demands (§6).
+
+---
+
+## 9. Choosing — Match the Style to the Unit
+
+Eight sections resolve into a decision procedure, and — as with most real design choices — the output isn't a favorite but a *method* for reading the situation. Everything so far reduces to a short ordered set of questions.
+
+### The Decision Procedure
+
+Ask these in order; each narrows the field, and the style usually falls out by the end:
+
+1. **Is it ask-and-wait, or something else?** If the server needs to initiate, or the interaction is a continuous conversation, you're out of the request-response family entirely — go to a **channel** or **callback** (§6). Don't force it; the tell is that you're reaching for polling.
+2. **If ask-and-wait, what's the natural unit?** A *thing* → resource; an *action* → procedure; a flexible *question* over rich data → query (§2–§5). Name what the interaction is really about.
+3. **Who calls it?** Use audience to break ties (§8): public/browser leans resource, internal service-to-service opens procedure, diverse clients lean query.
+4. **What are the orthogonal choices?** Then, and only then, pick transport, format, and contract (§7) to fit — these don't change the paradigm, they tune it.
+
+```mermaid
+flowchart TD
+    Q1{"Ask-and-wait?"}
+    Q1 -->|"no: server initiates<br/>or conversation"| CH["🔌 Channel / 📣 Callback (§6)"]
+    Q1 -->|"yes"| Q2{"Natural unit?"}
+    Q2 -->|"a thing"| RES["📦 Resource"]
+    Q2 -->|"an action"| PROC["⚙️ Procedure"]
+    Q2 -->|"a flexible question"| QRY["❓ Query"]
+    RES --> Q3["⚖️ Audience breaks ties (§8)"]
+    PROC --> Q3
+    QRY --> Q3
+```
+
+### Why "One Style Everywhere" Is the Common Error
+
+The mistake this document opened with — inheriting a house style and applying it to everything — is now diagnosable. It fails because a real system contains interactions with *different units and different audiences*, and one style can't be the natural fit for all of them:
+
+- Force everything into resources and your internal hot paths are slower than they should be and your real-time features are faked with polling.
+- Force everything into gRPC and your public API is unreachable from a browser.
+- Force everything into GraphQL and simple internal calls carry needless server complexity.
+
+The symptom is always the same: **contortion.** When you find yourself fighting the style — modeling an action as a fake resource, polling to fake real-time, building a custom endpoint per client — the style is mismatched to that interaction's unit, and the fix is a different style *for that surface*, not more cleverness within the wrong one.
+
+### Mixing Is Normal and Correct
+
+The corollary is that mature systems **mix styles by surface**, and that's a sign of good fit, not inconsistency. A single product legitimately runs a public REST API for third parties, gRPC between its internal services, GraphQL for a data-hungry app, webhooks to notify partners, and a WebSocket channel for a live feature — each chosen by *its* unit and audience. The consistency that matters isn't "one style everywhere"; it's "every surface uses the style that fits it," applied deliberately. §10 walks exactly such a system.
+
+> 💡 **Key Insight**
+>
+> Choosing a style is a short ordered procedure, not a preference: **is it ask-and-wait** (else channel/callback), **what's the unit** (thing/action/question → resource/procedure/query), **who calls it** (audience breaks ties), **then** the orthogonal axes. The recurring error is one house style forced onto every interaction, and its symptom is always **contortion** — a faked resource, a poll standing in for push, a per-client endpoint. The fix is never more cleverness inside the wrong style; it's the right style for that surface, which is why real systems correctly mix several.
+
+### Quick Recap — Choosing
+
+- Choose by an ordered procedure: **ask-and-wait?** → **unit?** → **audience?** → **orthogonal axes** — the style falls out, it isn't a favorite.
+- **One style everywhere** is the common error; it guarantees a mismatch somewhere, and the symptom is always **contortion** (fake resources, polling, per-client endpoints).
+- When you're fighting the style, the fix is a **different style for that surface**, not more cleverness within the wrong one.
+- Mature systems **mix styles by surface** deliberately — the consistency that matters is "each surface fits," not "everything is the same."
