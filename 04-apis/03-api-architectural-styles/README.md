@@ -217,3 +217,60 @@ That over/under-fetching problem is exactly what the query paradigm (§5) was in
 - Optimizes for **predictability, free caching, evolvability, and universality** — which is why it's the public-web default (§8).
 - Its signature failures are **over/under-fetching** (chatty multi-resource reads) and **actions that aren't things** contorted into nouns.
 - Design mechanics are a later topic; the over-fetching problem motivates the **query paradigm** (§5), and the action mismatch motivates the **procedure paradigm** (§4).
+
+---
+
+## 4. Procedure-Oriented — Calling Functions
+
+The second paradigm organizes the API around **procedures** — actions, named by verbs — and makes calling a remote service feel like calling a local function. The approach is **RPC** (Remote Procedure Call), and its dominant modern exemplar is **gRPC**.
+
+*This section teaches the paradigm. gRPC's specific mechanics — how it runs over its transport, how its binary contract works — are a topic of its own later in this phase.*
+
+### The Core Idea
+
+Where the resource paradigm asks "what *thing* am I acting on?", the procedure paradigm asks "what *action* am I invoking?" You expose named operations and call them with arguments, exactly as you'd call a function in your own code:
+
+```
+getOrder(42)
+transcodeVideo(fileId, "1080p")
+recalculateForecast(regionId)
+```
+
+There are no resource paths and no fixed universal verbs. Each operation is its own named action with its own arguments and return type. The mental model is deliberately the one every programmer already has: **call a function, get a result** — the function just happens to run on another machine.
+
+### What It Optimizes For
+
+The procedure model trades the resource paradigm's uniformity for directness and performance:
+
+- **Natural fit for actions.** Operations that were awkward as resources (§3) — "transcode," "recalculate," "send" — are just functions here. The model matches the intent instead of contorting it.
+- **A tight, explicit contract.** RPC systems are typically **contract-first**: you define the available procedures and their exact types in a schema, and both sides generate code from it. The caller gets a real function to call, checked at build time, not a URL to assemble by hand.
+- **Performance.** The modern exemplar pairs this with a compact binary format and an efficient transport, making calls small and fast — which is why it shines for **high-volume internal service-to-service** traffic where every millisecond and byte is multiplied across enormous call counts.
+
+This combination — action-shaped, strongly-typed, fast — is why procedure-oriented APIs dominate *inside* systems, between services a single organization controls on both ends.
+
+### The Signature Failure
+
+The paradigm's costs are the flip side of its directness:
+
+- **Tighter coupling.** Because the caller invokes specific named procedures generated from a shared contract, caller and service are bound more tightly than in the resource model. The convenience of "just call the function" comes with a firmer dependency on that function's exact shape.
+- **Less free web machinery.** Calls that look like function invocations don't map onto the web's native "fetch this thing" operation, so the automatic caching that resource reads enjoy (§3) mostly doesn't apply — you're not addressing cacheable things, you're invoking actions.
+- **Poor fit for the open web and browsers.** The efficient binary transports that make RPC fast are often not directly usable from a browser and demand that callers adopt the schema and generated tooling. That's fine when you own both ends and a burden when your callers are strangers (§8).
+- **No uniform surface.** Every procedure is bespoke, so the "learn one corner, guess the rest" predictability of resources (§3) is weaker — the API is a catalogue of individual functions.
+
+```mermaid
+flowchart LR
+    C["🖥️ Service A"] -->|"getOrder(42)"| S["🖥️ Service B"]
+    S -->|"Order"| C
+    C -.->|"contract-first:<br/>both generated from<br/>one schema"| S
+```
+
+> 💡 **Key Insight**
+>
+> The procedure paradigm makes a remote call feel like a local function — the unit is an **action**, not a thing — which fits operation-centric work naturally and, with a binary contract and efficient transport, makes it fast enough for heavy internal traffic. The price is exactly what the resource paradigm bought: tighter coupling, little free caching, and poor reach to browsers and strangers. That's why the two paradigms sort so cleanly by audience — resources face outward to the open web, procedures face inward between services you control (§8).
+
+### Quick Recap — Procedure-Oriented
+
+- Organizes the API around **procedures (verbs)** — call a named action with arguments, like a local function. RPC is the approach; **gRPC** the modern exemplar.
+- Optimizes for **action-shaped operations, a contract-first typed interface, and performance** — ideal for high-volume internal service-to-service calls.
+- Its costs are **tighter coupling, little free web caching, and poor browser/stranger reach** — the mirror of the resource paradigm's strengths.
+- gRPC's mechanics are a later topic; the audience split it implies (internal vs public) is developed in §8.
