@@ -337,3 +337,59 @@ Whether that trade is worth it versus the resource paradigm is the most common r
 - Optimizes away **over- and under-fetching** (§3) and lets **many divergent clients** share one API — its strongest fit.
 - The cost moves to the server: **more complexity, harder caching, and the need for query-cost limits**.
 - Internals and the direct REST-vs-query comparison are later topics; here it's placed as the paradigm that **trades server simplicity for client flexibility**.
+
+---
+
+## 6. Beyond Request-Response — Persistent and Inverted
+
+The three paradigms so far all share the ask-and-wait shape (§2): the client speaks first, the server answers, the exchange ends. Some interactions don't fit that shape at all, and no amount of resource, procedure, or query modeling fixes it — the mismatch is in the shape itself. Two styles break out of request-response in different directions.
+
+*This section teaches why these styles exist and what their unit is. Their mechanics — connection handshakes, delivery guarantees, retries, security — are their own dedicated topics later in this phase.*
+
+### When Ask-and-Wait Doesn't Fit
+
+Request-response has a built-in assumption: the client knows when it wants something and asks. That breaks whenever the *server* is the one who knows something happened and the client needs to learn about it:
+
+- A message arrives in a chat the user is viewing.
+- A stock price ticks; a live dashboard must update.
+- A long-running job finishes, minutes after it was started.
+- A payment a partner is waiting on finally settles.
+
+In pure request-response, the only way for a client to learn about a server-side event is to **poll** — ask over and over, "anything new? anything new?" — which is wasteful (most polls return nothing), laggy (the update waits for the next poll), and worse at scale (more clients means more empty polls). Polling is the tell that you've forced a server-initiated interaction into a client-initiated shape. Two styles fix it properly, by changing who can speak and when.
+
+### Persistent Channel — Holding the Line Open
+
+The first breaks the one-request-one-response rule by keeping the connection **open**. Instead of a fresh exchange per message, client and server establish a long-lived **channel** and then *either side* can send messages over it, any time, until it's closed.
+
+The unit here is a **conversation**, not a transaction. Once the channel is up, the server can push a message the instant an event occurs, with no poll and no new connection — and the client can send too, making it genuinely bidirectional. This is the natural fit for chat, live feeds, collaborative editing, multiplayer state: anything where both sides talk continuously and latency matters. **WebSockets** is the dominant style here.
+
+The cost is that a persistent connection is a different operational animal — the server now holds open state for every connected client, and a long-lived stateful connection is harder to scale and load-balance than a stateless request. That's why this style is reached for when real-time genuinely requires it, not by default.
+
+### Inverted Callback — The Server Calls You
+
+The second breaks a different assumption: that *you* are always the caller. With a **callback**, you register a destination once, and when the relevant event happens, the other system makes a request *to you*. The roles invert — the provider becomes the client, and your endpoint becomes the server.
+
+The unit is a **notification**. It's how one system tells another "this happened" without the receiver polling — a payment provider notifying your backend that a charge settled, a code host notifying a build system that code was pushed. **Webhooks** are the exemplar. Crucially, this is server-to-server: it works when the receiver has a reachable address to be called back at, which is why it's common between backends and unnatural for browsers (which aren't callable servers).
+
+```mermaid
+flowchart TD
+    subgraph P["🔌 Persistent channel (WebSockets)"]
+        C1["Client"] <-->|"open line, either side speaks"| S1["Server"]
+    end
+    subgraph W["📣 Inverted callback (webhooks)"]
+        S2["Provider"] -->|"event happens → calls YOU"| C2["Your endpoint"]
+    end
+```
+
+Both styles answer the same underlying need — the server has something to say and shouldn't wait to be asked — in two different ways: hold a live connection open (channel), or call back on an event (callback). Which fits depends on whether the interaction is a continuous conversation or discrete notifications, and whether a live connection is warranted.
+
+> 💡 **Key Insight**
+>
+> When the *server* is the one who knows an event happened, request-response can only fake it by polling — wasteful, laggy, and worse at scale. Two styles fix the shape itself: a **persistent channel** (WebSockets) holds a live bidirectional line open for continuous conversation, and an **inverted callback** (webhooks) has the provider call *you* when an event occurs. Reaching for either is a signal that you've left the ask-and-wait family entirely — and the tell you needed to is almost always that you found yourself polling.
+
+### Quick Recap — Beyond Request-Response
+
+- Request-response can't express **server-initiated** events except by **polling**, which is wasteful, laggy, and scales badly — the sign you've outgrown the shape.
+- A **persistent channel** (WebSockets) keeps a long-lived, bidirectional connection open; the unit is a **conversation** — chat, live feeds, collaboration.
+- An **inverted callback** (webhooks) has the provider call *your* endpoint on an event; the unit is a **notification**, and it's inherently server-to-server.
+- Both let the server speak unprompted; their mechanics (connections, delivery, retries, security) are dedicated later topics.
