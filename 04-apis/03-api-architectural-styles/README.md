@@ -393,3 +393,60 @@ Both styles answer the same underlying need — the server has something to say 
 - A **persistent channel** (WebSockets) keeps a long-lived, bidirectional connection open; the unit is a **conversation** — chat, live feeds, collaboration.
 - An **inverted callback** (webhooks) has the provider call *your* endpoint on an event; the unit is a **notification**, and it's inherently server-to-server.
 - Both let the server speak unprompted; their mechanics (connections, delivery, retries, security) are dedicated later topics.
+
+---
+
+## 7. The Orthogonal Choices — Transport, Format, Contract
+
+So far a "style" has been treated as one decision — pick your unit, get your style. In reality a style is a *bundle*, and three of the things it bundles are separable choices that people mistake for part of the style itself. Untangling them removes most of the confusion in style debates.
+
+### A Style Bundles More Than a Unit
+
+Choosing resource, procedure, or query settles the unit (§1). But a working API also has to answer three further questions, and each has more than one possible answer:
+
+| Choice | The question | Common answers |
+|---|---|---|
+| **Transport** | What carries the bytes? | The web's default protocol; a newer multiplexed one; a raw persistent connection |
+| **Format** | How are values encoded? | Human-readable text; compact binary (a separate topic in this phase) |
+| **Contract** | Is the shape machine-defined? | A formal schema both sides generate from; convention and documentation only |
+
+None of these is fixed by the unit. A resource API is *usually* text over the web's default protocol with a documentation-only contract — but none of that is required by "resource." A procedure API *usually* pairs with a binary format, an efficient transport, and a strict generated contract — but again, that's the common bundle, not a law.
+
+### Why the Bundling Causes Confusion
+
+Because each style ships with a *default* bundle, people fuse the defaults into the style's identity and then get confused when the defaults don't hold:
+
+- **"REST is JSON."** It usually is, but that's **convention, not definition** — the resource paradigm is about units and uniform actions, and nothing stops a resource API from using a different format. The format is a separate axis (its own topic).
+- **"gRPC is fast because it's RPC."** Its speed comes mostly from its *format and transport* choices — a compact binary encoding and an efficient multiplexed protocol — not from the procedure paradigm itself. The paradigm and the performance are different axes that happen to travel together.
+- **"GraphQL is a database / a technology."** It's a query *paradigm* with a bundled contract (its schema); it isn't tied to any particular storage or transport underneath.
+
+Each confusion is the same mistake: treating a *default in the bundle* as if it were the *essence of the style*. Once you separate the axes, the essence is just the unit (§1); everything else is a swappable choice.
+
+```mermaid
+flowchart TD
+    U["Unit (the style's essence)<br/>resource · procedure · query"] --> B["📦 Bundled defaults<br/>(swappable, not essential)"]
+    B --> T["Transport"]
+    B --> F["Format"]
+    B --> K["Contract: schema or docs"]
+```
+
+### Why It Matters Practically
+
+Separating the axes isn't just tidiness — it changes what's possible:
+
+- You can keep a paradigm and swap an axis: a resource API can adopt a binary format for a high-volume path without stopping being resource-oriented.
+- You can reason about the *real* source of a property: if you want gRPC-like performance, the lever is the format and transport, which can sometimes be applied without adopting the full procedure paradigm.
+- You can read a style debate correctly: much of "REST vs gRPC" is really *text-with-docs vs binary-with-schema* — a format-and-contract argument wearing a paradigm costume.
+
+The **contract** axis deserves a last note because it recurs across this phase. A machine-readable schema (as procedure and query styles bundle) buys generated clients, build-time checking, and a precise source of truth — at the cost of coordination and tooling. A documentation-only contract (as resource APIs often use) is looser and more universal but catches shape mismatches later. That's the same schema-vs-schemaless trade seen in data formats, applied one level up at the interaction contract.
+
+> 💡 **Key Insight**
+>
+> A style's essence is only its **unit**; the transport, format, and contract it "comes with" are **separable defaults**, not part of the definition. Most style confusion — "REST is JSON," "gRPC is fast because RPC" — comes from mistaking a bundled default for the essence. Pull the axes apart and two things follow: you can keep a paradigm while swapping an axis to fit a need, and you can see that many style arguments are really format-and-contract arguments in disguise.
+
+### Quick Recap — Transport, Format, Contract
+
+- A style **bundles** a unit with default choices of **transport, format, and contract** — but only the unit is essential; the rest are swappable.
+- Treating a bundled default as the style's essence causes the classic confusions (**"REST is JSON," "gRPC is fast because it's RPC"**).
+- Separating the axes lets you **keep a paradigm while swapping an axis**, and see the *real* source of a property like performance (format + transport).
+- The **contract** axis — machine schema vs documentation — is the schema-vs-schemaless trade one level up, buying generated tooling and safety at the cost of coordination.
