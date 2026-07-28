@@ -153,3 +153,68 @@ flowchart TD
 - **Verb-in-URL** (`POST /createOrder`) is the signature mistake: it breaks predictability by making every action a bespoke, unguessable endpoint.
 - Resources are the **concepts you expose**, not your database tables; most come as a **collection** and its **items**.
 - Genuine actions resolve as a **state change** (update the resource) or a **new sub-resource** (create it) — a raw procedural verb should be a rare, deliberate exception.
+
+---
+
+## 3. URL Structure and Relationships
+
+If resources are the nouns (§2), URLs are how callers *address* them — and a consistent URL structure is the most visible form the predictability promise takes. A caller reads your URLs before they read your docs; the structure teaches them how the whole API thinks.
+
+### The Collection-and-Item Pattern
+
+Almost every resource follows one template, and using it uniformly is most of good URL design:
+
+```
+/orders            → the collection (all orders)
+/orders/42         → one item (order 42)
+/orders/42/items   → a sub-collection (the items in order 42)
+/orders/42/items/9 → one item within it
+```
+
+Two rules keep this predictable:
+
+- **Collections are plural nouns.** `/orders`, not `/order` — the path names a set, and one member is that set plus an identifier. Consistency here matters more than which convention you pick: mixing `/orders` and `/user` forces callers to memorize each path instead of guessing it.
+- **An item is a collection plus an identifier.** Once `/orders/42` is understood, `/products/7` needs no explanation. That guessability *is* the predictability promise, delivered through structure.
+
+### Expressing Relationships
+
+Resources relate to each other, and the URL can express containment through nesting — but nesting is a tool with a sharp edge.
+
+**Nest to show that one resource lives within another:** `/orders/42/items` reads naturally as "the items belonging to order 42." The hierarchy communicates the relationship at a glance.
+
+**Stop nesting before it gets deep.** A path like `/users/3/orders/42/items/9/discounts/2` is technically expressive and practically miserable — brittle, hard to read, and it forces a rigid hierarchy on data that may be reachable more than one way. The common guidance is to nest **at most one level** and then switch to addressing the deeper resource directly by its own identifier:
+
+```
+❌ /users/3/orders/42/items/9      (deep, brittle)
+✅ /orders/42/items/9              (items belong to the order; that's enough)
+✅ /items/9                        (if an item has a global id, address it directly)
+```
+
+The principle: nest to express a *genuine* containment the caller needs, flatten everything else. A resource with its own stable identifier can usually be reached directly, and should be.
+
+### Identifiers and Consistency
+
+A few smaller decisions that, made consistently, compound into a predictable surface:
+
+- **Stable identifiers.** The ID in `/orders/42` should not change over the resource's life; callers store and reuse it. Human-readable slugs (`/articles/rest-design-guide`) are friendlier but riskier if the underlying text can change — a URL that changes is a broken bookmark and, at scale, a broken integration.
+- **Consistent casing and separators.** Pick one convention (lowercase, hyphens between words) and hold it everywhere. This is pure predictability: the caller should never have to wonder whether it's `/orderItems`, `/order_items`, or `/order-items`.
+- **The URL identifies; it doesn't parameterize behavior.** The path names *what* resource; how you filter, sort, or page it belongs in query parameters (§6), not in the path. `/orders/recent` blurs a resource with a query and should usually be `/orders?status=recent`.
+
+```mermaid
+flowchart LR
+    C["/orders"] --> I["/orders/42"]
+    I --> S["/orders/42/items"]
+    S --> SI["/orders/42/items/9"]
+    SI -.->|"deeper than this?<br/>flatten to a direct path"| F["/items/9"]
+```
+
+> 💡 **Key Insight**
+>
+> URL structure is the predictability promise made visible: the **collection-and-item** pattern applied uniformly lets a caller who has seen one path guess every other, which is worth more than any single clever URL. Nest only to show a containment the caller genuinely needs, and flatten the moment a resource has its own identifier — deep nesting trades a little expressiveness for a lot of brittleness. Consistency in plurals, casing, and identifiers isn't fussiness; each inconsistency is a thing the caller has to memorize instead of predict.
+
+### Quick Recap — URL Structure and Relationships
+
+- The **collection-and-item** template (`/orders`, `/orders/42`) applied uniformly is most of good URL design — it makes paths guessable.
+- Use **plural nouns** and keep casing/separators consistent; each inconsistency forces memorization and chips at predictability.
+- **Nest at most one level** to show genuine containment, then address deeper resources directly by identifier — deep paths are brittle.
+- The path **identifies the resource**; filtering, sorting, and paging go in query parameters (§6), not the path.
