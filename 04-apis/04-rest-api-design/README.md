@@ -579,3 +579,100 @@ So the honest guidance is: **aim for a solid level 2** — proper resources, met
 - Most of good REST design targets **level 2** (resources + methods + status codes), which is where **free caching and universality** actually kick in.
 - **Level 3 / HATEOAS** adds discoverability and evolvability via links, but pays off only for clients that navigate by them — which most don't.
 - **More RESTful isn't automatically better**: aim for a solid level 2 and adopt hypermedia only when a specific need justifies its cost.
+
+---
+
+## 10. Putting It All Together — Designing an Orders API
+
+A team is designing the public API for an order-management system: partners create orders, check their status, list them, and cancel them. Watch every section become a decision, each one framed as a promise kept.
+
+### Step 1 — Model the Resources (§2)
+
+They start with the nouns partners talk about: *orders*, and the *items* within an order. Resisting the verb-in-URL reflex, "create an order" doesn't become `POST /createOrder` — it becomes a `POST` to the orders collection. The domain has two resources, one nested in the other:
+
+```
+/orders            /orders/42            /orders/42/items
+```
+
+Cancellation is the interesting case (§2). "Cancel" is a verb, but they recognize it as a *state change* — a cancelled order is the same order in a different status — so it's a modification of the resource, not a new `/cancelOrder` endpoint. Predictability promise kept: every path is a guessable noun.
+
+### Step 2 — Methods and Status Codes (§4, §5)
+
+Each operation gets the method whose promises fit it:
+
+- `GET /orders/42` — read, **safe**, cacheable.
+- `POST /orders` — create; returns **`201 Created`** with the new order's location. They note this is non-idempotent (§4), flagging it as the endpoint that will later need an idempotency mechanism for safe retries.
+- `PATCH /orders/42` — change status to cancelled; a partial modification, not a full replace.
+
+For outcomes they choose honest codes (§5): `404` for an order that doesn't exist, `403` when a partner requests *another* partner's order (distinct from `404` — and here they pause, deciding to return `404` rather than `403` so the API doesn't reveal that someone else's order exists), `409` when cancelling an order that's already shipped. Crucially, no `200`-with-error-body anywhere — every failure carries a true status code (§5), keeping the universality promise.
+
+### Step 3 — The Orders Collection (§6)
+
+`GET /orders` is the dangerous one (§6). A busy partner has hundreds of thousands of orders, so the endpoint is **bounded from day one**: a default page size, cursor-based pagination (partners walk their whole order history programmatically, and cursors stay fast and stable as new orders arrive), and filtering/sorting in query parameters:
+
+```
+GET /orders?status=shipped&sort=-created&limit=50
+```
+
+The resource stays singular; the variation lives in parameters, so responses stay cacheable (§6). The "return everything" trap is designed out before it can appear in production.
+
+### Step 4 — The Error Shape (§7)
+
+They define one error shape used by every endpoint (§7): a stable machine `code`, a human `message`, and a `request_id` for support. `insufficient_inventory` and `order_already_shipped` become distinct codes partners can branch on, cleanly separating "fix and retry" from "this will never work" (§7). No stack traces cross the boundary; the detail is logged behind the request id.
+
+### Step 5 — Room to Grow (§8)
+
+Anticipating change, they expose only what partners need — not internal fields (§8) — and document that clients should ignore unknown fields. Months later, when they add an `estimated_delivery` field to the order response, it's a pure addition: tolerant clients ignore it, new clients use it, nobody breaks (§8). No version bump needed — exactly as evolvability-by-design intends.
+
+### Step 6 — How Far Up the Ladder (§9)
+
+They deliberately target **level 2** (§9): clean resources, correct methods, honest status codes. They skip hypermedia — their partners integrate against documentation and hard-code the handful of URLs they use, so link-driven discoverability would be cost without payoff. A deliberate stop, not an oversight.
+
+```mermaid
+flowchart TD
+    D["🎯 Orders API"] --> R["📦 Resources: /orders, /items (§2)"]
+    D --> M["🔤 201 on create, PATCH to cancel, honest 4xx (§4,§5)"]
+    D --> C["🗂️ Cursor-paged, filtered collection (§6)"]
+    D --> E["⚠️ One error shape, machine codes (§7)"]
+    D --> V["🌱 Minimal surface, additive growth (§8)"]
+```
+
+### The Payoff
+
+The result is an API a partner can learn in one sitting and integrate against confidently: paths they can guess, outcomes their code can branch on, failures they can handle uniformly, and a contract that won't break under them next quarter. Not one decision was made by consulting a style rulebook — each came from asking which promise it protected.
+
+The lesson the team writes down:
+
+> **Every decision reduced to the same question: which promise does this keep? Naming the resource kept predictability; the safe `GET` kept caching; the honest status code kept universality; the minimal surface kept evolvability. "Is it RESTful?" would have told us whether we followed the rules. "Which promise does this keep?" told us whether the API would actually be good to use — and those are not the same question.**
+
+---
+
+## 11. Final Recap
+
+| Decision | The Promise It Protects | Common Way It's Broken |
+|---|---|---|
+| **Model as resources (nouns)** | Predictability | `POST /createOrder` — a verb in the URL |
+| **Consistent URL structure** | Predictability | Mixed plurals, casing, deep nesting |
+| **`GET` stays safe** | Free caching | A `GET` that mutates state |
+| **Match method to operation** | Reliability | Non-idempotent op where callers expect idempotence |
+| **Honest status codes** | Universality | `200 OK` with an error in the body |
+| **Bounded, paged collections** | Predictability & stability | An endpoint that returns everything |
+| **One consistent error shape** | Usable failure handling | Per-endpoint ad-hoc error formats |
+| **Minimal surface, additive change** | Evolvability | Leaking internals; renaming/removing fields |
+| **Target level 2, hypermedia by need** | Right cost/benefit | Dogmatic hypermedia, or RPC-in-disguise |
+
+### The One Thing to Remember
+
+> **REST's famous rules are not the point — they're the means. The point is a small set of promises the uniform interface makes to callers: that they can predict it, cache it for free, evolve against it without breaking, and call it from anything. Every good design decision keeps one of those promises and every classic mistake breaks one, so the question that actually makes you good at REST is never "is this RESTful?" but "which promise does this decision keep or break?" Model resources as nouns, keep GET safe, return honest status codes, bound your collections, design your errors as carefully as your successes, and expose the minimum you can — not because a rulebook says so, but because each is a promise someone is going to build their system on top of. Follow the rules and you get an API that passes review; keep the promises and you get one people are glad to build against.**
+
+---
+
+## What's Next
+
+> **Topic 05 — REST vs GraphQL**
+
+This document designed REST well and named, more than once, exactly where it strains: a collection that's chatty to assemble from many resources, responses that over-fetch fields a caller didn't want, a mobile screen that needs six related things and makes six round trips. Those aren't flaws in *your* design — they're the edges of the resource paradigm itself.
+
+The next topic puts REST head to head with the style built specifically to attack those edges: **GraphQL**, where the client describes the exact data it wants in one request. It's the most common real architectural debate in API design, and now that you know what REST promises and where it strains, you can judge the comparison instead of taking a side. You've learned to design REST well; next, you learn when something else is the better tool.
+
+---
