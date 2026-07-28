@@ -211,14 +211,14 @@ you will likely find this useful.
 
 ## Current Status
 
-**21 of 150 topics complete.** Phases 01 and 02 are finished; Phase 03 is in progress.
+**22 of 150 topics complete.** Phases 01 and 02 are finished; Phase 03 is in progress.
 
 | # | Phase | Done | Status |
 | --- | ----- | ---- | ------ |
 | 01 | Introduction & Foundations | 7 / 7 | ✅ Complete |
 | 02 | Core System Properties | 5 / 5 | ✅ Complete |
 | 03 | Networking Deep Dives | 6 / 7 | 🔄 In Progress |
-| 04 | APIs & Communication | 3 / 15 | 🔄 In Progress |
+| 04 | APIs & Communication | 4 / 15 | 🔄 In Progress |
 | 05 | Storage & Databases | 0 / 27 | 🔒 Planned |
 | 06 | Scaling & Performance | 0 / 10 | 🔒 Planned |
 | 07 | Async & Events | 0 / 13 | 🔒 Planned |
