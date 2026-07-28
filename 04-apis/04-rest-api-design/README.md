@@ -469,3 +469,53 @@ Leaking internals through errors is one of the most common ways a boundary that'
 - Use **one consistent error shape** everywhere so callers write failure-handling once — per-endpoint formats force bespoke parsing and get abandoned.
 - Carry a **stable machine-readable code** (for branching) and a separate **human message** (for people) — never make callers parse message text.
 - Let callers distinguish **retryable from hopeless**, and **never leak internals** — log detail server-side, return a summary plus a request id.
+
+---
+
+## 8. Evolving Without Breaking — Compatibility by Design
+
+An API ships, callers build on it, and then requirements change — a field must be added, a behavior improved, a mistake corrected. The evolvability promise (§1) says you can do all of that *without breaking the callers already depending on you.* Whether you can keep that promise is decided largely by how you designed the API before you ever needed to change it.
+
+### The Constraint — You Can't Force an Upgrade
+
+The fact that makes evolution hard: a public API's callers are people you can't reach and can't compel. You ship a change; their code keeps calling the old contract until *they* choose to update, which may be never. So a change either has to keep working for existing callers, or it breaks them the moment it deploys — through no action of theirs.
+
+This makes "will this break existing callers?" the first question about any change, and it splits every change into two kinds:
+
+| Non-breaking (safe to ship) | Breaking (someone's integration fails) |
+|---|---|
+| Adding a new optional field to a response | Removing or renaming a field |
+| Adding a new endpoint | Changing a field's type or meaning |
+| Adding an optional query parameter | Making an optional parameter required |
+| A new enum value callers can ignore | Tightening validation on existing input |
+
+The pattern: **additions tend to be safe; removals, renames, and tightenings tend to break.** A caller ignoring fields it doesn't recognize is unharmed when you add one — but any caller depending on something you took away shatters.
+
+### Designing So Change Stays Additive
+
+Compatibility is mostly won *before* the change, by design choices that leave room to grow:
+
+- **Expose the minimum (from §2's encapsulation).** Every field you publish is one you've promised to keep. Leak an internal database column into the response and you can never restructure that table without breaking callers. The less you expose, the more you can change freely later.
+- **Build tolerant readers, and expect them.** A well-behaved client ignores fields it doesn't recognize rather than rejecting them — which is what makes adding a field safe. Design your responses assuming callers are tolerant, and document that they should be, because a strict client that rejects unknown fields turns your safe additions into breakage.
+- **Prefer optional over required.** A new *required* input breaks every existing caller instantly; the same input made *optional with a sensible default* breaks no one and lets callers adopt it when ready.
+- **Never reuse a name for a new meaning.** Changing what a field *means* while keeping its name is the most insidious break — it passes every schema check and silently corrupts every caller who relied on the old meaning. If the meaning changes, the name should too (a new field), leaving the old one intact.
+
+### When You Genuinely Must Break — Versioning
+
+Sometimes a change can't be made compatible: a fundamental restructuring, a mistake that has to be corrected. You can't hold every old contract forever, and occasionally the interface truly must change in a breaking way.
+
+That situation is what **versioning** exists for — running the old and new contracts side by side, giving callers time to migrate, and eventually retiring the old one. The two common approaches are worth naming at the design level:
+
+- **In the URL** (`/v1/orders` → `/v2/orders`) — visible, unmissable, easy to route; but coarse, and it pushes the version into every path.
+- **In a header** — keeps URLs clean and version-free; but it's less visible and easy for a caller to forget.
+
+Which to choose, how to run versions in parallel, and how to sunset the old one is a substantial topic in its own right, later in this phase. The design-level point here is that **versioning is the escape hatch, not the routine** — most change should be additive and never need a new version, and a new version is what you reach for only when a break is genuinely unavoidable. An API that bumps its version for every change has usually failed to design for compatibility.
+
+> ⚠️ **Evolvability is designed in before the first change, not bolted on at the first break.** Because you can't force callers to upgrade, every change must assume old callers are still out there — so expose the minimum, keep additions optional, build for tolerant readers, and never reuse a name for a new meaning (the break that passes every check). Versioning is the escape hatch for the genuinely-unavoidable break, not the routine tool; reaching for it constantly is the symptom of an API that wasn't designed to grow.
+
+### Quick Recap — Evolving Without Breaking
+
+- You **can't force callers to upgrade**, so every change must keep working for old callers or it breaks them on deploy — making "will this break?" the first question.
+- **Additions are usually safe; removals, renames, and tightenings break** — and the worst break is reusing a name for a new *meaning*, which passes every schema check.
+- Compatibility is won by design: **expose the minimum, prefer optional, assume tolerant readers**, and grow the contract by addition.
+- **Versioning** (URL or header) is the escape hatch for unavoidable breaks — a substantial later topic — not a routine to reach for on every change.
