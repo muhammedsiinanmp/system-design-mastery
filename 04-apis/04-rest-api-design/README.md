@@ -331,3 +331,75 @@ This breaks the **universality** promise (§1) directly. The whole point of stat
 - The load-bearing split is **fault**: `4xx` means the caller must fix something; `5xx` means the server failed and should be alerted — confusing them misroutes every reaction.
 - Choose deliberately among the codes that carry distinct meaning — especially **`401` vs `403`** (unauthenticated vs forbidden) and **`400` vs `422`** (unparseable vs invalid).
 - **`200 OK` with an error in the body** breaks universality for every generic client at once — return the honest code instead.
+
+---
+
+## 6. Designing Collections — Pagination, Filtering, Sorting
+
+Single resources are the easy case. The hard, high-stakes design work is in **collections** — `/orders`, `/users`, `/events` — because a collection grows without bound, and an endpoint that returns "all of them" is a latency and stability problem waiting to happen. This is where a lot of real-world API pain lives.
+
+### Why "Return Everything" Is a Trap
+
+`GET /orders` looks innocent when you have a hundred orders. At a million, the same endpoint tries to load a million rows, serialize megabytes, and ship it all in one response — slow for the caller, memory-punishing for the server, and a single expensive query that can drag down everything sharing that database. An unbounded collection endpoint is a design defect that stays invisible in testing and detonates in production, precisely when the data has grown.
+
+The fix is that a collection endpoint must **never** return everything. It returns a bounded *page*, and gives the caller a way to ask for more.
+
+### Pagination — Two Approaches
+
+**Offset-based** pagination uses a position and a count: "skip 40, give me 20."
+
+```
+GET /orders?offset=40&limit=20
+```
+
+It's simple, it allows jumping to an arbitrary page, and it's the intuitive default. Its weaknesses are real: skipping a large offset gets *slower* the deeper you go (the server still has to count past everything skipped), and if items are inserted or deleted while a caller pages through, they can see duplicates or miss rows — the offsets shift under them.
+
+**Cursor-based** pagination hands the caller an opaque pointer to "where you left off":
+
+```
+GET /orders?limit=20            → returns 20 + a "next" cursor
+GET /orders?limit=20&cursor=eyJ… → the next 20
+```
+
+The cursor encodes a stable position (typically a sort key plus an id), so paging stays fast no matter how deep, and insertions/deletions don't shift the window. The cost is that you can't jump to "page 47" — you can only walk forward — and cursors are opaque, so callers can't construct them by hand.
+
+| | Offset | Cursor |
+|---|---|---|
+| Jump to arbitrary page | ✅ | ❌ (sequential only) |
+| Performance at depth | 🔴 degrades | 🟢 stays fast |
+| Stable under inserts/deletes | 🔴 shifts | 🟢 stable |
+| Simplicity for callers | 🟢 obvious | 🟠 opaque |
+
+The design choice follows the use: offset for small, stable datasets a human pages through a UI; cursor for large or fast-changing datasets and for anything programmatic walking the whole set.
+
+### Filtering and Sorting Belong in Query Parameters
+
+Callers rarely want the *whole* collection — they want a slice of it. That slice is expressed in **query parameters**, keeping the path pointed at the resource (§3):
+
+```
+GET /orders?status=shipped&sort=-created&limit=20
+```
+
+`status=shipped` filters, `sort=-created` orders (a convention: `-` for descending), `limit` bounds the page. The design promises to protect here:
+
+- **Filtering and sorting are query parameters, not new paths.** `/orders/shipped` looks tempting but breaks predictability — "shipped" isn't a resource, it's a filter on one. `/orders?status=shipped` keeps the resource singular and the variation in parameters.
+- **Keep it cacheable.** Because these are `GET`s with the criteria in the URL, two identical queries produce identical URLs, so caches can store them. Putting filter criteria in a request *body* (which some designs reach for) breaks that — the URL no longer identifies the response, and the free-caching promise is gone.
+- **Bound it by default.** Even with no `limit` given, apply a sane default page size. The endpoint should be impossible to call in a way that returns everything.
+
+```mermaid
+flowchart LR
+    C["GET /orders?status=shipped<br/>&sort=-created&limit=20"] --> LB["🗂️ Bounded page of 20"]
+    LB --> N["+ a cursor/next link<br/>for the following page"]
+    N -.->|"caller walks forward"| LB
+```
+
+> 💡 **Key Insight**
+>
+> A collection endpoint that can return "everything" is a latency and stability defect that hides until the data grows — so the real design rule is that collections are **always bounded**, always paged, bounded even by default. Choose **offset** for small stable sets a human browses and **cursor** for large or changing sets walked programmatically; express filtering and sorting as **query parameters** so the URL still identifies the response and caches still work. The collection is where REST's promises are easiest to break by omission — you don't have to do anything wrong, just forget to set a limit.
+
+### Quick Recap — Designing Collections
+
+- An **unbounded collection endpoint** is a latency/stability trap that's invisible in testing; collections must always return a **bounded page**.
+- **Offset** pagination is simple and allows page-jumps but degrades at depth and shifts under inserts; **cursor** pagination stays fast and stable but is forward-only.
+- **Filtering and sorting go in query parameters** (`?status=shipped&sort=-created`), not new paths — keeping the resource singular and the response cacheable.
+- **Bound by default**: even with no `limit`, apply a sane page size so the endpoint can never be asked to return everything.
