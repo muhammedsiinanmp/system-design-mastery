@@ -97,3 +97,59 @@ A checklist tells you *what* to do; it can't tell you what to do when the checkl
 - Each is a **promise to the caller**, kept by a specific design constraint — and every classic mistake is one of those promises broken.
 - Reframing rules as promises turns a checklist into **judgment**: ask *which promise does this decision keep or break?*
 - That question generalizes to cases no checklist covers, which is the whole difference between following REST and **designing** it.
+
+---
+
+## 2. Modeling Resources — Nouns, Not Actions
+
+The first and most consequential design decision in a REST API is also the one made earliest and revisited least: **what are the resources?** Get this right and the rest of the design flows naturally; get it wrong and you fight the model on every endpoint.
+
+### A Resource Is a Thing Worth Naming
+
+A **resource** is any thing in your system that a caller might want to address — an order, a user, a product, a shipment. The core discipline is that resources are **nouns**, and the operations on them come from the uniform set of verbs (§4), not from the URL.
+
+The instinct to resist is turning *actions* into endpoints:
+
+```
+❌ POST /createOrder          ✅ POST /orders
+❌ POST /getOrderById         ✅ GET  /orders/42
+❌ POST /cancelOrder          ✅ (see below — this one is subtler)
+❌ GET  /fetchAllUsers        ✅ GET  /users
+```
+
+The left column smuggles the verb into the path, which breaks predictability (§1): every action becomes its own bespoke name a caller has to learn, instead of a uniform verb-on-noun they can guess. The right column names the *thing* and lets the method carry the action. Once a caller knows `/orders`, they can guess `/products` and `/users` — that's the predictability promise being kept at the level of the URL itself.
+
+### Finding the Resources
+
+Resources usually fall out of the domain's nouns, but a few heuristics sharpen it:
+
+- **Look for the things users talk about.** "I placed an *order*," "update my *profile*," "cancel the *subscription*." Those nouns are almost always your resources.
+- **Resources aren't your database tables.** They're the *concepts you expose*, which may combine or hide tables. A `/dashboard` resource might assemble data from ten tables; a caller neither knows nor cares. (This is encapsulation — the API's shape is a deliberate contract, not a mirror of storage.)
+- **Prefer collections and items.** Most resources come in two forms: the collection (`/orders`, all of them) and the item (`/orders/42`, one specific one). This pairing is so common it's a template (§3).
+
+### When the Thing Is Really an Action
+
+The honest hard case: some operations genuinely *are* actions and don't map cleanly to a noun with a standard verb. "Cancel an order," "publish an article," "retry a payment." Forcing these into pure resources produces contortions, and pretending otherwise is where REST dogma stops being useful. Two pragmatic resolutions:
+
+- **Model the action as a state change on the resource.** Cancelling an order is often *updating* the order's status — a modification of the existing thing (§4's `PATCH`), not a new verb. This works when the action is really "the resource is now in a different state."
+- **Model the action as a sub-resource you create.** When the action is a *thing* in its own right — a refund, a shipment, a publication event — create it: `POST /orders/42/refunds`. The action becomes a resource (a refund *is* a noun), and the model stays uniform.
+
+Both keep the promise; the choice depends on whether the action is best understood as *the resource changing* or *a new related thing coming into being*. When neither fits — a genuinely procedural operation with no resource nature — that's a signal the interaction may not be resource-shaped at all, which is exactly the paradigm question a separate topic in this phase addresses. Reaching for a verb-in-URL should be the rare, deliberate exception, not the reflex.
+
+```mermaid
+flowchart TD
+    A["An operation you need to expose"] --> Q{"Is it naturally<br/>a thing?"}
+    Q -->|"yes"| R["📦 A resource:<br/>noun + uniform verb"]
+    Q -->|"it's a state change"| S["✏️ Update the resource<br/>(§4 PATCH)"]
+    Q -->|"it's a new related thing"| N["➕ Create a sub-resource<br/>POST /orders/42/refunds"]
+    Q -->|"genuinely procedural"| V["⚠️ Rare exception —<br/>or the wrong style entirely"]
+```
+
+> ⚠️ **The verb-in-URL reflex is the most common REST design mistake, and it's a broken predictability promise.** Every `POST /doSomethingSpecific` is an endpoint a caller can't guess and you can't make uniform — the API becomes a catalogue of bespoke actions wearing REST's clothing. Before adding one, check whether the action is really a *state change* (update the resource) or a *new thing* (create a sub-resource); one of those is almost always the honest model, and both keep the uniformity that makes the rest of the API predictable.
+
+### Quick Recap — Modeling Resources
+
+- Resources are **nouns** — the things your system is about — and the action comes from the uniform verb (§4), never from the URL.
+- **Verb-in-URL** (`POST /createOrder`) is the signature mistake: it breaks predictability by making every action a bespoke, unguessable endpoint.
+- Resources are the **concepts you expose**, not your database tables; most come as a **collection** and its **items**.
+- Genuine actions resolve as a **state change** (update the resource) or a **new sub-resource** (create it) — a raw procedural verb should be a rare, deliberate exception.
