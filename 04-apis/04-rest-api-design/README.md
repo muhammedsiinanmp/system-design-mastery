@@ -50,7 +50,7 @@ Before any rule about URLs or verbs, it's worth asking what REST is actually *fo
 **REST** — Representational State Transfer — is a style for designing web APIs around **resources** (the things your system is about — orders, users, products) acted on through a small, uniform set of operations. When it's designed well, a REST API has four properties that make it a pleasure to build against:
 
 - **Predictability.** Once a caller learns how one part works, they can guess the rest. `/orders/42` behaves like `/products/7`; the same verbs mean the same things everywhere.
-- **Free caching.** Reads map onto the web's native "fetch this thing" operation, so the existing infrastructure — browsers, proxies, content networks — can cache them with no extra work on your part.
+- **Free caching.** A read is expressed as the web's standard "give me this resource" request, which the surrounding infrastructure — browsers, proxies, content networks — already knows how to store and reuse, at no extra effort from you.
 - **Evolvability.** The API can grow and change over years without breaking the callers already depending on it.
 - **Universality.** Any language, any tool, a browser, a command-line client can call it with nothing special installed.
 
@@ -256,7 +256,7 @@ The canonical version of this disaster is real and recurring: a team put admin a
 
 Here's where method choice meets the reliability promise. A network can lose a *response* even when the request succeeded, so callers retry when they hear nothing back (a fact developed in this phase's first topic). For an idempotent method, that retry is harmless — a repeated `PUT` or `DELETE` lands the same. For `POST`, the retry creates a *second* order, and the caller never meant to.
 
-This isn't a reason to avoid `POST` — creation is genuinely non-idempotent and `POST` is the honest method for it. It's a reason to recognize that **any operation you put behind `POST` inherits the retry problem**, and that making a create *safe to retry* requires an added mechanism — an idempotency key that lets the server recognize the duplicate. That mechanism is a topic of its own later in this phase; the design-level point here is to know *which of your endpoints has the problem* (every non-idempotent one) so you know where that mechanism will be needed.
+This isn't a reason to avoid `POST` — creation is genuinely non-idempotent and `POST` is the honest method for it. It's a reason to recognize that **any operation you put behind `POST` inherits the retry problem**, and that making a create *safe to retry* requires an added mechanism — an idempotency key that lets the server recognize the duplicate. That mechanism gets its own dedicated treatment further into this phase; the design-level point here is to know *which of your endpoints has the problem* (every non-idempotent one) so you know where that mechanism will be needed.
 
 ```mermaid
 flowchart TD
@@ -412,7 +412,7 @@ flowchart LR
 
 ## 7. Designing Errors — The Half of the Contract People Forget
 
-Most API design effort goes into the success path — the resources, the happy responses. But callers spend a great deal of their time handling *failure*, and how your API fails is as much a part of the contract as how it succeeds. An API with a beautiful success design and a chaotic error design is genuinely hard to build against, because the caller can never write reliable failure-handling code.
+Most API design effort goes into the success path — the resources, the happy responses. But callers spend much of their time handling *failure*, and the way an API behaves when things go wrong is every bit as much a part of its contract as the way it behaves when they go right. An API with a beautiful success design and a chaotic error design is genuinely hard to build against, because the caller can never write reliable failure-handling code.
 
 ### The Status Code Is Not Enough
 
@@ -482,9 +482,9 @@ An API ships, callers build on it, and then requirements change — a field must
 
 ### The Constraint — You Can't Force an Upgrade
 
-The fact that makes evolution hard: a public API's callers are people you can't reach and can't compel. You ship a change; their code keeps calling the old contract until *they* choose to update, which may be never. So a change either has to keep working for existing callers, or it breaks them the moment it deploys — through no action of theirs.
+The fact that makes evolution hard: your callers upgrade on *their* schedule, not yours, and a public API's are people you have no way to reach. Ship a change and the software written against the previous shape keeps running exactly as it did — it doesn't know anything changed. So a change is only safe if it leaves that existing software still working; otherwise it fails on deploy, for callers who did nothing wrong.
 
-This makes "will this break existing callers?" the first question about any change, and it splits every change into two kinds:
+That reframes the central design question to "does this leave existing callers working?", and it sorts every change into two kinds:
 
 | Non-breaking (safe to ship) | Breaking (someone's integration fails) |
 |---|---|
@@ -493,7 +493,7 @@ This makes "will this break existing callers?" the first question about any chan
 | Adding an optional query parameter | Making an optional parameter required |
 | A new enum value callers can ignore | Tightening validation on existing input |
 
-The pattern: **additions tend to be safe; removals, renames, and tightenings tend to break.** A caller ignoring fields it doesn't recognize is unharmed when you add one — but any caller depending on something you took away shatters.
+The pattern: **additions tend to be safe; removals, renames, and tightenings tend to break.** A client that quietly skips fields it wasn't expecting sails through a new one — while anything that was reading a field you deleted or renamed fails the instant the change lands.
 
 ### Designing So Change Stays Additive
 
@@ -506,20 +506,20 @@ Compatibility is mostly won *before* the change, by design choices that leave ro
 
 ### When You Genuinely Must Break — Versioning
 
-Sometimes a change can't be made compatible: a fundamental restructuring, a mistake that has to be corrected. You can't hold every old contract forever, and occasionally the interface truly must change in a breaking way.
+Sometimes compatibility genuinely isn't achievable: a fundamental restructuring, or a mistake serious enough that it has to be corrected rather than lived with. No API can preserve every past shape indefinitely, and now and then a break is the honest option.
 
-That situation is what **versioning** exists for — running the old and new contracts side by side, giving callers time to migrate, and eventually retiring the old one. The two common approaches are worth naming at the design level:
+That situation is what **versioning** exists for — publishing the new shape alongside the old, letting each caller move across on its own timeline, and withdrawing the old shape only once they have. The two common approaches are worth naming at the design level:
 
 - **In the URL** (`/v1/orders` → `/v2/orders`) — visible, unmissable, easy to route; but coarse, and it pushes the version into every path.
 - **In a header** — keeps URLs clean and version-free; but it's less visible and easy for a caller to forget.
 
 Which to choose, how to run versions in parallel, and how to sunset the old one is a substantial topic in its own right, later in this phase. The design-level point here is that **versioning is the escape hatch, not the routine** — most change should be additive and never need a new version, and a new version is what you reach for only when a break is genuinely unavoidable. An API that bumps its version for every change has usually failed to design for compatibility.
 
-> ⚠️ **Evolvability is designed in before the first change, not bolted on at the first break.** Because you can't force callers to upgrade, every change must assume old callers are still out there — so expose the minimum, keep additions optional, build for tolerant readers, and never reuse a name for a new meaning (the break that passes every check). Versioning is the escape hatch for the genuinely-unavoidable break, not the routine tool; reaching for it constantly is the symptom of an API that wasn't designed to grow.
+> ⚠️ **Evolvability is designed in before the first change, not bolted on at the first break.** Since callers migrate on their own schedule, every change has to assume the previous shape is still in active use somewhere — so expose the minimum, keep additions optional, build for tolerant readers, and never reuse a name for a new meaning (the break that passes every check). Versioning is the escape hatch for the genuinely-unavoidable break, not the routine tool; reaching for it constantly is the symptom of an API that wasn't designed to grow.
 
 ### Quick Recap — Evolving Without Breaking
 
-- You **can't force callers to upgrade**, so every change must keep working for old callers or it breaks them on deploy — making "will this break?" the first question.
+- Callers **migrate on their own schedule**, so a change must leave existing software working or it breaks on deploy — making "does this break existing callers?" the first question.
 - **Additions are usually safe; removals, renames, and tightenings break** — and the worst break is reusing a name for a new *meaning*, which passes every schema check.
 - Compatibility is won by design: **expose the minimum, prefer optional, assume tolerant readers**, and grow the contract by addition.
 - **Versioning** (URL or header) is the escape hatch for unavoidable breaks — a substantial later topic — not a routine to reach for on every change.
