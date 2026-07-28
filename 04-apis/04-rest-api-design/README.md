@@ -246,6 +246,8 @@ The design skill is matching the operation's real nature to the method whose pro
 
 **`GET` must stay safe.** This is the highest-stakes method promise, because the whole ecosystem *assumes* it. Caches store `GET` responses; browsers prefetch them; clients retry them freely; crawlers follow them. A `GET` that changes state (`GET /orders/42/delete`) is a trap: a cache serves a stale result, or a prefetch deletes data nobody asked to delete. Keeping `GET` safe keeps the free-caching promise; breaking it can corrupt data through machinery you don't control.
 
+The canonical version of this disaster is real and recurring: a team put admin actions behind `GET` links (`GET /articles/12/delete`) behind a login, assuming only authenticated staff could reach them. Then a crawler — or a browser's link prefetcher, or a corporate link-scanner — followed every link on the page while logged in, and silently deleted the entire dataset. Nothing "failed"; the machinery did exactly what safe-`GET` semantics entitle it to do, which is freely follow any `GET`. The rule that a `GET` must never change state isn't pedantry — it's the assumption a huge amount of automated infrastructure is built on.
+
 **`PUT` vs `PATCH` — replace or modify.** `PUT` sends the *whole* resource and replaces it; send it twice and the resource is identical both times, which is why it's idempotent. `PATCH` sends a *partial* change ("set status to shipped"), and whether that's idempotent depends on the change — "set status to shipped" is, but "increment the counter" is not. Choose `PUT` when the caller owns the full representation, `PATCH` when they're adjusting part of a larger thing.
 
 **`POST` is the non-idempotent creator.** `POST /orders` makes a new order each time, by design — which is exactly why it is *not* idempotent, and why it's the one method where retries are dangerous.
@@ -362,6 +364,8 @@ GET /orders?limit=20&cursor=eyJ… → the next 20
 ```
 
 The cursor encodes a stable position (typically a sort key plus an id), so paging stays fast no matter how deep, and insertions/deletions don't shift the window. The cost is that you can't jump to "page 47" — you can only walk forward — and cursors are opaque, so callers can't construct them by hand.
+
+The performance gap is not subtle at scale. Offset pagination is typically implemented by skipping rows, so `offset=1000000` forces the database to count past a million rows to return the next twenty — the deeper the page, the slower the query, and the last page of a large set can be thousands of times slower than the first. Cursor pagination turns "where you left off" into a direct lookup on an indexed key, so page one and page fifty-thousand cost the same. This is why large public APIs that expose deep, programmatic access to big collections almost universally use cursors, and why offset survives mainly in small admin UIs where nobody pages past a few screens.
 
 | | Offset | Cursor |
 |---|---|---|
