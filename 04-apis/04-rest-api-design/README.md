@@ -403,3 +403,69 @@ flowchart LR
 - **Offset** pagination is simple and allows page-jumps but degrades at depth and shifts under inserts; **cursor** pagination stays fast and stable but is forward-only.
 - **Filtering and sorting go in query parameters** (`?status=shipped&sort=-created`), not new paths — keeping the resource singular and the response cacheable.
 - **Bound by default**: even with no `limit`, apply a sane page size so the endpoint can never be asked to return everything.
+
+---
+
+## 7. Designing Errors — The Half of the Contract People Forget
+
+Most API design effort goes into the success path — the resources, the happy responses. But callers spend a great deal of their time handling *failure*, and how your API fails is as much a part of the contract as how it succeeds. An API with a beautiful success design and a chaotic error design is genuinely hard to build against, because the caller can never write reliable failure-handling code.
+
+### The Status Code Is Not Enough
+
+§5 covered choosing the right status code — necessary, but not sufficient. `400 Bad Request` tells the caller *that* something was wrong with their request; it doesn't tell them *what*, so they can't show a useful message or fix the call programmatically. The error **body** carries the detail the code can't, and designing that body is the other half of the job.
+
+The status code is the *category*; the body is the *specifics*. Callers need both: the code so generic machinery can react (§5), the body so their code and their users can understand and correct.
+
+### A Consistent, Machine-Readable Error Shape
+
+The single most valuable decision is that **every error in the API uses the same body shape.** When errors are consistent, a caller writes error handling *once* and it works for every endpoint. When each endpoint invents its own error format, the caller writes bespoke parsing for each — and usually gives up and shows "Something went wrong."
+
+A workable shape carries a few things:
+
+```
+{
+  "error": {
+    "code": "insufficient_funds",
+    "message": "The account balance is too low for this charge.",
+    "field": "amount"
+  }
+}
+```
+
+- **A stable, machine-readable code** (`insufficient_funds`) the caller can branch on — distinct from the HTTP status, and more specific. Two different `422`s can carry different codes, letting the caller tell them apart programmatically.
+- **A human-readable message** for logs and, carefully, for display. This is for people; the *code* is for programs — never make callers regex the message to detect a condition.
+- **Enough structure to act** — which field was invalid, what the constraint was — so a client can highlight the right input or retry correctly.
+
+The machine-code-plus-human-message split matters: messages get reworded, translated, and improved, so any caller that branches on message *text* breaks when you improve the wording. The stable `code` is the part they build logic on.
+
+### Let the Caller Know What to Do
+
+The most useful thing an error design can do is let the caller distinguish the three responses to failure (a framing from this phase's first topic, applied here):
+
+| The error means | The caller should | Signaled by |
+|---|---|---|
+| "You did something wrong" | Fix the request and retry | `4xx` + a specific code |
+| "Try again, it may work" | Retry, ideally with backoff | `429`, `503` |
+| "This will never work" | Give up, surface the failure | `4xx` that won't change (e.g. `403`, `404`) |
+
+An error surface that lets a caller tell "retry might help" from "retrying is pointless" is the difference between a resilient integration and one that either gives up too early or hammers a doomed request forever. That distinction lives in the status code and the error code together.
+
+### Don't Leak the Internals
+
+A final promise the error design must keep — this one about safety. An error body should describe *what the caller can act on*, not expose the server's guts:
+
+- **No stack traces, no raw database errors, no internal hostnames** in responses callers can see. They help an attacker map your system and help a legitimate caller not at all.
+- **Log the detail server-side, return the summary.** Attach an identifier the caller can quote (`"request_id": "abc123"`) so support can find the full detail in the logs without it ever crossing the boundary.
+
+Leaking internals through errors is one of the most common ways a boundary that's otherwise well-designed quietly becomes an information disclosure.
+
+> 💡 **Key Insight**
+>
+> Errors are half the contract, and they're the half that decides whether callers can write reliable code against you. Design **one consistent error shape** across the whole API so failure-handling is written once; carry a **stable machine code** (for logic) *and* a **human message** (for people), never conflating them; and shape errors so a caller can tell **retryable from hopeless**. Then keep the safety promise: describe what the caller can act on, log the internals rather than returning them. A gorgeous success path over an inconsistent error surface is still a painful API.
+
+### Quick Recap — Designing Errors
+
+- How an API fails is **part of the contract**; the status code gives the category (§5), the **error body** gives the specifics the caller needs to act.
+- Use **one consistent error shape** everywhere so callers write failure-handling once — per-endpoint formats force bespoke parsing and get abandoned.
+- Carry a **stable machine-readable code** (for branching) and a separate **human message** (for people) — never make callers parse message text.
+- Let callers distinguish **retryable from hopeless**, and **never leak internals** — log detail server-side, return a summary plus a request id.
