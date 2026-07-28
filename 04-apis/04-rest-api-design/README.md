@@ -519,3 +519,63 @@ Which to choose, how to run versions in parallel, and how to sunset the old one 
 - **Additions are usually safe; removals, renames, and tightenings break** — and the worst break is reusing a name for a new *meaning*, which passes every schema check.
 - Compatibility is won by design: **expose the minimum, prefer optional, assume tolerant readers**, and grow the contract by addition.
 - **Versioning** (URL or header) is the escape hatch for unavoidable breaks — a substantial later topic — not a routine to reach for on every change.
+
+---
+
+## 9. How RESTful Is Enough? — Maturity and Hypermedia
+
+There's a spectrum of how fully an API commits to REST's ideas, and it's worth knowing — both because you'll hear people argue about it and because it clarifies which of REST's promises you're actually keeping. But it comes with a strong pragmatic caveat, so this section is as much about *where to stop* as about how far you can go.
+
+### The Maturity Ladder
+
+A well-known model describes REST adoption as a ladder of levels, each keeping more of the promises than the last:
+
+| Level | What it does | Which promise it adds |
+|---|---|---|
+| **0** | One endpoint, everything is a `POST` with an action in the body | none — this is RPC wearing HTTP |
+| **1** | Real resources with their own URLs | predictability starts (things are addressable) |
+| **2** | Proper methods and status codes on those resources | free caching + universality (the ecosystem now understands you) |
+| **3** | Responses include links to related actions and resources (hypermedia) | discoverability + evolvability (the API describes its own next steps) |
+
+The ladder is a useful diagnostic: an API stuck at level 0 or 1 is REST in name only, and most of this document (§2–§5) is really about reaching **level 2** — which is where the caching and universality promises actually kick in. Level 2 is where the vast majority of good, successful REST APIs live.
+
+### Level 3 — Hypermedia (HATEOAS)
+
+The top rung has a name: **HATEOAS** — Hypermedia As The Engine Of Application State. The idea is that responses don't just carry data, they carry **links** telling the caller what they can do next:
+
+```
+{
+  "id": 42,
+  "status": "pending",
+  "_links": {
+    "self":   { "href": "/orders/42" },
+    "cancel": { "href": "/orders/42", "method": "DELETE" },
+    "pay":    { "href": "/orders/42/payment" }
+  }
+}
+```
+
+The order tells you, in the response itself, that it can be cancelled or paid — and *where*. Two genuine promises follow: **discoverability** (a caller can navigate the API by following links instead of hard-coding URLs) and **evolvability** (the server can change those URLs, and clients following links adapt without a code change — you're no longer bound by the URLs callers memorized).
+
+This is, in the purest sense, "true REST" — the level the style's originator actually described.
+
+### Why Most APIs Stop at Level 2 — and Are Right To
+
+Here's the pragmatic truth the ladder can obscure: **the overwhelming majority of successful, respected REST APIs stop at level 2, deliberately, and are completely fine.** Hypermedia's promises are real but its costs are high and its payoff is often theoretical:
+
+- **Clients rarely exploit it.** HATEOAS pays off only if clients actually navigate by links rather than hard-coding URLs — and in practice most clients hard-code anyway, because it's simpler and they were built against fixed documentation. The evolvability benefit goes unclaimed.
+- **It adds real weight.** Every response carries link metadata; every client needs a hypermedia-aware way to consume it. That's ongoing cost for a benefit few callers use.
+- **Documentation substitutes for discoverability.** In practice, callers discover an API by reading its docs, not by traversing links at runtime.
+
+So the honest guidance is: **aim for a solid level 2** — proper resources, methods, and status codes, which is where the promises that matter in daily practice are kept — and reach for level 3 only when you have a specific reason: many clients you can't coordinate with, or a genuine need for the API to be self-describing and its URLs freely movable. Treating hypermedia as a mandatory bar every API must clear is dogma; treating it as a tool with a narrow, real payoff is design judgment.
+
+> 💡 **Key Insight**
+>
+> The maturity ladder is a useful map — level 2 (real resources, proper methods, honest status codes) is where REST's caching and universality promises actually activate, and it's where most excellent APIs deliberately stop. **Hypermedia (level 3) offers real discoverability and evolvability, but only to clients that navigate by links — which most don't — so its payoff is usually theoretical.** "More RESTful" is not automatically "better." Aim for a solid level 2, and climb to hypermedia only when a concrete need justifies its concrete cost.
+
+### Quick Recap — How RESTful Is Enough
+
+- The **maturity ladder** runs from level 0 (RPC over HTTP) up through resources, proper methods, and finally hypermedia — each level keeping more promises.
+- Most of good REST design targets **level 2** (resources + methods + status codes), which is where **free caching and universality** actually kick in.
+- **Level 3 / HATEOAS** adds discoverability and evolvability via links, but pays off only for clients that navigate by them — which most don't.
+- **More RESTful isn't automatically better**: aim for a solid level 2 and adopt hypermedia only when a specific need justifies its cost.
