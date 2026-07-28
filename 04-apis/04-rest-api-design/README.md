@@ -218,3 +218,56 @@ flowchart LR
 - Use **plural nouns** and keep casing/separators consistent; each inconsistency forces memorization and chips at predictability.
 - **Nest at most one level** to show genuine containment, then address deeper resources directly by identifier — deep paths are brittle.
 - The path **identifies the resource**; filtering, sorting, and paging go in query parameters (§6), not the path.
+
+---
+
+## 4. Choosing the Right Method
+
+The URL names the resource; the **method** says what to do to it. There's a fixed, small set of methods, and REST's uniformity depends on using each for exactly what it promises. This section isn't about what the methods *are* — it's about *which one your design should choose*, and what breaks when you choose wrong.
+
+Two properties, defined once because every method decision turns on them:
+
+- **Safe** — the operation doesn't change anything. Calling it has no side effects; it only reads.
+- **Idempotent** — calling it once and calling it many times leave the system in the same state. One delete and three identical deletes end with the resource equally gone.
+
+These two properties are what the caching and reliability promises (§1) are built on, so choosing a method is really choosing which promises the endpoint keeps.
+
+### The Design Meaning of Each Method
+
+| Method | Choose it when the operation… | Safe? | Idempotent? |
+|---|---|---|---|
+| `GET` | reads a resource and changes nothing | ✅ | ✅ |
+| `POST` | creates a resource, or does something not safely repeatable | ❌ | ❌ |
+| `PUT` | replaces a resource entirely with what you send | ❌ | ✅ |
+| `PATCH` | modifies part of a resource | ❌ | usually not |
+| `DELETE` | removes a resource | ❌ | ✅ |
+
+The design skill is matching the operation's real nature to the method whose promises fit it.
+
+**`GET` must stay safe.** This is the highest-stakes method promise, because the whole ecosystem *assumes* it. Caches store `GET` responses; browsers prefetch them; clients retry them freely; crawlers follow them. A `GET` that changes state (`GET /orders/42/delete`) is a trap: a cache serves a stale result, or a prefetch deletes data nobody asked to delete. Keeping `GET` safe keeps the free-caching promise; breaking it can corrupt data through machinery you don't control.
+
+**`PUT` vs `PATCH` — replace or modify.** `PUT` sends the *whole* resource and replaces it; send it twice and the resource is identical both times, which is why it's idempotent. `PATCH` sends a *partial* change ("set status to shipped"), and whether that's idempotent depends on the change — "set status to shipped" is, but "increment the counter" is not. Choose `PUT` when the caller owns the full representation, `PATCH` when they're adjusting part of a larger thing.
+
+**`POST` is the non-idempotent creator.** `POST /orders` makes a new order each time, by design — which is exactly why it is *not* idempotent, and why it's the one method where retries are dangerous.
+
+### The Idempotency Promise and Why Breaking It Bites
+
+Here's where method choice meets the reliability promise. A network can lose a *response* even when the request succeeded, so callers retry when they hear nothing back (a fact developed in this phase's first topic). For an idempotent method, that retry is harmless — a repeated `PUT` or `DELETE` lands the same. For `POST`, the retry creates a *second* order, and the caller never meant to.
+
+This isn't a reason to avoid `POST` — creation is genuinely non-idempotent and `POST` is the honest method for it. It's a reason to recognize that **any operation you put behind `POST` inherits the retry problem**, and that making a create *safe to retry* requires an added mechanism — an idempotency key that lets the server recognize the duplicate. That mechanism is a topic of its own later in this phase; the design-level point here is to know *which of your endpoints has the problem* (every non-idempotent one) so you know where that mechanism will be needed.
+
+```mermaid
+flowchart TD
+    R["📤 Request sent, no response<br/>(did it work? unknown)"] --> Q{"Method idempotent?"}
+    Q -->|"yes: GET/PUT/DELETE"| S["🟢 Retry safely —<br/>same result"]
+    Q -->|"no: POST"| D["🔴 Retry may duplicate —<br/>needs an idempotency mechanism"]
+```
+
+> ⚠️ **Choosing a method is choosing which promises an endpoint keeps, not just labeling it.** A `GET` that mutates breaks free caching in ways that surface as impossible-to-reproduce bugs (a cache or prefetch did it, not the user). A non-idempotent operation hidden behind a method callers *assume* is idempotent breaks reliability the first time a retry fires. Match the method to the operation's true safe/idempotent nature, and the ecosystem's assumptions work *for* you; mismatch them and the same machinery works against you.
+
+### Quick Recap — Choosing the Right Method
+
+- Method choice turns on two properties — **safe** (no change) and **idempotent** (repeatable with the same result) — which are what the caching and reliability promises rest on.
+- **`GET` must stay safe**: caches, prefetchers, and retries all assume it, so a mutating `GET` corrupts data through machinery you don't control.
+- **`PUT` replaces** (idempotent), **`PATCH` modifies** (idempotent only sometimes), **`POST` creates** (never idempotent — the method where retries duplicate).
+- Every non-idempotent (`POST`) endpoint inherits the **retry-duplication** problem; making it retry-safe needs an idempotency mechanism, covered in its own later topic.
