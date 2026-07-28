@@ -271,3 +271,63 @@ flowchart TD
 - **`GET` must stay safe**: caches, prefetchers, and retries all assume it, so a mutating `GET` corrupts data through machinery you don't control.
 - **`PUT` replaces** (idempotent), **`PATCH` modifies** (idempotent only sometimes), **`POST` creates** (never idempotent — the method where retries duplicate).
 - Every non-idempotent (`POST`) endpoint inherits the **retry-duplication** problem; making it retry-safe needs an idempotency mechanism, covered in its own later topic.
+
+---
+
+## 5. Choosing the Right Status Code
+
+Every response carries a **status code** — a three-digit number that tells the caller, before they read the body, what happened. The families are fixed (`2xx` success, `3xx` redirect, `4xx` the caller's fault, `5xx` the server's fault), and the design task is choosing the *right* code so the caller can react correctly. Like methods, this isn't trivia — the status code is a promise, and picking a lazy one breaks it.
+
+### The Status Code Is a Machine-Readable Outcome
+
+The point of a status code is that a caller — often a program, not a person — can branch on it *without parsing the body*. A retry library retries `5xx` and `429` but not `400`. A cache stores `2xx` and never `4xx`. Monitoring pages on a `5xx` spike and ignores `404`s. All of that depends on the code being *honest*: the number must mean what the ecosystem thinks it means.
+
+The most important split is **who is at fault**, because it decides who should act:
+
+- **`4xx` — the caller made a mistake.** The request was malformed, unauthorized, or asked for something that isn't there. Retrying unchanged won't help; the *caller* must fix something.
+- **`5xx` — the server failed.** The request was fine; the server couldn't fulfill it. Retrying *might* help; the *server* owner should be alerted.
+
+Confuse these and everything downstream misfires: a real server failure hidden as `4xx` never pages anyone, and a caller's bad input reported as `5xx` wakes the on-call team for a problem they can't fix.
+
+### The Codes That Actually Matter for Design
+
+You don't need all of them; you need to choose deliberately among the ones that carry distinct meaning:
+
+| Code | Choose it when | The distinction it makes |
+|---|---|---|
+| `200 OK` | a read or update succeeded | the generic success |
+| `201 Created` | a `POST` created a resource | tells the caller a *new thing exists* (with its location) |
+| `202 Accepted` | you took the request but haven't finished | work is async; not done yet |
+| `400 Bad Request` | the request is malformed | the caller can't even be understood |
+| `401 Unauthorized` | the caller isn't authenticated | "who are you?" — log in |
+| `403 Forbidden` | authenticated but not allowed | "I know you; you still can't" — different from `401` |
+| `404 Not Found` | the resource doesn't exist | distinct from `403` — reveals nothing about what exists |
+| `409 Conflict` | the request collides with current state | e.g. editing a stale version |
+| `422` | the request is well-formed but semantically invalid | parsed fine, but the values are wrong |
+| `429 Too Many Requests` | the caller is rate-limited | back off and retry later |
+| `500` / `503` | the server failed / is temporarily down | `503` signals "try again," `500` "something broke" |
+
+Two distinctions are worth dwelling on because they're routinely muddled:
+
+- **`401` vs `403`.** `401` means *not authenticated* ("I don't know who you are"); `403` means *authenticated but not permitted* ("I know you, and no"). Collapsing both into one confuses callers about whether logging in would help.
+- **`400` vs `422`.** `400` is *I can't parse this*; `422` is *I parsed it fine but the content is invalid* (a negative quantity, a date in the past). The split lets a caller tell a syntax bug from a business-rule violation.
+
+### The Anti-Pattern — `200 OK` With an Error Inside
+
+The single most damaging status-code mistake is returning `200 OK` and putting the real outcome in the body:
+
+```
+❌ 200 OK   { "success": false, "error": "order not found" }
+✅ 404 Not Found   { "error": "order not found" }
+```
+
+This breaks the **universality** promise (§1) directly. The whole point of status codes is that generic machinery — caches, retry logic, monitoring, API gateways — can act on the outcome without understanding your body. Say `200` when you failed and you've lied to all of it at once: the cache stores the "success," the retry logic never retries, the dashboards show everything green while callers are failing. Every client is now forced to parse a bespoke body to discover the truth the status code was supposed to tell them — which is exactly the universality REST was meant to provide, thrown away.
+
+> ⚠️ **A status code is a promise to machines, and the lazy `200`-with-error-body breaks it for all of them at once.** Caches, retriers, gateways, and dashboards all act on the code without reading your body — that's the universality that makes REST callable from anything. Return an honest code (`4xx` for the caller's fault, `5xx` for yours) and that machinery works for free; return `200` on failure and it silently does the wrong thing everywhere, while your monitoring insists nothing is wrong.
+
+### Quick Recap — Choosing the Right Status Code
+
+- A status code is a **machine-readable outcome** callers branch on without reading the body — retriers, caches, and monitoring all depend on it being honest.
+- The load-bearing split is **fault**: `4xx` means the caller must fix something; `5xx` means the server failed and should be alerted — confusing them misroutes every reaction.
+- Choose deliberately among the codes that carry distinct meaning — especially **`401` vs `403`** (unauthenticated vs forbidden) and **`400` vs `422`** (unparseable vs invalid).
+- **`200 OK` with an error in the body** breaks universality for every generic client at once — return the honest code instead.
