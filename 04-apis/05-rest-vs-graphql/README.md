@@ -254,3 +254,56 @@ That symmetry is the heart of the whole comparison: REST and GraphQL are not bet
 - GraphQL is a **`POST` to one endpoint with the query in the body**, opaque to that infrastructure — so free network-level caching is lost.
 - GraphQL's answer is **application-level** client caching by object identity — powerful, but machinery you build and run, not free infrastructure you inherit.
 - Caching is the exact **mirror of §3**: fixed shapes over-fetch yet cache freely; flexible shapes fetch precisely yet can't — two faces of the same bet.
+
+---
+
+## 5. Complexity — Who Carries the Weight
+
+The shape decision doesn't just move data around — it moves *work* around. Both styles have irreducible complexity; they differ in **who carries it**, the client or the server. This is one of the most decision-relevant consequences, because it determines which team's life gets harder.
+
+### REST Pushes Effort to the Client
+
+With server-decided shapes, the server's job is comparatively simple: each endpoint returns one fixed, known shape, so it's straightforward to build, reason about, and optimize. The complexity lands on the *client*, which must:
+
+- Call multiple endpoints and stitch the results together for a screen (§3's under-fetching).
+- Discard the fields it didn't need (§3's over-fetching).
+- Orchestrate the sequence when one call depends on another.
+
+That's real work, but it's *distributed* — spread across the many clients, each handling its own assembly — and it's the kind of work client frameworks are good at. The server stays simple, which is a large part of why REST is cheap to operate.
+
+### GraphQL Pulls Effort to the Server
+
+Client-decided shapes invert this. The client's job becomes trivial — write one query, get exactly what you asked for — but that simplicity is *bought* by the server, which must now handle a much harder problem: fulfilling *any* shape the client composes, across the whole graph, in one request.
+
+The server can no longer return one fixed shape. It has to resolve an arbitrary tree of fields the client assembled on the fly, pulling each piece from wherever it lives and assembling it into the requested structure. That flexibility is genuinely hard to implement well, and it introduces a signature performance trap:
+
+> **The N+1 problem:** a single query for "10 orders, and each order's customer" can naïvely become 1 fetch for the orders plus 10 more for the customers — 11 data fetches hiding behind one innocent-looking query. Nest deeper and it multiplies. The client wrote one line; the server did eleven round trips to the database.
+
+The N+1 problem is *named here as a cost*, because it's a real weight on the client-decides side of the ledger. Solving it — batching those fetches so the query stays efficient — is standard but non-trivial server engineering, and it (with GraphQL's other server-side machinery) belongs to GraphQL's own topic. What matters for the comparison is the shape of the trade: **the query that's effortless for the client is exactly the query the server has to work hard to answer safely.**
+
+```mermaid
+flowchart LR
+    subgraph REST["📦 REST"]
+        RS["🟢 Server: simple<br/>fixed shapes"] -.-> RC["🔴 Client: assembles,<br/>stitches, discards"]
+    end
+    subgraph GQL["❓ GraphQL"]
+        GC["🟢 Client: one query,<br/>exact result"] -.-> GS["🔴 Server: resolves any shape,<br/>N+1 traps, cost analysis"]
+    end
+```
+
+### Complexity Isn't Removed, It's Relocated
+
+The honest framing: neither style is "simpler" in total. The complexity of turning scattered data into the exact shape a screen needs *has to live somewhere*. REST leaves it on the client (many clients each doing a little); GraphQL concentrates it on the server (one server doing a lot, once, for all clients).
+
+That relocation is itself a real input to the decision. Concentrating the work server-side can be worth it when you have *many* clients — the server solves the assembly problem once instead of every client re-solving it — which is exactly the many-diverse-clients condition that later justifies GraphQL (§9). But when you have few clients, or a small team, you've taken on a hard server to spare clients work they could easily have done, which is a poor trade. Who *should* carry the weight depends on how many clients there are and who you'd rather make wait — which is the choosing question, not a universal answer.
+
+> 💡 **Key Insight**
+>
+> The complexity of assembling scattered data into a screen's exact shape can't be deleted, only **relocated** — REST leaves it on the (many) clients, GraphQL concentrates it on the (one) server, complete with the N+1 trap that makes an easy query an expensive fetch. So "which is simpler?" has no absolute answer; the real question is *whose* simplicity you're buying and at *whose* expense. Concentrating it server-side pays off precisely when many clients would otherwise each re-solve it — and is a bad bet when few would.
+
+### Quick Recap — Complexity
+
+- The shape decision **relocates work**: REST keeps the server simple and makes the **client** stitch, discard, and orchestrate; GraphQL makes the **client** trivial and the **server** resolve any shape.
+- GraphQL's flexibility carries the **N+1 problem** — one easy-looking query becoming many data fetches (named here as a cost; its solution is GraphQL's own topic).
+- Neither is simpler overall — assembly complexity **must live somewhere**; the styles differ only in where.
+- Concentrating it **server-side pays off with many clients** (solve it once) and is a poor trade with few — an input to the choice (§9), not a universal win.
