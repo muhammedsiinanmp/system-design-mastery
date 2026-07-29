@@ -187,6 +187,8 @@ GraphQL — the same screen:
 
 No over-fetching, because the response carries only the requested fields. No under-fetching, because related data across the graph is gathered server-side and returned together. One round trip delivers exactly the screen's data. For a client with precise, varied needs — especially a mobile app over a constrained connection — this is a genuine, measurable improvement, not a marginal one.
 
+The magnitude is easy to underappreciate until you count round trips against latency. A profile screen needing a user, their recent orders, and each order's items is three-plus sequential REST calls; on a mobile connection where each round trip runs 100–200 ms, that's the better part of a second spent mostly waiting, before rendering anything. The same screen is one GraphQL request — one round trip, a few hundred milliseconds total. This is precisely the pain that produced GraphQL: it originated at a company whose mobile apps had hundreds of data-dense screens, where the round-trip tax of assembling each one from fixed endpoints had become the dominant cost of the app feeling slow.
+
 | | REST (server-decided shape) | GraphQL (client-decided shape) |
 |---|---|---|
 | Unwanted fields | Common (over-fetch) | None — you name the fields |
@@ -278,6 +280,8 @@ Client-decided shapes invert this. The client's job becomes trivial — write on
 The server can no longer return one fixed shape. It has to resolve an arbitrary tree of fields the client assembled on the fly, pulling each piece from wherever it lives and assembling it into the requested structure. That flexibility is genuinely hard to implement well, and it introduces a signature performance trap:
 
 > **The N+1 problem:** a single query for "10 orders, and each order's customer" can naïvely become 1 fetch for the orders plus 10 more for the customers — 11 data fetches hiding behind one innocent-looking query. Nest deeper and it multiplies. The client wrote one line; the server did eleven round trips to the database.
+
+The multiplication is genuinely alarming at realistic sizes. Ask for 100 orders, each with a customer who has their 10 most recent orders, each with items, and a naïve resolver can turn one query into thousands of database round trips — a request that reads as trivial to the client and lands as a small load test on the database. This is why the N+1 problem is GraphQL's most infamous operational footgun: the cost is invisible in the query text and only appears in the database's traffic, and a team that hasn't built the batching defense meets it the first time a real client composes a deep query.
 
 The N+1 problem is *named here as a cost*, because it's a real weight on the client-decides side of the ledger. Solving it — batching those fetches so the query stays efficient — is standard but non-trivial server engineering, and it (with GraphQL's other server-side machinery) belongs to GraphQL's own topic. What matters for the comparison is the shape of the trade: **the query that's effortless for the client is exactly the query the server has to work hard to answer safely.**
 
