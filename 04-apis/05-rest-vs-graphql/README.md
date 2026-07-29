@@ -307,3 +307,57 @@ That relocation is itself a real input to the decision. Concentrating the work s
 - GraphQL's flexibility carries the **N+1 problem** — one easy-looking query becoming many data fetches (named here as a cost; its solution is GraphQL's own topic).
 - Neither is simpler overall — assembly complexity **must live somewhere**; the styles differ only in where.
 - Concentrating it **server-side pays off with many clients** (solve it once) and is a poor trade with few — an input to the choice (§9), not a universal win.
+
+---
+
+## 6. Errors, Status, and the Partial-Response Problem
+
+Here the two styles diverge in a way that surprises people, because it touches something REST callers rely on without thinking: the idea that a request either succeeded or failed, and the status code says which. Client-decided shapes quietly break that assumption, and the break is worth understanding because it changes how every caller writes error handling.
+
+### REST — One Request, One Verdict
+
+A REST request has a clean outcome model. The response carries a status code whose first digit is a verdict a machine can act on without reading the body: a `2xx` means it worked, a `4xx` means the caller erred, a `5xx` means the server failed. One request, one outcome, and the whole ecosystem — retry logic, monitoring, caches — branches on that code without understanding the payload.
+
+Crucially, a REST response is **all-or-nothing**. You asked for an order; you either got the order (`2xx`) or you got an error (`4xx`/`5xx`). There's no "you got most of the order." That simplicity is why generic tooling can reason about REST failures at all.
+
+### GraphQL — One Request, Many Outcomes
+
+Now apply client-decided shape. A single GraphQL query can ask for many things at once — an order, its customer, its items, a recommendations block. What happens if the items resolve fine but recommendations fail?
+
+The answer breaks the all-or-nothing model. GraphQL typically returns **`200 OK`** — even on failure — with the result carrying *both* a `data` field (the parts that succeeded) and an `errors` array (what didn't):
+
+```
+200 OK
+{
+  "data":   { "order": { "total": 48, "items": [...] , "recommendations": null } },
+  "errors": [ { "message": "recommendations service timed out",
+               "path": ["order","recommendations"] } ]
+}
+```
+
+This is **partial response**: some of the query succeeded and some failed, in one answer. It's a genuine capability — one flaky field doesn't sink the whole screen, and the client can render what came back and handle the gap. For a complex screen assembled from many sources, that resilience is real and valuable.
+
+### The Cost — The Status Code Stops Meaning Anything
+
+But look at what it does to the outcome signal. Because a GraphQL response is `200 OK` whether it fully succeeded, partly succeeded, or entirely failed, **the HTTP status code no longer tells the caller what happened.** Everything that relied on that code now has to change:
+
+- **Generic tooling is blinded.** Monitoring that alerts on `5xx` sees `200` during a real outage. Retry logic that retries `5xx` never fires. Caches see success. The entire class of machinery that made REST failures legible (a REST design principle: never return `200` with an error inside) is, in GraphQL, the *normal* behavior.
+- **Every client must parse the body to know the truth.** "Did this work?" can only be answered by inspecting the `errors` array and checking which parts of `data` came back `null`. There's no shortcut through the status line.
+- **"Success" becomes a spectrum.** Full success, partial success, and total failure all look identical from outside, and the caller has to distinguish them itself, per query, per field.
+
+```mermaid
+flowchart TD
+    R["📦 REST response"] --> RV["Status code = the verdict<br/>2xx / 4xx / 5xx<br/>tooling acts without the body"]
+    G["❓ GraphQL response"] --> GV["Always 200 OK<br/>data + errors together<br/>caller must parse to know"]
+```
+
+This isn't GraphQL being wrong — partial response genuinely needs a richer outcome model than a single status code can carry, and there's no clean way to express "half of this worked" in one HTTP status. It's a real consequence to weigh: **GraphQL trades the free legibility of status codes for the ability to return partial results,** and the caller pays for that trade in more sophisticated error handling and the loss of status-code-based tooling.
+
+> ⚠️ **GraphQL turns REST's cardinal error sin into its default.** Returning `200 OK` on failure is exactly what a well-designed REST API must never do, because it blinds every generic client, cache, and monitor — yet it's how GraphQL works by design, because one query can partly succeed and a single status code can't express that. The capability (partial responses that survive a flaky field) is real; so is the price (status codes stop being the outcome signal, and every caller must parse the body to learn what happened). Neither is a bug — but if your ecosystem leans on status-code-based tooling, this is a cost you're taking on with eyes open, or should be.
+
+### Quick Recap — Errors and Partial Responses
+
+- REST outcomes are **all-or-nothing** with a machine-actionable status code — the whole ecosystem branches on it without reading the body.
+- GraphQL supports **partial responses** — `data` and `errors` together — so one flaky field doesn't sink a complex screen; a genuine resilience win.
+- The cost: GraphQL returns **`200 OK` even on failure**, so the status code stops being the outcome signal and generic tooling (monitoring, retries, caches) is blinded.
+- It makes **REST's cardinal sin (200-with-error) the normal behavior** — not a bug, but a real trade of status-code legibility for partial-result capability.
