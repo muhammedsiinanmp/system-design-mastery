@@ -38,7 +38,7 @@ fail — so the two phases are read together.
 | 2 | [Data Formats (JSON, XML, Protobuf)](02-data-formats/README.md) | How does a value cross the gap between two programs — and why is "just use JSON" a decision with consequences? *(standalone — assumes no prior reading)* |
 | 3 | [API Architectural Styles](03-api-architectural-styles/README.md) | REST, gRPC, GraphQL, WebSockets, webhooks — what actually distinguishes them, and how would you choose without a favorite? *(standalone — assumes no prior reading)* |
 | 4 | [REST API Design](04-rest-api-design/README.md) | REST's rules sound obvious — so why are so many APIs technically RESTful and miserable to use? *(standalone — assumes no prior reading)* |
-| 5 | REST vs GraphQL *(coming)* | Over-fetching, under-fetching, and who decides the shape of a response |
+| 5 | [REST vs GraphQL](05-rest-vs-graphql/README.md) | One tradeoff, not a rivalry — who should decide the shape of a response, and which side should you default to? *(standalone — assumes no prior reading)* |
 | 6 | GraphQL *(coming)* | A query language for APIs — its power, and the cost of that power |
 | 7 | WebSockets *(coming)* | When request/response isn't enough and the connection has to stay open |
 | 8 | WebSocket Use Cases *(coming)* | Where persistent bidirectional channels earn their keep — and where they don't |
