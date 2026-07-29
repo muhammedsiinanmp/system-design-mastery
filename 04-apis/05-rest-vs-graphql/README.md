@@ -207,3 +207,50 @@ This is GraphQL's headline advantage and the reason it exists, so it deserves to
 - The two **pull opposite ways**, so REST design can balance but not eliminate them — one fixed shape can't fit callers with different needs.
 - Client-decided shapes **erase both together**: exactly the named fields, related data in one round trip — GraphQL's clean, headline advantage.
 - The win is real and worth granting plainly; the later sections are the **bill for it**, not a rebuttal of it.
+
+---
+
+## 4. Caching — Where REST Quietly Wins
+
+If §3 was GraphQL's dimension, this is REST's — and it's the mirror image, flowing from the very same inversion. The property that makes client-decided shapes so flexible is exactly what makes them hard to cache, and the fixed shapes that cause REST's over-fetching are exactly what make it cache almost for free.
+
+### Why REST Caches Without Trying
+
+A REST read has two properties that the web's entire caching infrastructure is built around: it's a `GET`, and it's addressed by a URL. `GET /orders/42` names a specific resource, it doesn't change anything, and the same URL means the same thing every time. That's all a cache needs:
+
+- The **URL is the cache key.** Anyone — the browser, a proxy on the path, a content-delivery network at the edge — can store the response under that URL and serve it to the next caller who asks for it.
+- Because the read changes nothing, **caching it is safe**, and the infrastructure knows that without understanding your data at all.
+
+The result is layers of caching a REST API gets *for free*, without the application doing anything: a popular `GET` can be served from a cache close to the user and never reach the origin. That's a large performance and cost win, and it's inherited purely from using addressable, unchanging reads.
+
+### Why GraphQL Forfeits It
+
+Now apply the client-decides inversion. A GraphQL request is, by construction, poorly suited to that same machinery:
+
+- It's typically a **`POST`** to a single endpoint (`/graphql`). To the web's caching layers, a `POST` is a write — they won't cache it, and every query hits the same URL, so the URL is useless as a cache key.
+- Each query is **potentially unique.** Two clients asking for different field selections send different queries; the same infrastructure can't tell that one response is reusable for another request, because the distinguishing detail is inside the request body, not the URL.
+
+```mermaid
+flowchart TD
+    R["📦 REST: GET /orders/42"] --> RC["🟢 URL = cache key<br/>browsers, proxies, CDNs<br/>cache it for free"]
+    G["❓ GraphQL: POST /graphql<br/>{ unique query in body }"] --> GC["🔴 opaque to web caches<br/>same URL, body varies<br/>must build caching yourself"]
+```
+
+So the free, layered, edge-level caching that REST gets by default is simply not available to GraphQL in the same way. What GraphQL offers instead is a *different* kind of caching — sophisticated client-side caches that understand the graph and cache individual objects by identity. That's genuinely powerful for a single application's own client, but it is application-level machinery you adopt and operate, not the free network-level caching that serves *every* caller from the edge. The two aren't equivalent: one is infrastructure you inherit, the other is a system you run.
+
+### The Symmetry With §3
+
+This is the same tradeoff §3 described, seen from the other side. Fixed server-decided shapes cause over-fetching (§3's cost) *and* enable free caching (this section's win) — both because the response for a given URL is always the same. Client-decided shapes eliminate over-fetching (§3's win) *and* forfeit free caching (this section's cost) — both because the response is now unique per query. You cannot keep the fixed-shape caching and the flexible-shape efficiency at once; they are two faces of the one decision.
+
+That symmetry is the heart of the whole comparison: REST and GraphQL are not better and worse, they are *opposite bets on the same coin*, and caching versus fetching is where the coin shows both faces most clearly.
+
+> 💡 **Key Insight**
+>
+> REST caches for free because a read is an **addressable, unchanging `GET`** — the URL is a cache key the whole web already knows how to use, from the browser to the edge. GraphQL forfeits that because a client-declared query is a **`POST` with the distinguishing detail in the body**, opaque to that same infrastructure; what it offers instead is powerful *application-level* caching you build and run, not free *network-level* caching you inherit. It's the exact mirror of §3: fixed shapes over-fetch but cache for free, flexible shapes fetch precisely but can't — two faces of the one inversion.
+
+### Quick Recap — Caching
+
+- REST reads are **addressable, unchanging `GET`s**, so the URL is a cache key browsers, proxies, and CDNs use to cache responses **for free**.
+- GraphQL is a **`POST` to one endpoint with the query in the body**, opaque to that infrastructure — so free network-level caching is lost.
+- GraphQL's answer is **application-level** client caching by object identity — powerful, but machinery you build and run, not free infrastructure you inherit.
+- Caching is the exact **mirror of §3**: fixed shapes over-fetch yet cache freely; flexible shapes fetch precisely yet can't — two faces of the same bet.
