@@ -38,3 +38,53 @@ Here's the trap it disarms. The debate is usually conducted as identity ("we're 
 9. [Choosing — REST by Default, GraphQL When](#9-choosing--rest-by-default-graphql-when)
 10. [Putting It All Together — The Same App, Both Ways](#10-putting-it-all-together--the-same-app-both-ways)
 11. [Final Recap](#11-final-recap)
+
+---
+
+## 1. The One Question Behind the Whole Debate
+
+Every REST-versus-GraphQL argument you'll ever hear is downstream of a single design decision, and naming it collapses the whole debate into something you can actually reason about.
+
+> **The question is: when a client asks for data, who decides the shape of what comes back — the server, or the client?**
+
+That's it. That is the entire disagreement. The two styles are two answers:
+
+- **REST — the server decides.** The API offers a set of fixed endpoints, each returning a predetermined shape. Ask for `/orders/42` and you get whatever the server decided an order looks like — every field, every time, take it or leave it.
+- **GraphQL — the client decides.** The API offers one endpoint and a query language. The client sends a query describing *exactly* the fields it wants, however nested, and the server returns precisely that shape and nothing else.
+
+```mermaid
+flowchart TD
+    Q["Client needs data.<br/>Who decides the response shape?"]
+    Q -->|"the SERVER"| R["📦 REST<br/>fixed endpoints,<br/>predetermined shapes"]
+    Q -->|"the CLIENT"| G["❓ GraphQL<br/>one endpoint,<br/>client declares the shape"]
+```
+
+### Why This Framing Beats a Feature List
+
+The usual way to compare them is a scorecard: efficiency, caching, tooling, complexity, one row each, tally the checkmarks. That approach hides the thing that actually matters — that the rows are *not independent*. They all move together because they all descend from the one decision above.
+
+Consider what follows the moment you hand shape-control to the client:
+
+- The client can ask for exactly what it needs, so **over-fetching and under-fetching disappear** (§3) — a direct win for client-decides.
+- But responses are now unique per query, so the **free caching REST gets from fixed, addressable reads collapses** (§4) — a direct loss for client-decides.
+- The server must now resolve *any* shape the client composes, so **server complexity rises sharply** (§5) — another cost of client-decides.
+- The client can now request something huge or deeply nested, so **a new security and cost surface opens** (§8) — again, straight from client-decides.
+
+None of those are separate features to weigh in isolation. They are four consequences of one cause. That's why "which has better caching?" is the wrong question — caching isn't a feature either team chose, it's what *happens* to caching when you move the shape decision from server to client.
+
+### The Debate Is a Tradeoff, Not a Contest
+
+Seeing the single axis also explains why the argument never ends: there's no winner because the axis has no universally right point. Server-decides is simpler and caches for free but forces the client to take what it's given; client-decides is flexible and precise but pushes cost and complexity onto the server. Which is better depends entirely on whether the flexibility is worth the costs *for your situation* — a question §9 answers, and answers decisively, but only after the consequences are on the table.
+
+The rest of this document is exactly that: walking each consequence of the one inversion, fairly, so the choice in §9 rests on evidence rather than allegiance.
+
+> 💡 **Key Insight**
+>
+> REST and GraphQL differ on exactly one thing — **who decides the shape of the response, the server or the client** — and every other difference is a *consequence*, not an independent feature. Over-fetching, caching, server complexity, and the security surface all move together because they all descend from that single inversion. This is why scorecards mislead: they present as separate, weighable rows what are really four results of one cause. Find the cause, trace the consequences, and the "religious war" becomes an ordinary engineering tradeoff.
+
+### Quick Recap — The One Question
+
+- The entire debate reduces to one axis: **who decides the response shape** — REST says the **server** (fixed endpoints), GraphQL says the **client** (one endpoint + a query).
+- Every other difference — fetching, caching, complexity, security — is a **downstream consequence** of that inversion, not an independent feature.
+- This is why **scorecards mislead**: they score as separate what are really results of a single cause.
+- There's no universal winner because the axis has no universally right point — it's a **tradeoff**, resolved decisively only against a specific situation (§9).
