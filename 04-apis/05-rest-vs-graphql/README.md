@@ -361,3 +361,52 @@ This isn't GraphQL being wrong — partial response genuinely needs a richer out
 - GraphQL supports **partial responses** — `data` and `errors` together — so one flaky field doesn't sink a complex screen; a genuine resilience win.
 - The cost: GraphQL returns **`200 OK` even on failure**, so the status code stops being the outcome signal and generic tooling (monitoring, retries, caches) is blinded.
 - It makes **REST's cardinal sin (200-with-error) the normal behavior** — not a bug, but a real trade of status-code legibility for partial-result capability.
+
+---
+
+## 7. Evolving the Contract
+
+Every API has to change over time without breaking the callers already depending on it. The shape decision (§1) gives the two styles genuinely different evolution stories — and this is one dimension where GraphQL's model is often the *gentler* one, so it's worth crediting fairly.
+
+### REST — Additive Change, Then Versioning
+
+A REST endpoint returns a fixed shape to everyone, which shapes how it evolves:
+
+- **Adding** a field to a response is safe — well-behaved clients ignore fields they don't recognize, so a new field disturbs no one.
+- **Removing or renaming** a field is a breaking change, because a fixed shape is returned to *all* callers at once — you can't remove a field for the clients who stopped using it while keeping it for those who haven't.
+
+So REST grows additively as long as it can, and when a genuinely breaking change is unavoidable, it reaches for **versioning** — running an old and new contract side by side (`/v1` and `/v2`) until callers migrate. Versioning is a substantial subject of its own later in this phase; what matters here is that REST's unit of change is the *whole endpoint shape*, so breaking changes tend to be handled at the coarse grain of a version.
+
+### GraphQL — The Client Already Selects, So Removal Gets Gentler
+
+GraphQL's evolution story is different in a way that flows straight from client-declared shape. Because each client explicitly *names the fields it uses*, the server knows — in principle — exactly which fields each query depends on. That enables a notably finer-grained evolution model:
+
+- **Adding** types and fields to the schema is safe and routine, same as REST — existing queries don't select the new fields, so they're unaffected.
+- **Removing** a field is handled by **deprecation** rather than a version bump: mark the field deprecated, observe (from the queries actually arriving) who still selects it, help those specific clients move off it, and remove it only once nobody asks for it. Clients that never used the field are never affected at any point.
+
+The key difference: REST changes at the grain of an *endpoint version*; GraphQL changes at the grain of an *individual field*. Because the client's query already declares its exact dependencies, the server can evolve field-by-field and even measure real usage before removing anything — a genuinely gentler path than versioning a whole endpoint. Many GraphQL APIs run for years without ever cutting a "v2," because they never need the coarse tool.
+
+### GraphQL's Evolution Cost — The Deprecation Graveyard
+
+The gentler path has its own price, and honesty requires naming it. Because removal is gradual and depends on clients voluntarily migrating, deprecated fields tend to **accumulate**. A long-lived schema collects a sediment of fields marked deprecated years ago that some forgotten client still selects, so they can never quite be removed. The schema grows a graveyard: technically alive, practically dead, and cluttering the contract. REST's blunter versioning at least offers a clean cut — retire `/v1` entirely on a date — that GraphQL's field-by-field gentleness makes harder to ever fully achieve.
+
+```mermaid
+flowchart LR
+    subgraph REST["📦 REST"]
+        RA["➕ add field: safe"] --- RV["✂️ breaking: new version<br/>(coarse, clean cut)"]
+    end
+    subgraph GQL["❓ GraphQL"]
+        GA["➕ add field: safe"] --- GD["🕰️ remove: deprecate + watch usage<br/>(fine-grained, but fields linger)"]
+    end
+```
+
+> 💡 **Key Insight**
+>
+> Because GraphQL clients **declare the exact fields they use**, the server can evolve the contract field-by-field — deprecate, watch who still selects it, remove only when unused — a genuinely gentler model than REST's coarse endpoint-versioning, and often reason enough alone to prefer it for a fast-moving product. The catch is symmetric: gentle, voluntary, usage-driven removal means deprecated fields **linger indefinitely**, so the schema accretes a graveyard REST's blunt "retire v1" can avoid. Finer-grained evolution, harder-to-ever-finish cleanup.
+
+### Quick Recap — Evolving the Contract
+
+- Both styles **add safely** (clients ignore/omit new fields); they differ on removal, which flows from the shape decision.
+- **REST** changes at the grain of a whole **endpoint version** — breaking changes mean running `/v1` and `/v2` side by side (versioning is its own later topic).
+- **GraphQL** changes **field-by-field**: because clients declare their fields, the server can deprecate, measure real usage, and remove only when unused — often gentler.
+- GraphQL's cost is the **deprecation graveyard** — usage-driven removal lets dead fields linger forever, whereas REST's coarse versioning allows a clean cut.
