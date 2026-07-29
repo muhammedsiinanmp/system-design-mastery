@@ -502,3 +502,76 @@ flowchart TD
 - **GraphQL earns its cost** under a specific pattern — many diverse clients, a rich interconnected graph, frontends evolving faster than endpoints, bandwidth-constrained varied clients.
 - The choice is **per surface**, not per company — REST and GraphQL routinely coexist (public REST + a GraphQL app backend).
 - The verdict is decisive, not "it depends": **REST unless you can name the condition that justifies GraphQL.**
+
+---
+
+## 10. Putting It All Together — The Same App, Both Ways
+
+A company runs a marketplace. It has two very different API surfaces, and — following the per-surface rule (§9) — it lands on a different style for each, not by preference but by tracing the one question to each surface's real needs.
+
+### Surface 1 — The Partner API (REST)
+
+Third parties integrate with the marketplace: inventory tools, analytics platforms, other businesses. The team runs §9's checklist against this surface:
+
+- Callers are **unknown and many**, in every language, some of them scripts and browsers — universal reach matters.
+- The data they read (products, orders) is **cacheable and frequently requested** — the free edge caching REST inherits (§4) is a large, free win at this scale.
+- Partners need **legible failures** their generic tooling can act on — REST's honest status codes (§6).
+- The team must **bound what outsiders can ask for** — REST's finite endpoint list caps the cost surface by construction (§8).
+
+Every arrow points at **REST**. The over-fetching partners occasionally endure (§3) is a small price against caching, universality, legibility, and a bounded blast radius. Server decides the shape — correct here.
+
+### Surface 2 — The Mobile and Web Apps (GraphQL)
+
+The company's own apps are a different world. Run the same checklist:
+
+- **Many diverse first-party clients** — iOS, Android, web — each screen needing a different slice of data (§9's first condition).
+- A **rich, interconnected graph** — a product links to a seller, reviews, related items, inventory — that REST would assemble in cascades of round trips (§3).
+- **Frontend teams ship faster than the backend can add endpoints**, and want to add fields to a screen without waiting (§7's field-level evolution).
+- Users are on **mobile networks** where over-fetching hurts most (§3).
+
+This surface matches nearly the whole GraphQL column. So the apps talk to a **GraphQL** endpoint: one round trip fills a screen, each client names exactly its fields, and frontend teams evolve without backend round-trips. The team knowingly takes on the costs — they build the resolver layer and its N+1 defenses (§5), rebuild caching at the client (§4), handle partial responses (§6), and add query-complexity limits (§8) — because *for this surface* the flexibility is worth all of it.
+
+```mermaid
+flowchart TD
+    M["🏪 One marketplace"]
+    M --> P["🌍 Partner API → REST<br/>unknown clients, cacheable data,<br/>bounded cost (server decides)"]
+    M --> A["📱 First-party apps → GraphQL<br/>diverse screens, rich graph,<br/>fast frontends (client decides)"]
+```
+
+### The Payoff
+
+Two surfaces, two styles, one question answered twice. Nobody argued about whether the company was "a REST shop" or "a GraphQL shop" — the question was answered *per surface* by asking who should decide the shape and whether the flexibility was worth its costs *there*. The partner API keeps the server in control and reaps caching and simplicity; the apps hand control to the client and pay for the flexibility they genuinely use.
+
+The lesson the team writes down:
+
+> **The debate dissolved the moment we stopped asking "REST or GraphQL?" and started asking, per surface, "who should decide the shape here, and can we afford what that costs?" For partners: the server should decide — we want caching, bounded cost, and universal reach, and we can live with a little over-fetching. For our own apps: the client should decide — we have many screens over a rich graph and we'll gladly run the machinery to serve them. Same question, two honest answers. There was never one winner to crown.**
+
+---
+
+## 11. Final Recap
+
+| Dimension | REST — server decides shape | GraphQL — client decides shape |
+|---|---|---|
+| **Fetching** (§3) | Over-fetches and under-fetches; multiple round trips | Exactly the requested fields, one round trip |
+| **Caching** (§4) | Free at every layer — URL is the cache key | Forfeits network caching; rebuild it client-side |
+| **Complexity** (§5) | Simple server; clients stitch | Simple clients; complex server (resolvers, N+1) |
+| **Errors** (§6) | Status code = verdict; all-or-nothing | `200` + partial data & errors; parse to know |
+| **Evolution** (§7) | Additive, then coarse versioning | Field-level deprecation; but fields linger |
+| **Security/cost** (§8) | Bounded by a finite endpoint list | Client-composed queries need cost defenses |
+| **Best fit** (§9) | The default — most surfaces | Many diverse clients over a rich graph |
+
+### The One Thing to Remember
+
+> **REST and GraphQL are not rivals with a winner — they are opposite answers to one question: should the server or the client decide the shape of each response? Every difference people argue about is a consequence of that single inversion, not an independent feature: server-decided shapes over-fetch but cache for free, keep the server simple, and bound what can be asked; client-decided shapes fetch precisely but forfeit free caching, push complexity and a cost-defense burden onto the server, and turn every `200` into something you must parse. Because the downside is asymmetric, the honest default is REST — under-choosing it is a survivable annoyance while over-choosing GraphQL is a full complexity tax on flexibility no one uses. Reach for GraphQL when a surface genuinely matches what it was built for: many diverse clients, a rich interconnected graph, frontends outrunning your endpoints. Decide per surface, not per company — and never let the argument be about identity when it's really about one tradeoff you can reason all the way through.**
+
+---
+
+## What's Next
+
+> **Topic 06 — GraphQL**
+
+This document taught just enough GraphQL to weigh it against REST — the client-declared query, the single endpoint, the schema — and deliberately stopped at every point where the real machinery begins. It named the resolver layer without building it, named the N+1 problem without solving it, named the schema without defining one, and set aside real-time updates and large-scale composition entirely.
+
+The next topic picks up exactly there. **GraphQL** in full: how the schema and type system are defined, how resolvers turn a requested shape into real data, how the N+1 trap is defeated with batching, and how queries, mutations, and subscriptions actually work. You've learned *whether* to choose GraphQL and *why*; next you learn *how* it works when you have.
+
+---
