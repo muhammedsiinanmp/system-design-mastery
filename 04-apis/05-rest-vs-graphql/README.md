@@ -148,3 +148,62 @@ flowchart LR
 - The **schema** — a typed graph of available objects and fields — is the contract, GraphQL's equivalent of REST's endpoint list.
 - **Queries** read and **mutations** write, paralleling REST's read/write split.
 - Resolvers, the performance trap's *solution*, and real-time/scale features are **deferred** to GraphQL's own topic — not needed to *choose*, only to *build*.
+
+---
+
+## 3. Fetching — Over-, Under-, and Exactly-Right
+
+The first consequence of the shape decision (§1) is about efficiency: how much unwanted data comes back, and how many round trips it takes to assemble what a screen actually needs. This is the dimension GraphQL was built to win, and it wins it cleanly — so it's worth stating fairly and in full before the costs arrive in later sections.
+
+### The Two Failures of Server-Decided Shapes
+
+When the server decides what each endpoint returns (REST), it returns the same fixed shape to everyone. Two mismatches follow, and every REST client lives with some of both:
+
+- **Over-fetching** — the endpoint returns more than this caller needed. A mobile screen wants an order's total and status; `/orders/42` also ships the line items, addresses, timestamps, and internal flags. The extra bytes travel, get parsed, and get discarded. On a phone on a slow network, that waste is felt.
+- **Under-fetching** — the endpoint returns less than the screen needs, so the client makes *more calls*. A screen showing an order, its customer, and its items hits three endpoints, often sequentially because one response feeds the next. One screen becomes a cascade of round trips, and round trips are the dominant cost over a network.
+
+```
+REST — assembling one screen:
+  GET /orders/42            → order (plus fields you didn't want)
+  GET /customers/7          → then the customer
+  GET /orders/42/items      → then the items
+  = 3 round trips, over-fetching on each
+```
+
+The two failures pull in opposite directions, which is what makes them hard to design away in REST. Make endpoints richer to cut round trips and you over-fetch more; trim them to stop over-fetching and you force more calls. You can tune the balance — this is real REST design work — but the resource model can't eliminate both at once, because the server is choosing one fixed shape for callers with different needs.
+
+### How Client-Decided Shapes Erase Both
+
+Hand the shape decision to the client and both failures vanish together, because the mismatch that caused them is gone:
+
+```
+GraphQL — the same screen:
+  POST /graphql
+  { order(id: 42) { total status
+      customer { name }
+      items { name price } } }
+  = 1 round trip, exactly the fields named
+```
+
+No over-fetching, because the response carries only the requested fields. No under-fetching, because related data across the graph is gathered server-side and returned together. One round trip delivers exactly the screen's data. For a client with precise, varied needs — especially a mobile app over a constrained connection — this is a genuine, measurable improvement, not a marginal one.
+
+| | REST (server-decided shape) | GraphQL (client-decided shape) |
+|---|---|---|
+| Unwanted fields | Common (over-fetch) | None — you name the fields |
+| Round trips per screen | Often several | Typically one |
+| Who tunes the balance | The API designer, imperfectly | The client, per query |
+
+### Stating the Win Honestly
+
+This is GraphQL's headline advantage and the reason it exists, so it deserves to be granted without hedging: **for assembling varied, specific data efficiently — especially many-screened frontends over slow networks — client-decided shape is simply better at fetching.** The later sections are not a rebuttal of this; they're the *bill* for it. Efficiency at fetching is exactly what §4 through §8 show you paying for elsewhere. A fair comparison names the win plainly here so the costs later read as tradeoffs, not as gotchas.
+
+> 💡 **Key Insight**
+>
+> Server-decided shapes force every REST client to live with **over-fetching** (fields it didn't want) and **under-fetching** (extra round trips) — and the two pull in opposite directions, so the resource model can reduce but never eliminate both. Client-decided shapes erase both at once, which is GraphQL's genuine, headline win, most valuable for varied frontends on slow networks. Grant it fully: everything the following sections cost is the price *of* this efficiency, not evidence against it.
+
+### Quick Recap — Fetching
+
+- Server-decided shapes cause **over-fetching** (unwanted fields shipped) and **under-fetching** (many round trips to assemble a screen).
+- The two **pull opposite ways**, so REST design can balance but not eliminate them — one fixed shape can't fit callers with different needs.
+- Client-decided shapes **erase both together**: exactly the named fields, related data in one round trip — GraphQL's clean, headline advantage.
+- The win is real and worth granting plainly; the later sections are the **bill for it**, not a rebuttal of it.
