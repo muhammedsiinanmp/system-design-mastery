@@ -88,3 +88,63 @@ The rest of this document is exactly that: walking each consequence of the one i
 - Every other difference — fetching, caching, complexity, security — is a **downstream consequence** of that inversion, not an independent feature.
 - This is why **scorecards mislead**: they score as separate what are really results of a single cause.
 - There's no universal winner because the axis has no universally right point — it's a **tradeoff**, resolved decisively only against a specific situation (§9).
+
+---
+
+## 2. Enough GraphQL to Judge It
+
+Most readers have used REST, even if they've never named its design rules. Fewer have used GraphQL, so a fair comparison needs a shared picture of what it actually is. This section builds exactly that — no more. GraphQL's full machinery (its type system, how servers resolve queries, its real-time and large-scale features) is a topic of its own; here we cover only what's needed to weigh it against REST.
+
+### One Endpoint, a Query That Mirrors the Answer
+
+A REST API is many endpoints, each a URL naming a resource. A GraphQL API is the opposite: **one endpoint**, and the request carries a *query* describing the data you want. The query's structure mirrors the response's structure — you write the shape you want, and you get that shape back:
+
+```
+Query the client sends:          Response the server returns:
+{                                {
+  order(id: 42) {                  "order": {
+    total                            "total": 48.00,
+    customer { name }                "customer": { "name": "Ada" },
+    items { name price }             "items": [
+  }                                    { "name": "Book", "price": 24.00 },
+}                                      { "name": "Pen",  "price": 24.00 }
+                                     ]
+                                   }
+                                 }
+```
+
+The caller asked for an order's total, its customer's name, and each item's name and price — across what would be three separate things in a resource model — and got precisely those fields, in one request, shaped like the query. Nothing more came back; there was no way to ask for "the whole order" and no way to accidentally receive fields nobody wanted.
+
+### The Schema Is the Contract
+
+GraphQL APIs are defined by a **schema**: a typed description of every object, every field, and how they connect. The client can only ask for what the schema declares, and the schema is what both sides agree on — the equivalent of REST's endpoint list, but expressed as a typed graph of what's available rather than a set of addressable URLs.
+
+Two operation kinds are worth naming, because the comparison later touches both: **queries** read data (the example above), and **mutations** change it. The distinction parallels REST's read-versus-write split; the mechanics of how each is defined and executed belong to GraphQL's own topic.
+
+### What This Section Deliberately Leaves Out
+
+To keep the comparison honest, it's worth being explicit about what's *not* here, because these are exactly the things that make GraphQL substantial to operate — and they get their own full treatment later:
+
+- **How the server fulfills a query** — the resolver layer that turns a requested shape into actual data fetches.
+- **The performance trap** that flexibility creates on the server side (§5 names it as a cost; the *fix* is deferred).
+- **Real-time and large-scale features** — live updates, combining many services into one graph, precompiled queries.
+
+None of those are needed to answer *"is GraphQL the right choice versus REST?"* — they're needed to *build* a GraphQL server, which is a different question. What §1 established and this section fills in — client-declared shape, one endpoint, a typed schema — is the whole basis for the comparison that follows.
+
+```mermaid
+flowchart LR
+    C["👤 Client"] -->|"one query,<br/>describes the shape"| E["❓ /graphql<br/>(single endpoint)"]
+    E -->|"validated against"| S["📋 Schema<br/>(typed graph = the contract)"]
+    E -->|"exactly the requested shape"| C
+```
+
+> 💡 **Key Insight**
+>
+> GraphQL, reduced to what the comparison needs, is three things: **one endpoint**, a **query whose structure mirrors the response** (so the client gets exactly the fields it named), and a **typed schema** that serves as the contract. That's enough to reason about every tradeoff ahead. Everything else about GraphQL — how queries are resolved, how it's scaled and secured in practice — is *operational depth*, not comparison material, and deferring it is what keeps this a fair fight rather than a tutorial wearing a comparison's clothes.
+
+### Quick Recap — Enough GraphQL to Judge It
+
+- GraphQL is **one endpoint** plus a **query** whose shape mirrors the response — the client names exactly the fields it wants and gets those and no others.
+- The **schema** — a typed graph of available objects and fields — is the contract, GraphQL's equivalent of REST's endpoint list.
+- **Queries** read and **mutations** write, paralleling REST's read/write split.
+- Resolvers, the performance trap's *solution*, and real-time/scale features are **deferred** to GraphQL's own topic — not needed to *choose*, only to *build*.
