@@ -410,3 +410,48 @@ flowchart LR
 - **REST** changes at the grain of a whole **endpoint version** — breaking changes mean running `/v1` and `/v2` side by side (versioning is its own later topic).
 - **GraphQL** changes **field-by-field**: because clients declare their fields, the server can deprecate, measure real usage, and remove only when unused — often gentler.
 - GraphQL's cost is the **deprecation graveyard** — usage-driven removal lets dead fields linger forever, whereas REST's coarse versioning allows a clean cut.
+
+---
+
+## 8. The Security and Cost Surface
+
+The last consequence of the shape decision is the one teams discover latest, often in production: giving the client control over the query also gives it control over *how expensive the query is*. Flexibility for the caller is a new attack and cost surface for the server.
+
+### REST Bounds the Blast Radius by Construction
+
+With server-decided shapes, every endpoint's cost is knowable in advance. `GET /orders/42` does roughly the same amount of work every time; the server author wrote it and can reason about its worst case. A caller can call it *often* (which rate limiting handles), but a single call can't be made arbitrarily expensive — the endpoint's shape is fixed, so its cost is bounded by design. The set of possible requests is finite and enumerable: it's the list of endpoints.
+
+That bounded-by-construction property is a quiet security asset. The server decides what's askable, so it can't be asked for something it never anticipated.
+
+### GraphQL Opens the Query to the Client
+
+Client-declared shape removes that bound. If the client composes the query, the client can compose an *expensive* one — and the space of possible queries is no longer a finite endpoint list but a combinatorial explosion of field selections and nesting depths. Two specific hazards follow:
+
+- **Deeply nested queries.** If the schema has cycles — an order has a customer, who has orders, each with a customer — a caller can request that relationship many levels deep, and one small query can demand an enormous amount of work. A malicious or careless client can weaponize nesting into a denial-of-service.
+- **Broad, heavy queries.** A caller can select huge swaths of the graph in one request — every field of thousands of objects — turning a single innocent-looking request into a crushing load.
+
+```mermaid
+flowchart TD
+    R["📦 REST: finite endpoint list"] --> RB["🟢 each call's cost is bounded<br/>by construction"]
+    G["❓ GraphQL: client composes the query"] --> GB["🔴 one query can be arbitrarily<br/>deep or broad → new DoS surface"]
+    GB --> GM["needs: depth limits, complexity<br/>scoring, cost-based rate limiting"]
+```
+
+### The Defenses Are Work You Wouldn't Otherwise Do
+
+None of this makes GraphQL insecure — it makes GraphQL require defenses that REST gets for free from its fixed shapes. A production GraphQL API generally needs:
+
+- **Query depth limits** — reject queries nested beyond some level.
+- **Query complexity analysis** — score a query's cost *before* running it and reject ones above a budget.
+- **Cost-based rate limiting** — limit by how expensive the queries are, not just how many, since one query can equal a thousand REST calls' worth of work.
+
+These are real, non-trivial additions to build and tune, and they exist purely because the client now controls the query. REST needs the *count*-based rate limiting every public API needs (its own later topic); GraphQL needs that *plus* a whole cost-analysis layer, because in REST the server already bounded the cost and in GraphQL it must actively defend it. This is the security face of §5's complexity point: client flexibility is, once again, server burden — this time paid in defensive machinery.
+
+> ⚠️ **Handing the client the query hands it the cost dial.** REST's finite endpoint list bounds each call's expense by construction — the server decided what's askable, so nothing unanticipated can be asked. GraphQL's client-composed queries can be arbitrarily deep or broad, opening a denial-of-service surface that doesn't exist in REST and forcing defenses REST never needs: depth limits, pre-execution complexity scoring, cost-based rate limiting. It's not insecurity — it's a standing tax the flexibility imposes, and it's routinely underestimated until a single query takes the server down.
+
+### Quick Recap — Security and Cost Surface
+
+- REST's **finite endpoint list bounds each call's cost by construction** — the server decides what's askable, so requests can't be arbitrarily expensive.
+- GraphQL's **client-composed queries** can be deeply nested or very broad, opening a **denial-of-service surface** REST doesn't have.
+- GraphQL therefore needs defenses REST gets free: **depth limits, complexity scoring before execution, and cost-based rate limiting**.
+- This is §5's complexity point wearing a security hat — **client flexibility is server burden**, here paid as a standing defensive tax that's easy to underestimate.
