@@ -113,7 +113,7 @@ Query the client sends:          Response the server returns:
                                  }
 ```
 
-The caller asked for an order's total, its customer's name, and each item's name and price — across what would be three separate things in a resource model — and got precisely those fields, in one request, shaped like the query. Nothing more came back; there was no way to ask for "the whole order" and no way to accidentally receive fields nobody wanted.
+The caller requested three related pieces at once — the order's total, the name of the customer attached to it, and the name and price of every line item — data spread across what a resource model would treat as separate things, and got back precisely those fields, in one request, shaped to match the query. Nothing more came back; there was no way to ask for "the whole order" and no way to accidentally receive fields nobody wanted.
 
 ### The Schema Is the Contract
 
@@ -370,7 +370,7 @@ This isn't GraphQL being wrong — partial response genuinely needs a richer out
 
 ## 7. Evolving the Contract
 
-Every API has to change over time without breaking the callers already depending on it. The shape decision (§1) gives the two styles genuinely different evolution stories — and this is one dimension where GraphQL's model is often the *gentler* one, so it's worth crediting fairly.
+Every API has to keep changing over the years while the software built against it keeps working. The shape decision (§1) gives the two styles genuinely different evolution stories — and this is one dimension where GraphQL's model is often the *gentler* one, so it's worth crediting fairly.
 
 ### REST — Additive Change, Then Versioning
 
@@ -379,7 +379,7 @@ A REST endpoint returns a fixed shape to everyone, which shapes how it evolves:
 - **Adding** a field to a response is safe — well-behaved clients ignore fields they don't recognize, so a new field disturbs no one.
 - **Removing or renaming** a field is a breaking change, because a fixed shape is returned to *all* callers at once — you can't remove a field for the clients who stopped using it while keeping it for those who haven't.
 
-So REST grows additively as long as it can, and when a genuinely breaking change is unavoidable, it reaches for **versioning** — running an old and new contract side by side (`/v1` and `/v2`) until callers migrate. Versioning is a substantial subject of its own later in this phase; what matters here is that REST's unit of change is the *whole endpoint shape*, so breaking changes tend to be handled at the coarse grain of a version.
+So REST grows additively as long as it can, and when a genuinely breaking change is unavoidable, it reaches for **versioning** — running an old and new contract side by side (`/v1` and `/v2`) until callers migrate. Versioning has a dedicated topic of its own further on; the point for this comparison is that REST's unit of change is the *whole endpoint shape*, so breaking changes tend to be handled at the coarse grain of a version.
 
 ### GraphQL — The Client Already Selects, So Removal Gets Gentler
 
