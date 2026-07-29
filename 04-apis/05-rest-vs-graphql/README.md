@@ -455,3 +455,50 @@ These are real, non-trivial additions to build and tune, and they exist purely b
 - GraphQL's **client-composed queries** can be deeply nested or very broad, opening a **denial-of-service surface** REST doesn't have.
 - GraphQL therefore needs defenses REST gets free: **depth limits, complexity scoring before execution, and cost-based rate limiting**.
 - This is §5's complexity point wearing a security hat — **client flexibility is server burden**, here paid as a standing defensive tax that's easy to underestimate.
+
+---
+
+## 9. Choosing — REST by Default, GraphQL When
+
+Six sections of consequences point to a verdict, and it's a decisive one — not "it depends." The tradeoffs are real but they are not symmetric in *cost of being wrong*, which is what makes a default the honest recommendation.
+
+### Start From REST
+
+**REST is the right default**, and the reasoning is about downside risk. Everything REST gives you — a simple server, free network caching (§4), legible status-code failures (§6), a bounded cost surface (§8), universal reach — you get *by construction*, without building anything. Everything GraphQL costs — the resolver complexity and N+1 traps (§5), rebuilt caching (§4), body-parsed error handling (§6), the query-cost defense layer (§8) — is work you take on. If you choose REST and turn out to have needed GraphQL, you'll feel it as some over-fetching and extra round trips: annoying, survivable, incrementally fixable. If you choose GraphQL and didn't need it, you've paid the entire complexity tax for a flexibility no one uses — a heavier, harder-to-reverse mistake.
+
+Asymmetric downside is what justifies a default: **when unsure, the cheaper wrong answer is REST.**
+
+### The Conditions That Earn GraphQL
+
+GraphQL is not a mistake — it's the right choice when its one advantage (§3: client-decided shape) is worth its many costs. That happens under a specific, recognizable combination, and it's worth being concrete because "we might need flexibility someday" is not on the list:
+
+| GraphQL earns its complexity when… | Why it flips the tradeoff |
+|---|---|
+| **Many diverse clients** hit the same data | The server solving assembly once (§5) beats each client re-solving it |
+| A **rich, interconnected graph** of data | Nested single-query fetching (§3) replaces cascades of REST calls |
+| **Frontends evolve faster than you can ship endpoints** | Clients add fields without waiting on the backend; field-level evolution (§7) fits |
+| **Bandwidth-constrained clients** with varied needs | Killing over-fetch (§3) matters most on slow mobile connections |
+
+The paradigm case is a product with many screens across web and mobile, each needing a different slice of a deeply related data model, shipping faster than the API team can add endpoints. That's the situation GraphQL was born from, and where its costs are clearly worth paying. The more of that column you match, the stronger the case; match little of it and GraphQL is complexity shopping.
+
+### It's Not Either/Or
+
+The decisive default doesn't mean picking one style for an entire company. As established when we mapped the styles, a mature system runs **multiple styles per surface** — and REST and GraphQL frequently coexist: a public partner API in REST (universal, cacheable, stable) alongside a GraphQL endpoint serving the company's own many-screened apps. The verdict applies *per surface*: for each API you build, start from REST and move to GraphQL only when that surface matches the conditions above. "REST by default" is a per-decision rule, not a one-time company religion — which is exactly why the debate framed as identity is the wrong debate.
+
+```mermaid
+flowchart TD
+    S["A new API surface"] --> Q{"Many diverse clients +<br/>rich graph + fast-moving<br/>frontends?"}
+    Q -->|"no (most surfaces)"| R["📦 REST<br/>simpler, cacheable, bounded"]
+    Q -->|"yes"| G["❓ GraphQL<br/>flexibility worth its costs"]
+```
+
+> 💡 **Key Insight**
+>
+> Default to **REST**, because the tradeoff is asymmetric: choosing REST when you needed GraphQL costs some over-fetching and extra round trips (annoying, reversible), while choosing GraphQL when you didn't costs the entire complexity, caching, error, and security tax for unused flexibility (heavy, sticky). Move to GraphQL only when a surface genuinely matches the pattern it was built for — **many diverse clients over a rich graph with fast-moving frontends** — and apply the rule *per surface*, since the two happily coexist. The honest answer isn't "it depends"; it's "REST unless you can name why not."
+
+### Quick Recap — Choosing
+
+- **REST is the default** because the downside is asymmetric: under-choosing it is annoying and reversible; over-choosing GraphQL pays the full complexity tax for flexibility nobody uses.
+- **GraphQL earns its cost** under a specific pattern — many diverse clients, a rich interconnected graph, frontends evolving faster than endpoints, bandwidth-constrained varied clients.
+- The choice is **per surface**, not per company — REST and GraphQL routinely coexist (public REST + a GraphQL app backend).
+- The verdict is decisive, not "it depends": **REST unless you can name the condition that justifies GraphQL.**
