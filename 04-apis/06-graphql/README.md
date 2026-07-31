@@ -589,3 +589,103 @@ That's deliberately as far as this goes. Federation's mechanics — how subgraph
 - A **monolithic schema** (one service, calling backends) is simple but becomes a **central bottleneck** as teams multiply.
 - **Federation** lets each team own a **subgraph** behind a composing **gateway** — aligned with ownership, at the cost of real added machinery.
 - It's the standard **centralize-vs-distribute** tradeoff; the mechanics are a large subject of their own, surveyed here rather than taught.
+
+---
+
+## 10. Putting It All Together — Building a Small GraphQL API
+
+A team builds a GraphQL API for a blog. Following the sections in order, watch the whole machine assemble — and watch each "feature" reveal itself as a fact about the graph.
+
+### Step 1 — Design the Schema (§2)
+
+They start where GraphQL always starts: the schema, because the schema *is* the API (§2). They write the graph — authors, posts, comments — as types (nodes) with fields that are either leaves or edges:
+
+```graphql
+type Author { id: ID!  name: String!  posts: [Post!]! }
+type Post   { id: ID!  title: String!  author: Author!  comments: [Comment!]! }
+type Comment { id: ID!  text: String!  author: Author! }
+type Query  { post(id: ID!): Post  posts: [Post!]! }
+```
+
+The graph from §1, made concrete. A client can now enter at `post` or `posts` and traverse outward.
+
+### Step 2 — Write Resolvers (§3)
+
+Each field gets a resolver (§3) — the code that walks that edge. `Query.posts` fetches posts; `Post.author` fetches a post's author; `Post.comments` fetches its comments. The blog's data happens to live in one database, but the resolvers hide that: the client sees only a clean graph.
+
+A query runs, and it works:
+
+```
+{ posts { title  author { name } } }
+```
+
+### Step 3 — Hit N+1, Fix With Batching (§4)
+
+In testing with a handful of posts, it's fine. On the real blog with hundreds, the database lights up: that innocent query is running one `author` fetch *per post* — the N+1 problem (§4), the fan-out walked naively. They add a **batching loader** for `Post.author`: the ids are collected across the level and fetched in one query, turning 1+N into 1+1. The query text never changed; the traversal got smarter.
+
+### Step 4 — Add a Mutation (§5)
+
+Readers need to comment, so they add a write through the `Mutation` root (§5), returning the created comment so the client re-reads it in one round trip:
+
+```
+mutation { addComment(postId: 42, text: "Great post") { id  text  author { name } } }
+```
+
+### Step 5 — Add a Subscription for Live Comments (§6)
+
+The blog wants comments to appear live. That's a subscription (§6) — a query-shaped traversal that re-runs when a comment is added and pushes the result. They implement it, noting that it needs a persistent connection, whose transport is the next topic — they'll lean on that mechanism, not build it here.
+
+### Step 6 — Cache and Bound Before Launch (§7, §8)
+
+Two things before going public. They add a **normalized client cache** (§7) so an author appearing across many posts is stored once and re-renders everywhere from a single mutation result. And they add **depth limiting and complexity scoring** (§8), because the moment the API is public, a client can write `post { author { posts { author { posts { … }}}}}` and the cyclic graph would let one query melt the database. The traversal must be bounded before strangers can draw it.
+
+```mermaid
+flowchart TD
+    S["📋 Schema (§2)"] --> R["⚙️ Resolvers (§3)"]
+    R --> N["🔁 Batching fixes N+1 (§4)"]
+    N --> M["✏️ Mutation (§5)"]
+    M --> U["📡 Subscription (§6)"]
+    U --> C["🗂️ Normalized cache (§7)"]
+    C --> B["🛡️ Depth + cost limits (§8)"]
+```
+
+### The Payoff
+
+The finished API is a graph clients can traverse precisely, backed by batch-aware resolvers, extended by mutations and a live subscription, cached by node identity, and bounded against abuse. Every step was the same underlying idea — the schema is a graph, a query walks it — seen from a different angle. The team never learned six unrelated features; they learned one model and met its consequences in order.
+
+The lesson they write down:
+
+> **We thought we were learning GraphQL's features — schema, resolvers, mutations, subscriptions, caching, security — and kept finding they were the same fact restated. The schema is the graph. A query walks it. A resolver is one step of the walk. N+1 is walking badly; batching is walking well; cost limits bound the walk; the cache remembers the walk; mutations walk and write; subscriptions re-walk on change. Once we stopped seeing a feature list and started seeing one traversable graph, GraphQL got small.**
+
+---
+
+## 11. Final Recap
+
+| Piece | What it is | In graph terms |
+|---|---|---|
+| **Schema** (§2) | The typed definition of the API | The map: types are nodes, fields are edges |
+| **Query** (§1) | A client's field selection | A path drawn through the graph |
+| **Resolver** (§3) | Code that produces a field's value | How the server walks one edge |
+| **N+1** (§4) | 1 + N fetches from a fan-out level | Walking siblings one at a time |
+| **Batching** (§4) | Collect a level's keys, fetch once | Walking a whole level in one step |
+| **Mutation** (§5) | A write that returns the result | A traversal that changes a node, then reads it |
+| **Subscription** (§6) | A pushed, repeating result | A traversal that re-runs on an event |
+| **Normalized cache** (§7) | Store objects by id | Remembering visited nodes |
+| **Cost/depth limits** (§8) | Reject over-expensive queries | Bounding the traversal |
+| **Federation** (§9) | Compose team-owned subgraphs | Many owners, one graph |
+
+### The One Thing to Remember
+
+> **GraphQL is not a query syntax with a pile of features — it is a typed graph you make executable, and one idea generates everything else: the schema defines the graph, a query is a path a client draws through it, and a resolver is how the server walks a single edge. Hold that and the whole subject collapses into consequences of a traversal. The N+1 problem is walking a level naively and batching is walking it in one step; caching is remembering the nodes you've visited; cost limits exist because the client, not you, draws the path and could draw an enormous one; mutations are traversals that write before they read; subscriptions are traversals that re-run when a node changes; federation is many teams owning slices of one graph. The power and every hazard come from the same source — the client controls the traversal — so learn the graph model first, and GraphQL stops being a bag of features and becomes a single thing you can reason about.**
+
+---
+
+## What's Next
+
+> **Topic 07 — WebSockets**
+
+This document kept reaching one edge it wouldn't cross. Subscriptions (§6) need the server to push data to the client, later and repeatedly, over a connection held open — and every time that came up, the transport underneath was named and deferred. Request-response, the model behind queries and mutations, simply can't do it.
+
+That transport is the next topic. **WebSockets** is the persistent, bidirectional connection that real-time features — GraphQL subscriptions among them — are built on: how the connection is established from an ordinary web request, how it stays open, and what it costs to hold one per client. You've seen *what* wants to be pushed. Next you learn *how* the pushing actually works.
+
+---
