@@ -488,3 +488,51 @@ Both answers are real and effective, but note what they are: caching you **imple
 - The **normalized client cache** stores **nodes by global id** — deduplicating shared objects and answering future queries from cached nodes, and it's how mutation results (§5) refresh every view at once.
 - **Persisted queries** register a query under an id, so it can be sent as a **`GET`** (edge-cacheable again) and **allowlisted** for safety (§8).
 - Both are caching you **build and operate**, not inherit — richer than URL caching in places, but the effort is yours: GraphQL's standing "flexibility costs server-side machinery" trade.
+
+---
+
+## 8. Cost, Depth, and Keeping the Graph Safe
+
+Handing the client control of the traversal (§1) is GraphQL's defining move, and it has a defining danger: **the client can draw a path far more expensive than you intended.** A REST endpoint's cost is fixed by the server that wrote it; a GraphQL query's cost is chosen by whoever writes the query. Left undefended, that's a denial-of-service surface built into the design — so bounding the traversal is not optional hardening, it's core operation.
+
+### The Client Sets the Cost
+
+Two properties from earlier sections combine into the risk. Cost lives in resolvers, invisibly (§3), and the client composes the traversal freely (§1). So a client can write a query whose *text* is short but whose *execution* is enormous:
+
+- **Depth.** If the graph has cycles — an author has posts, a post has an author, who has posts — a client can nest the traversal arbitrarily deep: `author { posts { author { posts { author { … } } } } }`. Each level multiplies the work; a few dozen lines can demand astronomical execution.
+- **Breadth.** A single query can select huge swaths of the graph — every field of thousands of objects — in one request that looks innocuous.
+
+```
+# short to write, potentially ruinous to run
+{ authors { posts { comments { author { posts { comments { text }}}}}} }
+```
+
+The server that would never *write* such an expensive endpoint can be *asked* to perform one, because it delegated the query shape to the client. This is the flip side of every advantage in this document.
+
+### Bounding the Traversal
+
+The defenses are all forms of "limit how far and how much a traversal may go," and a production GraphQL API generally needs several together:
+
+| Defense | What it does |
+|---|---|
+| **Depth limiting** | Reject queries nested beyond a set number of levels — kills the cyclic-nesting attack outright |
+| **Complexity scoring** | Assign each field a cost, sum the query's total *before executing*, and reject anything over a budget |
+| **Query timeouts** | Cap wall-clock execution, so a query that slips through other limits still can't run forever |
+| **Persisted-query allowlists** | Only permit pre-registered queries (§7), so clients can't submit arbitrary shapes at all |
+
+The most important idea is **complexity scoring before execution**: because the server can analyze a query's shape against the schema *without running it* (the schema is typed and the query is validated up front, §2), it can estimate cost and refuse an over-budget query before a single resolver fires. That pre-execution analysis is something GraphQL's typed, inspectable query model uniquely enables — the query plan is knowable in advance.
+
+The strongest posture, where feasible, is the persisted-query allowlist (§7): if clients may *only* run queries you registered, the whole "arbitrary expensive query" surface closes — you've traded some of GraphQL's ad-hoc flexibility for the guarantee that every query is one you vetted. Many large GraphQL deployments do exactly this in production for that reason.
+
+### What Belongs Elsewhere
+
+Two adjacent concerns are worth placing, briefly, so the boundary is clear. **Authorization** — who may see which fields — is a real GraphQL concern (field-level access control is often needed, since one query can reach across the graph), but the general machinery of authentication and authorization is its own subject later in the curriculum; here it's enough to know the graph needs it *per field*, not just per endpoint. And general **rate limiting** by request count is the ordinary API defense every interface needs — GraphQL's twist is only that counting requests is insufficient (one query can equal a thousand REST calls' work), which is exactly why *cost*-based limiting above exists alongside it.
+
+> ⚠️ **In GraphQL the client sets the query's cost, so an undefended graph is a denial-of-service surface by design.** A short query can nest through cycles or fan across the whole graph into astronomical execution, and it's invisible in the text because cost lives in resolvers. The defenses — depth limits, **complexity scoring before execution**, timeouts, and (strongest) persisted-query allowlists — are not optional hardening but core operation, because the very flexibility that makes GraphQL powerful is the thing that must be bounded. If you take away one rule: score query cost *before* you run it.
+
+### Quick Recap — Cost, Depth, and Safety
+
+- Because the **client composes the traversal** and cost hides in resolvers, a short query can be ruinously **deep** (through cycles) or **broad** — a built-in denial-of-service surface.
+- The core defenses: **depth limiting, complexity scoring before execution, query timeouts, and persisted-query allowlists** — usually several together.
+- **Scoring cost before executing** is the key move, enabled by GraphQL's typed, up-front-validated query model — refuse over-budget queries before any resolver runs.
+- **Field-level authorization** is a genuine GraphQL need (one query reaches across the graph); general auth and count-based rate limiting are their own topics, with cost-based limiting the GraphQL-specific twist.
