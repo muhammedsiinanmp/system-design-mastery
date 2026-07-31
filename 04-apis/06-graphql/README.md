@@ -179,3 +179,57 @@ One practical choice worth naming without dwelling on: teams either write the sc
 - Three **root types** — `Query`, `Mutation`, `Subscription` — are the entrances for reads, writes, and live updates respectively.
 - The schema is **strongly typed and introspectable**, so queries are validated before they run and tooling generates clients and docs from it.
 - The schema **is the contract** (and effectively the API itself); **schema-first vs code-first** is a workflow choice about who writes it, not how it runs.
+
+---
+
+## 3. Resolvers — Walking the Graph
+
+The schema (§2) says what edges *exist*; it says nothing about where the data actually lives. That's the resolver's job. If a query is a path through the graph (§1), a **resolver is the code that walks a single edge** — given one node, it produces the next. Understanding resolvers is understanding how GraphQL actually executes, and it's the piece the syntax hides completely.
+
+### One Field, One Resolver
+
+Every field in the schema has a **resolver**: a function whose job is to produce that field's value. When you're standing on an author node and the query asks for `posts`, the `posts` resolver runs and returns that author's posts. When the query then asks for each post's `title`, the `title` resolver runs for each post.
+
+```
+Author.posts    → resolver: given an author, fetch their posts
+Post.title      → resolver: given a post, return its title
+Post.comments   → resolver: given a post, fetch its comments
+```
+
+Crucially, the resolver is *where the data comes from*, and the schema deliberately hides that. A resolver might read a database, call another service, compute a value, or read a field already in memory. The client walking the graph has no idea which — it just sees `posts` linking to `Post`. This is the encapsulation payoff: the graph is a clean, uniform surface, and each resolver independently decides how to satisfy its one edge.
+
+### Execution Walks the Query Level by Level
+
+Here is the part that matters most for everything downstream. The server executes a query by walking it **top-down, level by level**, running the resolvers at each level before descending:
+
+```mermaid
+flowchart TD
+    Q["Query: author(1) { posts { comments { text } } }"]
+    Q --> L1["Level 1: resolve author(1) → 1 author"]
+    L1 --> L2["Level 2: resolve that author's posts → N posts"]
+    L2 --> L3["Level 3: resolve each post's comments → comments per post"]
+    L3 --> L4["Level 4: resolve each comment's text (leaf)"]
+```
+
+Start at the root: resolve `author(1)` → one author. Then, for that author, resolve `posts` → a list of posts. Then, *for each post*, resolve `comments`. Then, for each comment, resolve the leaf fields. The traversal fans out: one node at level 1, N at level 2, potentially many more at level 3. Each resolver only knows how to get from its node to the next; the engine orchestrates the walk.
+
+This level-by-level, fan-out execution is elegant and it is the source of GraphQL's signature performance trap — because "for each post, resolve its comments" is doing work once per post, and if each does it naively, the fetches multiply. That's §4.
+
+### Resolvers Compose the Whole API
+
+Because each resolver is independent and only responsible for one edge, a GraphQL API is assembled from many small, focused functions rather than a few big endpoint handlers. This has real consequences:
+
+- **The graph can span many data sources** invisibly — `author` from one database, `comments` from another service, a computed field from application logic — all stitched into one seamless traversal, because each resolver fetches from wherever it needs to.
+- **Adding a field is adding a resolver**, not touching a monolithic endpoint. The graph grows edge by edge.
+- **A field's cost is hidden in its resolver.** `title` might be free (already loaded) while `comments` is an expensive fetch — and the client can't tell from the query which fields are cheap. This invisibility of cost is exactly what §8's safety concerns address.
+
+> 💡 **Key Insight**
+>
+> A **resolver is the code that walks one edge** — given a node, produce the field's value — and the server executes a query by running resolvers **level by level, fanning out** as the traversal widens. That single model explains GraphQL's power and its dangers at once: resolvers hide where data lives (so one graph can span many sources seamlessly), and the fan-out means work multiplies per node (so a naive resolver at a wide level is the N+1 trap of §4). The query names *what*; the resolvers, walked level by level, are the *how*.
+
+### Quick Recap — Resolvers
+
+- Every schema field has a **resolver**: the function that produces that field's value — and it's where the data actually comes from, hidden behind the edge.
+- The server executes a query by walking it **top-down, level by level**, running each level's resolvers and **fanning out** as the traversal widens.
+- Resolvers hiding their data source lets **one graph span many databases and services** seamlessly, and lets the API grow one edge at a time.
+- The fan-out is the root of the performance trap (§4) and the cost-invisibility that §8 must defend — the same execution model that makes GraphQL powerful.
