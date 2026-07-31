@@ -43,7 +43,7 @@ Here's the trap it disarms. GraphQL is usually first met as *syntax* — a curly
 
 ## 1. GraphQL Is a Graph You Can Query
 
-The name is the whole idea, and it's usually skipped over. GraphQL is not "a query language for JSON" or "REST with field selection" — it is a way of exposing your data *as a graph* and letting clients traverse it. Everything else in this document is a consequence of taking that literally.
+The name is the whole idea, and it's usually skipped over. GraphQL is not "a query language for JSON" or "REST with field selection" — it is a way of exposing your data *as a graph* and letting clients traverse it. Every section that follows is that idea taken literally and followed to where it leads.
 
 ### The Data Is a Graph
 
@@ -59,7 +59,7 @@ flowchart LR
 
 GraphQL's premise is to expose that graph directly. The server declares what nodes exist and how they're connected (that declaration is the *schema*, §2), and then a client can enter at some point and walk the connections it cares about.
 
-This is also the origin story, and it explains the name. GraphQL came out of a company whose mobile apps had hundreds of screens over deeply interconnected social data — people, their posts, the comments on those posts, the people who wrote them — and assembling each screen from fixed endpoints meant cascades of round trips over slow connections. The insight was to stop thinking in endpoints and start thinking in the graph the data already formed: let the client name the slice of the graph a screen needs, and fetch it in one traversal. The name is literal — it's a query language *for a graph*.
+This is also the origin story, and it explains the name. GraphQL was created inside a large social platform whose mobile apps rendered hundreds of screens over deeply interconnected data — people, their posts, the comments on those posts, the people who wrote them — where assembling each screen from fixed endpoints meant cascades of round trips over slow connections. The insight was to stop thinking in endpoints and start thinking in the graph the data already formed: let the client name the slice of the graph a screen needs, and fetch it in one traversal. The name is literal — it's a query language *for a graph*.
 
 ### A Query Is a Path Through the Graph
 
@@ -536,7 +536,7 @@ The strongest posture, where feasible, is the persisted-query allowlist (§7): i
 
 ### What Belongs Elsewhere
 
-Two adjacent concerns are worth placing, briefly, so the boundary is clear. **Authorization** — who may see which fields — is a real GraphQL concern (field-level access control is often needed, since one query can reach across the graph), but the general machinery of authentication and authorization is its own subject later in the curriculum; here it's enough to know the graph needs it *per field*, not just per endpoint. And general **rate limiting** by request count is the ordinary API defense every interface needs — GraphQL's twist is only that counting requests is insufficient (one query can equal a thousand REST calls' work), which is exactly why *cost*-based limiting above exists alongside it.
+Two adjacent concerns are worth placing, briefly, so the boundary is clear. **Authorization** — who may see which fields — is a real GraphQL concern (field-level access control is often needed, since one query can reach across the graph), but the general machinery of authentication and authorization is its own subject later in the curriculum; here it's enough to know the graph needs it *per field*, not just per endpoint. And general **rate limiting** by request count is the ordinary API defense every interface needs — GraphQL's twist is only that counting requests is insufficient (a single query can do the work of an enormous number of ordinary calls), which is exactly why *cost*-based limiting above exists alongside it.
 
 > ⚠️ **In GraphQL the client sets the query's cost, so an undefended graph is a denial-of-service surface by design.** A short query can nest through cycles or fan across the whole graph into astronomical execution, and it's invisible in the text because cost lives in resolvers. The defenses — depth limits, **complexity scoring before execution**, timeouts, and (strongest) persisted-query allowlists — are not optional hardening but core operation, because the very flexibility that makes GraphQL powerful is the thing that must be bounded. If you take away one rule: score query cost *before* you run it.
 
