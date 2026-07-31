@@ -105,3 +105,77 @@ Every one of those is the same idea seen from a different angle. That's why this
 - A **query is a path** through that graph, collecting fields along the route; the response matches the path's shape by construction.
 - There's **one entrance** (`POST /graphql`) and the query decides the route — versus fixed addresses each returning a fixed shape.
 - "Query = traversal" is the **execution model**, and every later piece (resolvers, N+1, batching, caching, mutations, subscriptions) is a consequence of it.
+
+---
+
+## 2. The Schema — Defining the Graph
+
+If a query is a traversal (§1), the **schema** is the map that says what can be traversed. It declares every node, every edge, and the type of everything — and it is the single source of truth that both server and client build against. Nothing exists in a GraphQL API unless the schema says it does.
+
+### Types Are Nodes, Fields Are Edges
+
+The schema is written in a small, readable type language. An **object type** is a node; its **fields** are either scalar values (a leaf — a string, a number) or links to other types (an edge to another node):
+
+```graphql
+type Author {
+  id: ID!
+  name: String!
+  posts: [Post!]!      # edge: an author links to many posts
+}
+
+type Post {
+  id: ID!
+  title: String!
+  author: Author!      # edge: back to the author
+  comments: [Comment!]!
+}
+
+type Comment {
+  id: ID!
+  text: String!
+  author: Author!
+}
+```
+
+That's the graph from §1, written down. `name` and `title` are leaves; `posts`, `author`, `comments` are edges the client can walk. The `!` marks a field non-nullable (it will always be present); `[Post!]!` is a non-null list of non-null posts. The type system is doing real work here: it tells every client exactly what's available and what shape it has, before a single query runs.
+
+### The Root Types Are the Entrances
+
+A graph needs entry points — you can't traverse without somewhere to start. GraphQL defines three special **root types**, each an entrance for one kind of operation:
+
+| Root type | The entrance for | What it starts |
+|---|---|---|
+| `Query` | reads | a traversal that only collects data (§1) |
+| `Mutation` | writes | a traversal that changes state first (§5) |
+| `Subscription` | live updates | a traversal that re-runs on events (§6) |
+
+```graphql
+type Query {
+  author(id: ID!): Author      # enter the graph at an author
+  posts: [Post!]!              # or at the list of posts
+}
+```
+
+Every query in §1 started at a field of `Query`. These root fields are the doorways; the rest of the schema is the graph you walk once you're through one.
+
+### The Schema Is the Contract
+
+Because the schema fully describes what's available and its types, it plays the role a list of endpoints plays elsewhere — but richer, because it's a typed, introspectable graph rather than a set of addresses. Two consequences worth naming:
+
+- **It's strongly typed and checkable.** A query can be validated against the schema *before* it runs — ask for a field that doesn't exist, or of the wrong type, and it's rejected up front. Tooling can autocomplete queries and generate typed client code directly from the schema.
+- **It's introspectable.** A GraphQL server can be asked to describe its own schema, which is how the interactive explorers and documentation generators work — the API documents itself from the same source of truth clients build against.
+
+### Who Writes It — Schema-First vs Code-First
+
+One practical choice worth naming without dwelling on: teams either write the schema by hand as the starting artifact and make the code conform to it (**schema-first**), or write code with annotations and generate the schema from it (**code-first**). Both end at the same place — a schema that is the contract. Schema-first foregrounds the design and cross-team agreement; code-first keeps schema and implementation from drifting apart. It's a workflow preference, not a difference in how GraphQL runs.
+
+> 💡 **Key Insight**
+>
+> The schema *is* the graph, written in a type language: object types are nodes, fields are leaves or edges, and three **root types** — Query, Mutation, Subscription — are the only entrances. Because it's a complete, strongly-typed, introspectable description, the schema is the contract clients build against and the thing queries are validated against before they run. Everything a client can ask is exactly what the schema declares — design the schema well and you've designed the API, because in GraphQL the schema is not documentation *of* the API, it *is* the API.
+
+### Quick Recap — The Schema
+
+- The **schema** is the map of the graph, written in a type language: **object types are nodes**, and **fields are leaves (scalars) or edges (links to other types)**.
+- Three **root types** — `Query`, `Mutation`, `Subscription` — are the entrances for reads, writes, and live updates respectively.
+- The schema is **strongly typed and introspectable**, so queries are validated before they run and tooling generates clients and docs from it.
+- The schema **is the contract** (and effectively the API itself); **schema-first vs code-first** is a workflow choice about who writes it, not how it runs.
