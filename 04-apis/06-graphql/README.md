@@ -200,6 +200,14 @@ Post.comments   → resolver: given a post, fetch its comments
 
 Crucially, the resolver is *where the data comes from*, and the schema deliberately hides that. A resolver might read a database, call another service, compute a value, or read a field already in memory. The client walking the graph has no idea which — it just sees `posts` linking to `Post`. This is the encapsulation payoff: the graph is a clean, uniform surface, and each resolver independently decides how to satisfy its one edge.
 
+Concretely, a resolver is a function that receives the node it's standing on and returns the next value. The `Post.author` resolver is handed the post and returns its author:
+
+```
+Post.author = (post) => db.authors.find(post.authorId)
+```
+
+That signature is the whole model in miniature: *given this node, produce this edge's value.* The `post` it receives is whatever the level above returned; the value it produces becomes the node the level below walks from. The engine chains these together along the query's path — the output of one resolver is the input to the next.
+
 ### Execution Walks the Query Level by Level
 
 Here is the part that matters most for everything downstream. The server executes a query by walking it **top-down, level by level**, running the resolvers at each level before descending:
