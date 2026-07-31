@@ -300,3 +300,67 @@ The important operational truth: N+1 isn't a bug you fix once. Every new edge a 
 - It's **invisible in the query text** because cost lives in resolvers, not the query — a trivial-looking path can become hundreds of fetches.
 - The cause is siblings resolved **in isolation**; the fix is **batching** — collect a level's keys and fetch them in one call (the "DataLoader" pattern), turning 1+N into 1+1.
 - Batching is a **standing discipline across every edge**, not a one-time fix — each un-batched resolver silently reintroduces the trap.
+
+---
+
+## 5. Mutations — Traversals That Change State
+
+Everything so far has been reading — walking the graph to collect data. But clients also need to *change* things, and GraphQL handles writes through **mutations**. In the graph framing, a mutation is a traversal that changes a node before reading back from it — write first, then walk.
+
+### A Separate Entrance for Writes
+
+Writes enter through the `Mutation` root type (§2), deliberately separate from `Query`:
+
+```graphql
+type Mutation {
+  createPost(title: String!, body: String!): Post!
+  publishPost(id: ID!): Post!
+}
+```
+
+```
+mutation {
+  createPost(title: "GraphQL", body: "...") {
+    id            # ← after the write, read back from the new node
+    title
+    author { name }
+  }
+}
+```
+
+The write happens (a post is created), and then — this is the elegant part — the mutation *returns a node in the graph*, and the client traverses it exactly like a query. So a single mutation both changes state and reads back whatever shape the client needs of the result, in one round trip. Create a post and get back its id, its title, and its author's name together; no follow-up read required.
+
+### Why a Separate Root Type
+
+The read/write split isn't cosmetic — it carries a real execution guarantee. Recall that query fields at the same level fan out and can be resolved *in parallel* (§3), because reads don't interfere. Writes can't be treated that way: if a client sends several mutations in one request, running them concurrently could let them stomp on each other.
+
+So GraphQL makes one guarantee that queries don't have: **top-level mutations execute in series, in the order written.** Send `createPost` then `publishPost` in one request and the create is guaranteed to finish before the publish begins. Putting writes behind their own root type is what lets the engine apply this rule — reads parallelize, writes serialize — and it's why "why not just use a query field that happens to write?" has a real answer: the engine treats the two roots differently on purpose.
+
+```mermaid
+flowchart LR
+    subgraph Q["Query fields (one level)"]
+        Q1["resolve A"] & Q2["resolve B"] & Q3["resolve C"]
+    end
+    subgraph M["Mutation fields (top level)"]
+        M1["run 1st"] --> M2["run 2nd"] --> M3["run 3rd"]
+    end
+    Q -.->|"parallel — reads don't interfere"| QN["fast"]
+    M -.->|"serial — writes must not collide"| MN["safe, ordered"]
+```
+
+### Return the Changed Graph
+
+The strong convention — and it flows straight from §1's "response matches the path" — is that a mutation **returns the part of the graph it changed**, so the client re-reads updated state in the same request. Create returns the created object; update returns the updated object; even a delete typically returns something useful (the deleted id, or the parent collection). This lets a client keep its own view consistent without a separate fetch, and it's how a normalized client cache (§7) stays current after a write.
+
+A note on what mutations *don't* solve, kept brief because it belongs to other topics: a mutation is still a network call that changes state, so it inherits the ordinary hazards of any such call — a lost response can't tell the client whether the write happened, which is the retry-and-duplication problem general to all write APIs. GraphQL doesn't have a special answer here; the safe-retry mechanism is the same one any write endpoint needs, and it's covered where that concern lives rather than being GraphQL-specific.
+
+> 💡 **Key Insight**
+>
+> A **mutation is a traversal that writes first, then reads back** — it changes a node and returns it, so one round trip both performs the change and fetches whatever shape of the result the client wants. Writes live behind their own root type for a concrete reason: it lets the engine **serialize top-level mutations** (in order, no collisions) while queries stay parallel. And the return-the-changed-graph convention is what keeps a client's local view consistent after a write without a follow-up fetch.
+
+### Quick Recap — Mutations
+
+- A **mutation** is a write that enters through the `Mutation` root type, then **reads back** from the changed node — one round trip changes state *and* returns the result shape.
+- Writes get a **separate root type** so the engine can **run top-level mutations in series** (ordered, non-colliding), while query fields resolve in parallel.
+- The convention is to **return the changed part of the graph**, letting the client refresh its view in the same request (and keep a client cache current, §7).
+- A mutation is still a state-changing network call, so it inherits the general **retry/duplication** hazard — GraphQL has no special fix; that concern lives in its own topic.
