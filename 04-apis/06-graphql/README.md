@@ -536,3 +536,56 @@ Two adjacent concerns are worth placing, briefly, so the boundary is clear. **Au
 - The core defenses: **depth limiting, complexity scoring before execution, query timeouts, and persisted-query allowlists** — usually several together.
 - **Scoring cost before executing** is the key move, enabled by GraphQL's typed, up-front-validated query model — refuse over-budget queries before any resolver runs.
 - **Field-level authorization** is a genuine GraphQL need (one query reaches across the graph); general auth and count-based rate limiting are their own topics, with cost-based limiting the GraphQL-specific twist.
+
+---
+
+## 9. GraphQL Across Many Teams — A Survey
+
+Everything so far assumed one graph, served by one system, owned by one team. That holds for a single service and it's where most of the value and all of the mechanics live. But GraphQL's biggest selling point — *one unified graph a client can traverse* — runs into an organizational wall at scale: in a large company, the data lives across dozens of services owned by dozens of teams. This section surveys how that's reconciled. It's a **map, not a manual** — the mechanics are a substantial subject of their own, and the goal here is to answer "how does this scale across teams?" honestly, not to teach the implementation.
+
+### The Tension
+
+A client wants one graph: enter anywhere, traverse everywhere, one request. But no single team owns "everything" — the users service owns users, the orders service owns orders, the catalog team owns products. If GraphQL's promise is a unified graph, *someone* has to compose those separately-owned pieces into one traversable whole. There are two broad answers, and they trade the same way most centralize-vs-distribute choices do.
+
+### Approach 1 — One Monolithic Schema
+
+The simplest answer: a single GraphQL service holds the whole schema, and its resolvers call out to the various backend services to fetch data.
+
+```mermaid
+flowchart TD
+    C["👤 Client"] --> G["❓ One GraphQL service<br/>(the whole schema)"]
+    G --> U["users service"]
+    G --> O["orders service"]
+    G --> P["catalog service"]
+```
+
+It's straightforward and keeps the whole graph in one place — easy to reason about, one deployment. The cost is organizational: every team that wants to add or change part of the graph must go through that one service and its owners, which becomes a bottleneck and a coordination point as teams multiply. The graph is unified but its ownership is centralized, which fights how large orgs actually work.
+
+### Approach 2 — Federation
+
+The more sophisticated answer keeps the *client's* view of one unified graph while letting each team own and serve *its slice* independently. Each team runs a **subgraph** — a GraphQL service for its own types — and a **gateway** composes those subgraphs into one graph the client sees as seamless. A query that spans users and orders is planned by the gateway, split across the relevant subgraphs, and reassembled.
+
+```mermaid
+flowchart TD
+    C["👤 Client"] --> GW["🚪 Gateway<br/>(composes one graph)"]
+    GW --> S1["users subgraph<br/>(users team)"]
+    GW --> S2["orders subgraph<br/>(orders team)"]
+    GW --> S3["catalog subgraph<br/>(catalog team)"]
+```
+
+This is called **federation**, and its appeal is that it aligns the graph with the org: the client still gets one graph, but each team ships its part on its own schedule without a central bottleneck. The cost is real machinery — the gateway must plan cross-subgraph queries, the subgraphs must agree on how shared types link, and the whole thing is meaningfully more complex to operate than one service. Getting it right is a genuine specialty.
+
+### Where This Document Stops
+
+That's deliberately as far as this goes. Federation's mechanics — how subgraphs declare shared types, how the gateway plans and stitches a cross-service query, how it's versioned and operated — are a large topic in their own right, well beyond a single service's GraphQL. The honest summary a reader needs: **GraphQL scales across teams either by centralizing the schema in one service (simple, bottlenecked) or by federating subgraphs behind a gateway (aligned with team ownership, more complex).** Which to reach for follows the same logic as any centralize-vs-distribute decision — start centralized while it's small, move to federation when team-ownership bottlenecks justify the added machinery.
+
+> 💡 **Key Insight**
+>
+> GraphQL's "one unified graph" collides with the reality that data is owned by many teams, and there are two answers: a **monolithic schema** (one service holds everything — simple, but a central bottleneck) or **federation** (each team owns a subgraph, a gateway composes them — aligned with ownership, but real added machinery). It's the familiar centralize-versus-distribute tradeoff wearing a GraphQL costume: start with one schema while it's small, federate when the coordination cost of a single owning team outweighs the operational cost of a gateway. The mechanics are their own subject; the choice is the point.
+
+### Quick Recap — GraphQL Across Many Teams
+
+- GraphQL promises **one unified graph**, but in a large org the data is owned by **many teams and services** — someone must compose the pieces.
+- A **monolithic schema** (one service, calling backends) is simple but becomes a **central bottleneck** as teams multiply.
+- **Federation** lets each team own a **subgraph** behind a composing **gateway** — aligned with ownership, at the cost of real added machinery.
+- It's the standard **centralize-vs-distribute** tradeoff; the mechanics are a large subject of their own, surveyed here rather than taught.
