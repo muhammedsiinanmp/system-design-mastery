@@ -233,3 +233,70 @@ Because each resolver is independent and only responsible for one edge, a GraphQ
 - The server executes a query by walking it **top-down, level by level**, running each level's resolvers and **fanning out** as the traversal widens.
 - Resolvers hiding their data source lets **one graph span many databases and services** seamlessly, and lets the API grow one edge at a time.
 - The fan-out is the root of the performance trap (§4) and the cost-invisibility that §8 must defend — the same execution model that makes GraphQL powerful.
+
+---
+
+## 4. The N+1 Problem — Naive Traversal
+
+This is GraphQL's most famous failure mode, and with §3's execution model in hand it's no longer a mysterious gotcha — it's the predictable result of walking a fan-out level naively. It's also the clearest proof that the graph framing pays off: the problem *and* its fix are both just facts about traversal.
+
+### How One Query Becomes Many Fetches
+
+Take an innocent query:
+
+```
+{
+  posts {              # level 1: get the posts
+    title
+    author { name }    # level 2: for each post, get its author
+  }
+}
+```
+
+Recall the level-by-level fan-out (§3). The engine resolves `posts` once → say 10 posts. Then it descends a level and, *for each post*, runs the `author` resolver. If that resolver does the obvious thing — "given this post, fetch its author from the database" — it runs **ten separate fetches**, one per post.
+
+So the total is **1 fetch for the posts + N fetches for the authors = 1 + N**. That's the name: the **N+1 problem**. One query the client wrote as a single innocent path became eleven trips to the database.
+
+```mermaid
+flowchart TD
+    Q["1 query: posts { author }"] --> P["1 fetch → 10 posts"]
+    P --> A1["fetch author for post 1"]
+    P --> A2["fetch author for post 2"]
+    P --> A3["... post 3"]
+    P --> AN["fetch author for post 10"]
+    A1 & A2 & A3 & AN --> T["💥 1 + 10 = 11 database fetches"]
+```
+
+It compounds with depth. `posts { author { posts { comments } } }` fans out at every level, and a naive walk can turn one small query into hundreds or thousands of fetches — a genuine load spike hiding behind a query that reads as trivial. And it's *invisible*: the query text gives no hint of the cost, because cost lives in resolvers (§3), not in the query.
+
+### Why It Happens — Naive Traversal
+
+The root cause is precise: **the fan-out level resolves each sibling node in isolation.** The `author` resolver is called ten times, each knowing only about its own post, so each does its own fetch. Nothing is *wrong* with any single resolver — each correctly fetches one author. The problem is emergent: ten correct individual fetches that should have been one.
+
+That framing points straight at the fix. The waste isn't that authors are fetched — they're needed — it's that they're fetched *one at a time* when they could be fetched *together*.
+
+### Batching — Smarter Traversal
+
+The solution is to walk the whole level at once. Instead of each `author` resolver immediately hitting the database, they **defer**: each says "I need the author for post *X*," the requests are collected across the level, and then a single batched fetch retrieves all the needed authors together.
+
+```
+Without batching:  10 resolvers → 10 queries ("author where id = 1", "= 2", …)
+With batching:     10 resolvers → collect ids [1..10] → 1 query ("authors where id in [1..10]")
+```
+
+The standard implementation of this pattern — collect the keys requested during a tick of execution, then fetch them in one call, then hand each resolver its result — is widely known by the name of the library that popularized it (a "DataLoader"-style loader). The mechanics of a specific implementation belong to hands-on GraphQL work; the *idea* is what matters and it's pure traversal logic: **don't walk siblings one at a time — collect the level and walk it in one step.** A common refinement is to also cache within the request, so asking for the same author twice costs one fetch, not two.
+
+Batching turns 1+N into 1+1: one fetch for the posts, one for all their authors, regardless of how many posts there are.
+
+### It's a Standing Responsibility, Not a One-Time Fix
+
+The important operational truth: N+1 isn't a bug you fix once. Every new edge a client can traverse is a *potential* new N+1, so batching is a discipline applied across the whole graph, not a patch. A GraphQL server is only as fast as its resolvers are batch-aware, and a resolver added without batching quietly reintroduces the trap on its edge. This is a large part of what "operating GraphQL well" actually means day to day.
+
+> ⚠️ **The N+1 problem is the fan-out of §3 walked naively, and it hides in plain sight.** Because each sibling resolver runs in isolation and cost lives in resolvers rather than in the query text, a trivial-looking query can silently become hundreds of database fetches — invisible until the database feels it. The fix is not cleverness but a discipline: **batch every level** (collect the keys, fetch them together), applied to every edge, forever. A GraphQL API without batching isn't slightly slower — it's a load test its own clients can trigger by accident.
+
+### Quick Recap — The N+1 Problem
+
+- **N+1** is the level-by-level fan-out (§3) walked naively: resolving `posts` (1 fetch) then each post's `author` separately (N fetches) = **1 + N**, compounding with depth.
+- It's **invisible in the query text** because cost lives in resolvers, not the query — a trivial-looking path can become hundreds of fetches.
+- The cause is siblings resolved **in isolation**; the fix is **batching** — collect a level's keys and fetch them in one call (the "DataLoader" pattern), turning 1+N into 1+1.
+- Batching is a **standing discipline across every edge**, not a one-time fix — each un-batched resolver silently reintroduces the trap.
