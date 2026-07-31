@@ -59,6 +59,8 @@ flowchart LR
 
 GraphQL's premise is to expose that graph directly. The server declares what nodes exist and how they're connected (that declaration is the *schema*, §2), and then a client can enter at some point and walk the connections it cares about.
 
+This is also the origin story, and it explains the name. GraphQL came out of a company whose mobile apps had hundreds of screens over deeply interconnected social data — people, their posts, the comments on those posts, the people who wrote them — and assembling each screen from fixed endpoints meant cascades of round trips over slow connections. The insight was to stop thinking in endpoints and start thinking in the graph the data already formed: let the client name the slice of the graph a screen needs, and fetch it in one traversal. The name is literal — it's a query language *for a graph*.
+
 ### A Query Is a Path Through the Graph
 
 Given a graph, a **query** is simply a description of *which path to walk and which fields to collect along the way*:
@@ -267,7 +269,7 @@ flowchart TD
     A1 & A2 & A3 & AN --> T["💥 1 + 10 = 11 database fetches"]
 ```
 
-It compounds with depth. `posts { author { posts { comments } } }` fans out at every level, and a naive walk can turn one small query into hundreds or thousands of fetches — a genuine load spike hiding behind a query that reads as trivial. And it's *invisible*: the query text gives no hint of the cost, because cost lives in resolvers (§3), not in the query.
+It compounds with depth, and the arithmetic is worth doing once to feel it. Take `posts { comments { author } }` on a blog with 100 posts averaging 10 comments each. Naively: 1 fetch for the posts, then 100 fetches for each post's comments, then — for all 1,000 comments — 1,000 fetches for their authors. That's **1,101 database round trips** for a three-line query. Add one more level and it's tens of thousands. The query text gave no hint: cost lives in resolvers (§3), not in the query, so the load is invisible right up until the database feels it.
 
 ### Why It Happens — Naive Traversal
 
