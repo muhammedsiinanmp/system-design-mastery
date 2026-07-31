@@ -427,3 +427,64 @@ The honest guidance mirrors the general rule for real-time features: reach for a
 - It needs what request-response lacks — a **persistent connection** so the server can send data later, repeatedly — which is its own mechanism and the **next topic** (named, not taught here).
 - Subscriptions hold **real per-client state**, so they're heavier to operate than stateless queries.
 - Use them for **genuinely live data** (chat, dashboards, collaboration); prefer **polling** when changes are rare or a short delay is acceptable.
+
+---
+
+## 7. Caching Without Free HTTP Caching
+
+GraphQL gives up something REST gets for free, and it's worth being honest about the loss before showing what replaces it. A REST read is a `GET` at a stable URL, so the whole web — browsers, proxies, content networks — can cache it using the URL as the key, at no effort. GraphQL forfeits that entirely, and its answer is a *different kind* of caching that you build rather than inherit.
+
+### Why the Free Caching Is Gone
+
+Two facts from earlier sections combine to kill URL-based caching:
+
+- Every GraphQL request hits **one endpoint** (§1), usually by `POST`. To caching infrastructure, one URL means no way to tell responses apart, and a `POST` reads as a write it won't cache anyway.
+- Every query can be **unique** — different field selections, different arguments — so even if the infrastructure looked inside, two requests to "the same place" legitimately want different data.
+
+The URL is no longer the cache key because the URL no longer identifies the response — the query does, and it's in the body. Whatever REST inherited from the network, GraphQL has to reconstruct itself. There are two answers, at two different layers.
+
+### The Normalized Client Cache — Cache Nodes, Not Responses
+
+The dominant answer works *with* the graph rather than against it, and it's a direct payoff of §1's framing. Instead of caching whole responses (which are all unique), the client caches **individual nodes by identity**.
+
+The idea: give every object a globally unique identifier, and when a response comes back, the client cache **normalizes** it — it breaks the nested response apart into its individual objects and stores each one under its id, like rows in a table rather than a nested document.
+
+```
+Response:  { post(1) { title, author { id: 7, name: "Ada" } } }
+Cache stores:   Post:1   → { title, author → ref(Author:7) }
+                Author:7 → { name: "Ada" }
+```
+
+Now two payoffs follow. First, **deduplication**: if Author 7 appears in fifty different posts' responses, it's stored once, and every reference points at the same cached node. Second, and this is the elegant part, a *new* query can be **answered partly or entirely from cache** without hitting the server — if the client already holds every node the query's path visits, it can assemble the response from cached nodes alone. The cache isn't storing answers; it's storing the graph, and reassembling answers from it. That's caching that matches the execution model: remember visited nodes, and future traversals reuse them.
+
+This is also why mutations return the changed node (§5): the mutation's result flows into the normalized cache by id, updating that node everywhere it's referenced at once — every view showing Author 7 refreshes from one write.
+
+### Persisted Queries — Getting Some Network Caching Back
+
+The second answer claws back a little of what was lost at the network layer. A **persisted query** registers a query with the server ahead of time under a short identifier; the client then sends just the identifier (and any variables) instead of the full query text.
+
+That small change enables things the raw `POST`-with-body couldn't:
+
+- The request becomes small and, crucially, can be sent as a **`GET` with the id in the URL** — which means network caches and content networks can cache it again, by that stable id. Some of REST's free edge caching returns.
+- The server can maintain an **allowlist**: only pre-registered queries are permitted, so clients can't submit arbitrary (or arbitrarily expensive) queries — a safety benefit that §8 builds on.
+
+```mermaid
+flowchart TD
+    N["🗂️ Normalized client cache<br/>(store nodes by id)"] --> N1["dedup + answer future<br/>queries from cached nodes"]
+    P["🔖 Persisted queries<br/>(register, send an id)"] --> P1["GET-cacheable at the edge<br/>+ allowlist for safety (§8)"]
+```
+
+### The Honest Trade
+
+Both answers are real and effective, but note what they are: caching you **implement and operate**, not caching you **inherit**. REST's edge caching works with zero application code because the URL-as-key convention is baked into the web; GraphQL's normalized cache is a client-side system you adopt, and persisted queries are a build-and-registration step you set up. The capability is comparable — arguably richer, since node-level caching dedups in ways URL caching can't — but the effort is yours. This is the caching face of the recurring GraphQL trade: client flexibility is paid for in machinery you build.
+
+> 💡 **Key Insight**
+>
+> GraphQL forfeits REST's free URL-based caching (one `POST` endpoint, unique queries) and replaces it with two things you build: a **normalized client cache** that stores *nodes by id* — deduplicating shared objects and answering future traversals from cached nodes, caching that matches the graph model — and **persisted queries** that register a query under an id so it can be `GET`-cached at the edge and allowlisted for safety. Richer than URL caching in some ways, but machinery you operate rather than infrastructure you inherit — the caching face of GraphQL's standing trade.
+
+### Quick Recap — Caching
+
+- GraphQL loses REST's **free URL-based caching** because it's one `POST` endpoint with the response identified by the query in the body, not the URL.
+- The **normalized client cache** stores **nodes by global id** — deduplicating shared objects and answering future queries from cached nodes, and it's how mutation results (§5) refresh every view at once.
+- **Persisted queries** register a query under an id, so it can be sent as a **`GET`** (edge-cacheable again) and **allowlisted** for safety (§8).
+- Both are caching you **build and operate**, not inherit — richer than URL caching in places, but the effort is yours: GraphQL's standing "flexibility costs server-side machinery" trade.
