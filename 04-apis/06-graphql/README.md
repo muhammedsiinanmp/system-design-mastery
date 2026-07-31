@@ -364,3 +364,66 @@ A note on what mutations *don't* solve, kept brief because it belongs to other t
 - Writes get a **separate root type** so the engine can **run top-level mutations in series** (ordered, non-colliding), while query fields resolve in parallel.
 - The convention is to **return the changed part of the graph**, letting the client refresh its view in the same request (and keep a client cache current, §7).
 - A mutation is still a state-changing network call, so it inherits the general **retry/duplication** hazard — GraphQL has no special fix; that concern lives in its own topic.
+
+---
+
+## 6. Subscriptions — Traversals That Re-Run on Events
+
+Queries and mutations are both request-response: the client asks, the server answers once, done. But some data changes and the client needs to *keep* seeing it — a live comment feed, a moving price, a notification. That's **subscriptions**, the third root type, and in the graph framing a subscription is a traversal that re-runs whenever a node changes.
+
+### The Shape of a Subscription
+
+A subscription looks almost exactly like a query — same field-selection traversal — but with a different meaning: instead of "walk this once and return," it's "walk this *every time the underlying thing changes* and push me the result."
+
+```graphql
+type Subscription {
+  commentAdded(postId: ID!): Comment!
+}
+```
+
+```
+subscription {
+  commentAdded(postId: 42) {
+    text
+    author { name }     # ← same graph traversal as a query
+  }
+}
+```
+
+The client subscribes once. Then, each time a new comment is added to post 42, the server runs that traversal for the new comment and **pushes** the result to the client — `text` and `author { name }`, shaped by the same path logic as any query. It's a query that fires repeatedly, triggered by events rather than by the client asking.
+
+### Why This Needs Something Request-Response Doesn't Have
+
+Queries and mutations work over an ordinary request-response exchange: one request, one response, connection done. A subscription can't — the whole point is the server sending data *later*, unprompted, possibly many times, over a long period. That requires a **persistent connection**: a channel held open so the server can push messages whenever events occur, rather than only answering when asked.
+
+```mermaid
+flowchart LR
+    subgraph RR["Query / Mutation"]
+        C1["Client asks"] --> S1["Server answers once"]
+    end
+    subgraph SUB["Subscription"]
+        C2["Client subscribes once"] --> S2["Server pushes<br/>on event... and again... and again"]
+    end
+```
+
+That persistent, server-pushes channel is its own substantial subject — how the connection is established, kept alive, scaled, and recovered — and it's the topic that comes next in this phase. Here the point is only the boundary: **GraphQL defines the subscription as a graph traversal triggered by events; the transport that carries the pushes is a separate mechanism** this document names and hands off rather than teaches.
+
+### When Subscriptions Earn Their Cost
+
+Subscriptions are powerful and genuinely more complex to operate than queries — a persistent connection per subscribed client is real state the server must hold and scale, unlike the stateless request-response of queries. So they're worth it under specific conditions, and wasteful otherwise:
+
+- **Use them** when data genuinely changes and the client must reflect it *promptly without asking* — chat, live dashboards, collaborative editing, presence.
+- **Don't use them** for data that changes rarely or where a short delay is fine; there, having the client simply re-query on an interval (polling) is far simpler and avoids the persistent-connection cost entirely.
+
+The honest guidance mirrors the general rule for real-time features: reach for a pushed, persistent channel only when the interaction truly requires it, because the operational weight is real. A subscription that could have been an occasional poll is complexity you're paying for and not using.
+
+> 💡 **Key Insight**
+>
+> A **subscription is a query that re-runs on an event and pushes the result** — the same graph traversal as a read, but triggered by change rather than by the client asking. That "server sends later, repeatedly" behavior is exactly what request-response can't do, so subscriptions require a **persistent connection**, which is a separate mechanism (and the next topic). Because that connection is real per-client state to hold and scale, subscriptions earn their cost only for genuinely live data — anything a periodic poll would serve is cheaper polled.
+
+### Quick Recap — Subscriptions
+
+- A **subscription** is the third root type: a query-shaped traversal that **re-runs on an event** and **pushes** the result to the client, rather than answering once.
+- It needs what request-response lacks — a **persistent connection** so the server can send data later, repeatedly — which is its own mechanism and the **next topic** (named, not taught here).
+- Subscriptions hold **real per-client state**, so they're heavier to operate than stateless queries.
+- Use them for **genuinely live data** (chat, dashboards, collaboration); prefer **polling** when changes are rare or a short delay is acceptable.
