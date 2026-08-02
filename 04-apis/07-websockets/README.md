@@ -89,3 +89,70 @@ Strip it down and the requirement is simple to state and impossible for request-
 - Real-time features invert this: the **server** holds fresh news and the client needs it *now* but doesn't know to ask — exactly what request-response can't express.
 - **Polling** is the only workaround within request-response, and it's wasteful, laggy, and scales badly — a wall dressed as a door.
 - The real requirement is a **held-open connection either side can send over at any time** — which is what a WebSocket provides.
+
+---
+
+## 2. The Upgrade — Becoming a WebSocket
+
+A WebSocket doesn't get its own separate way of connecting. It begins life as an ordinary web request and then *transforms* — and understanding that transformation, called the **upgrade**, is understanding both how WebSockets sneak onto the existing web and the exact moment they stop being part of it.
+
+### It Starts as a Normal HTTP Request
+
+The client opens a WebSocket by making a regular HTTP `GET` request with a few special headers that say "I don't want a normal response — I want to switch this connection to the WebSocket protocol":
+
+```
+GET /chat HTTP/1.1
+Host: example.com
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+```
+
+The `Upgrade: websocket` header is the request to switch protocols. If the server agrees, it doesn't send back the usual `200 OK` with a body — it sends a special status that means "agreed, we're switching":
+
+```
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+```
+
+That **`101 Switching Protocols`** is the pivot. Before it, this was an HTTP request-response like any other. After it, the same underlying connection is no longer speaking HTTP at all — it's a WebSocket, an open two-way pipe, and it will stay that way until one side closes it. (The `Sec-WebSocket-Key`/`Accept` pair is a handshake detail confirming both sides genuinely intend a WebSocket, not a confused proxy; the underlying connection it runs on is a held-open TCP connection, whose own mechanics belong to the transport layer.)
+
+```mermaid
+sequenceDiagram
+    participant C as 👤 Client
+    participant S as 🖥️ Server
+    C->>S: GET /chat — Upgrade: websocket
+    S-->>C: 101 Switching Protocols
+    Note over C,S: 🔀 no longer HTTP — now an open WebSocket
+    S-->>C: message (server speaks first, freely)
+    C->>S: message (either side, any time)
+    S-->>C: message
+```
+
+### Why Begin as HTTP at All?
+
+It would seem simpler to invent a brand-new kind of connection. Starting as HTTP is a deliberate, pragmatic choice, and the reasons are all about fitting into a web that already exists:
+
+- **It uses the same ports.** WebSockets run over the same ports as web traffic (80, and 443 when encrypted), so they pass through firewalls and networks that only allow web traffic — no new ports to open.
+- **It passes through existing infrastructure.** Proxies, load balancers, and TLS all already understand an HTTP request; beginning as one lets a WebSocket traverse the machinery already in place (mostly — some intermediaries need to explicitly understand the upgrade, which §8 touches).
+- **It reuses encryption.** A secure WebSocket rides the same TLS as HTTPS, established during the same initial exchange, so there's no separate security mechanism to build.
+
+In short: the upgrade is how a fundamentally *non*-HTTP connection gets to travel the roads built for HTTP. It disguises itself as a web request just long enough to get through, then drops the disguise.
+
+### After the Upgrade, It's a Different World
+
+This is the sentence to carry into the rest of the document: **once the `101` is sent, the connection is no longer HTTP, and none of HTTP's conveniences apply to it anymore.** There are no more requests, no more status codes, no more headers per message, no more statelessness. What's left is a raw, open, two-way channel — powerful, and stripped of everything HTTP was quietly giving you. The following sections are what that channel can do (§3–§4) and, more consequentially, what it costs (§5 onward).
+
+> 💡 **Key Insight**
+>
+> A WebSocket **begins as an ordinary HTTP `GET`** carrying an `Upgrade: websocket` header, and the server's **`101 Switching Protocols`** is the exact pivot where the connection stops being HTTP and becomes an open two-way pipe. It starts as HTTP on purpose — to reuse the web's ports, infrastructure, and encryption rather than needing its own — but that's a disguise for getting through, not what it is. The instant the upgrade completes, every HTTP convenience is gone, and the connection is a raw channel whose cost the rest of this document is about.
+
+### Quick Recap — The Upgrade
+
+- A WebSocket starts as a normal HTTP `GET` with an **`Upgrade: websocket`** header — a request to switch this connection's protocol.
+- The server's **`101 Switching Protocols`** is the pivot: after it, the same connection is **no longer HTTP** but an open two-way pipe.
+- It begins as HTTP **on purpose** — to reuse existing **ports, proxies/load balancers, and TLS** instead of needing its own — a disguise for traversing the existing web.
+- Once upgraded, **none of HTTP's conveniences apply** anymore; what remains is a raw channel, and the rest of the document is its capabilities and costs.
