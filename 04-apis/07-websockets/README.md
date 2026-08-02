@@ -476,3 +476,71 @@ The mature instinct mirrors the general rule for anything expensive and stateful
 - If **only the server pushes**, a one-way server-to-client stream over HTTP is simpler and keeps much of what WebSockets discard.
 - If **updates are occasional** and slight delay is fine, plain **polling** is dramatically simpler and costs nothing between polls.
 - The discipline is to **default to the lightest mechanism** — an unnecessary WebSocket buys the whole statefulness bill (§5–§8) for no return. (Full comparison and use-case mapping are their own topics.)
+
+---
+
+## 10. Putting It All Together — A Live Collaboration Feature
+
+A team adds live collaborative editing to their document app — multiple people editing at once, everyone seeing each other's cursors and changes in real time. It genuinely needs a WebSocket: both sides send constantly (every keystroke and cursor move, in both directions) and latency is the whole product (§9's two conditions, both met). Watch the entire cost of leaving HTTP arrive, section by section.
+
+### It Starts Easy
+
+They open a WebSocket from each editor. A `GET` with `Upgrade: websocket`, a `101` back (§2), and the connection is live — no longer HTTP, now an open pipe. Cursor positions and edits flow as small frames (§3), text for the JSON payloads, tiny overhead per message — perfect for the constant trickle of keystrokes. And it's full-duplex (§4): each client streams its own edits while receiving everyone else's simultaneously, no turn-taking. In a demo with three people it feels magical and looks trivial. Then it goes to production.
+
+### The Bill Arrives
+
+**The servers fill up sooner than expected (§5, §8).** Load isn't measured in requests anymore — every open document holds a connection per participant, continuously, idle or not. A popular doc left open in a hundred tabs overnight is a hundred live connections consuming memory and file descriptors while nothing is typed. Capacity now tracks *connections held*, not traffic, and they add servers earlier than throughput alone would suggest.
+
+**Deploys start dropping everyone (§5, §7).** Restarting a server to deploy severs every connection it was holding. All those clients reconnect at once — a reconnection storm (§7) that hammers the fleet as it comes back. They add randomized backoff so clients return staggered, not in lockstep, and make the client rebuild state on reconnect: re-authenticate, re-join the document, and reconcile edits missed during the gap.
+
+**Quiet documents silently disconnect (§7).** A doc left open but untouched stops receiving updates after a few minutes — an idle timeout in a proxy on the path was culling the "abandoned" connection. They add ping/pong heartbeats, which both keep the line warm past the idle timeout and let the server detect genuinely dead connections and reclaim their state.
+
+**Two people on different servers can't see each other (§8).** The breaking discovery: two collaborators on the *same document* connected to *different servers* don't receive each other's edits — each server only holds its own local connections, and neither can reach the other's clients. They add a **backplane**: a pub/sub channel between servers, so an edit received on one server is published and every server delivers it to its local participants. Only now is the document truly shared regardless of which server each editor landed on.
+
+**Load balancing has to pin clients (§8).** And underneath it all, the balancer had to be configured to keep each client on the server holding its connection — sticky routing — rather than spreading requests the way it does for the app's ordinary HTTP endpoints.
+
+```mermaid
+flowchart TD
+    U["101 upgrade (§2) — easy"] --> F["frames + full-duplex (§3-4) — easy"]
+    F --> S["then: connections fill servers (§5,§8)"]
+    S --> D["deploys drop everyone → backoff + rebuild (§7)"]
+    D --> I["idle culls → heartbeats (§7)"]
+    I --> B["cross-server → backplane (§8)"]
+    B --> L["balancer must pin clients (§8)"]
+```
+
+### The Payoff
+
+The feature works, and it's genuinely good — real-time collaboration a poll or a one-way stream could never deliver, because both conditions from §9 truly held. But the team's takeaway isn't "WebSockets are great." It's how much came *after* the easy part:
+
+> **Opening the connection was an afternoon. Everything real came from what the connection *is* — state we now hold for every client, on one specific server. That one fact was the whole project: it's why deploys drop people, why idle connections die, why two editors on different servers couldn't see each other, why the balancer had to pin them, why we needed a backplane. We didn't build a messaging feature; we took on a fleet of stateful connections and re-solved, ourselves, everything HTTP had been doing for us for free. Worth it here — because it was genuinely bidirectional and genuinely live. It would have been a disaster for a feature that wasn't.**
+
+---
+
+## 11. Final Recap
+
+| What HTTP gave free | What a WebSocket costs instead |
+|---|---|
+| **Stateless servers** — any box serves anyone | Server holds an open connection per client, continuously (§5) |
+| **Free caching** — reads are cacheable `GET`s | Nothing to cache — frames aren't addressable resources (§6) |
+| **Simple load balancing** — spread requests anywhere | Sticky routing — the client is pinned to its server (§6, §8) |
+| **Status-code errors** — every call has a verdict | No per-message verdict; only a later dead-connection signal (§6, §7) |
+| **Per-request auth** — credentials on every request | Authenticate once at upgrade; no per-message headers (§6) |
+| **No upkeep** — requests are over in ms | Heartbeats, idle-timeout defense, reconnection with backoff (§7) |
+| **Add boxes to scale** — linear, trivial | Connection ceilings + a backplane for cross-server fan-out (§8) |
+
+### The One Thing to Remember
+
+> **A WebSocket is not a faster API — it is a held-open, stateful connection, and that single fact is the entire subject. It begins as an HTTP request and, at the `101`, stops being HTTP: you gain a full-duplex pipe where either side can speak at any instant, and you lose everything statelessness was quietly giving you — free caching, interchangeable servers, legible errors, per-request auth, effortless scaling. Every hard thing that follows — connections that die silently, deploys that drop everyone, idle timeouts, reconnection storms, sticky routing, the backplane needed to reach a client on another server — is a consequence of the server now *remembering* every client instead of forgetting them. So the messaging is the easy afternoon; the connection is the project. Reach for a WebSocket only when the interaction is genuinely bidirectional and genuinely low-latency, because when you open one you are trading the entire support system HTTP built for you in exchange for a raw channel — and taking back ownership of every problem that system was silently solving.**
+
+---
+
+## What's Next
+
+> **Topic 08 — WebSocket Use Cases**
+
+This document was about the *mechanism* — how a WebSocket works and, above all, what holding one open costs. It deliberately said little about *which* features should use one, beyond the rule that both sides must send and latency must matter. That leaves the natural next question: given a real product, where do persistent bidirectional connections actually earn their keep — and where do teams reach for them and regret it?
+
+That's the next topic. **WebSocket use cases**: the patterns where the cost you now understand is genuinely repaid — live chat, collaborative editing, multiplayer, presence, live dashboards — and, just as important, the ones where a lighter tool was the right call all along. You've learned how the connection works and what it costs; next you learn where that cost is worth paying.
+
+---
