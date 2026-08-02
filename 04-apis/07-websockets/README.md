@@ -156,3 +156,54 @@ This is the sentence to carry into the rest of the document: **once the `101` is
 - The server's **`101 Switching Protocols`** is the pivot: after it, the same connection is **no longer HTTP** but an open two-way pipe.
 - It begins as HTTP **on purpose** — to reuse existing **ports, proxies/load balancers, and TLS** instead of needing its own — a disguise for traversing the existing web.
 - Once upgraded, **none of HTTP's conveniences apply** anymore; what remains is a raw channel, and the rest of the document is its capabilities and costs.
+
+---
+
+## 3. Frames — How the Open Pipe Carries Messages
+
+Once the upgrade (§2) completes, the connection needs a way to carry data — and it's deliberately nothing like HTTP's model. HTTP wraps every message in a fresh set of headers; a WebSocket carries data as lightweight **frames**, and that difference is a large part of why WebSockets are efficient for chatty real-time traffic.
+
+### A Frame Is a Small, Self-Delimiting Chunk
+
+After the handshake, everything sent over a WebSocket is a **frame**: a small wrapper around a piece of data with just a few bytes of overhead saying what kind of frame it is, how big it is, and whether it's the end of a message. That's essentially all the bookkeeping — no headers, no method, no URL, no status code.
+
+Contrast the overhead directly. An HTTP message re-sends a full set of headers *every time* — often hundreds of bytes of `Host`, `User-Agent`, cookies, content type, and so on, on every single request, even a tiny one. A WebSocket frame adds only a handful of bytes of framing around the payload:
+
+```
+HTTP message:   [ ~hundreds of bytes of headers ][ "hi" ]     ← every message
+WebSocket frame: [ ~2-6 bytes of framing ][ "hi" ]            ← every message
+```
+
+For a chat app sending thousands of two-word messages, that difference between hundreds of bytes of overhead and a handful is the difference between a channel that's practical for high-frequency small messages and one that isn't. Frames are what make a WebSocket cheap *per message* once the connection is paid for.
+
+### Text, Binary, and Message Boundaries
+
+Frames come in a few kinds. **Data frames** carry the actual payload and are marked as either **text** (UTF-8 — JSON, plain strings) or **binary** (raw bytes — images, compact encodings, binary protocols). Unlike a text-only channel, a WebSocket carries either natively, so an application can send whichever suits its data.
+
+A single logical message can also be split across multiple frames (a large payload streamed in pieces), with a bit on each frame marking whether the message continues or ends. The application still receives one whole message; the framing handles reassembly. This matters because it means a WebSocket can stream a large message without blocking the connection, and small messages stay small.
+
+### Control Frames Keep the Connection Healthy
+
+Not every frame carries application data. A few **control frames** manage the connection itself, and two matter enough to name now because later sections depend on them:
+
+| Control frame | Purpose |
+|---|---|
+| **Ping / Pong** | A liveness check — one side sends a ping, the other must answer pong, proving the connection is still alive (§7) |
+| **Close** | A clean shutdown — either side can send it to end the connection politely, rather than just vanishing |
+
+These exist precisely because the connection is long-lived: an HTTP request is too short to need a heartbeat or a graceful-close protocol, but a connection meant to stay open for hours needs both. §7 builds on ping/pong and close to keep connections healthy over time.
+
+### No Request-Response Pairing
+
+The subtle but important thing about frames: **they are not paired.** An HTTP response answers a specific request — they come matched. WebSocket frames are just messages flowing in each direction, with no built-in notion of "this frame is the answer to that one." If your application needs to correlate a reply with a request (ask a question, get *its* answer), you have to build that yourself — put an id in the message and match it in your own code. The channel gives you a stream of messages, not a conversation of matched pairs. That freedom is the point (§4), and it's also work HTTP did for you that you now own.
+
+> 💡 **Key Insight**
+>
+> Once open, a WebSocket carries data as **frames** — a few bytes of framing around a payload — not as HTTP messages with full headers each time, which is what makes it cheap for high-frequency small messages once the connection exists. Frames carry text or binary, can split a large message into pieces, and include **control frames** (ping/pong, close) to manage a connection too long-lived to go unmonitored. And crucially they are **unpaired**: the channel is a stream of one-way messages, so any request-reply correlation is yours to build — the flip side of the freedom the next section is about.
+
+### Quick Recap — Frames
+
+- After the upgrade, data moves as **frames** — a few bytes of framing around a payload — versus HTTP's full headers on every message, making WebSockets cheap per message.
+- Frames carry **text or binary** natively, and a large message can be **split across frames** and reassembled without blocking small ones.
+- **Control frames** — ping/pong (liveness, §7) and close (graceful shutdown) — manage a connection too long-lived to leave unmonitored.
+- Frames are **unpaired**: unlike HTTP's request/response matching, correlating a reply to a request is **your** job (put an id in the message).
