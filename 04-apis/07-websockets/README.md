@@ -307,3 +307,41 @@ That single fact is where the difficulty comes from. Statelessness was what made
 - A **WebSocket is server-held state**: each open connection costs **memory, a file descriptor, and identity**, per client, held continuously — even idle clients cost.
 - Cost scales with **clients currently connected**, not requests in flight — a fundamentally different, heavier model.
 - The connection **binds a client to one specific server** for its life, and that lost statelessness (not the messaging) is the source of every difficulty ahead (§6–§8).
+
+---
+
+## 6. What You Gave Up Leaving HTTP
+
+§5 established the trade: a WebSocket is stateful where HTTP was stateless. This section is the reckoning — the specific conveniences HTTP was quietly providing that simply stop existing the moment you upgrade. None of these is a WebSocket "bug"; each is a direct consequence of leaving the request-response, stateless world behind, and together they're why "just add a WebSocket" is a bigger decision than it looks.
+
+### The Four Things That Stop Working
+
+| HTTP gave you, for free | Over a WebSocket |
+|---|---|
+| **Caching** — reads are addressable `GET`s the whole web caches | Gone — a frame isn't an addressable resource; nothing between client and server can cache it |
+| **Stateless load balancing** — any server serves any request | Gone — the connection is pinned to one server (§5), so balancers must keep the client there |
+| **The request-response error model** — every call ends in a status code | Gone — a dropped frame or dead connection isn't a `500`; there's no per-message verdict |
+| **Simple auth** — credentials ride along on every request's headers | Gone — after the upgrade there are no per-message headers to carry them |
+
+Each deserves a moment, because each is a place where a habit from HTTP quietly breaks.
+
+**No caching.** HTTP reads cache for free because each is a `GET` at a stable URL that the browser, proxies, and content networks all know how to store. A WebSocket frame is not a request for a named resource — it's a message on a pipe — so there is nothing for any cache to key on or store. Every piece of data crosses the wire live, every time. For real-time data that's often fine (you *want* it live), but the free performance layer HTTP handed you is simply not there.
+
+**No stateless load balancing.** This is the sharpest one, and §8 develops it. Because the connection lives in one server's memory (§5), a load balancer can't freely spread a client's traffic across the fleet the way it does with stateless HTTP requests — the client has to keep reaching *the specific server holding its connection*. The balancer's job changes from "spray requests anywhere" to "pin this client here," which is a harder, more fragile arrangement.
+
+**No request-response error model.** With HTTP, failure is legible: every request ends in a status code that says what happened, and retry logic, monitoring, and clients all branch on it. A WebSocket has no such per-message verdict. A frame you sent might never arrive and you won't get a `4xx`/`5xx` back — you'll find out (if at all) because the *connection* eventually shows as dead, which is a coarser, later, and separate signal (§7). "Did that message get through?" becomes a question you must answer yourself, not one the protocol answers for you.
+
+**Auth is different.** HTTP carries credentials in headers on *every* request, so each request re-proves who you are. After a WebSocket upgrade there are no more per-message headers — the messages are bare frames. So authentication has to happen differently: typically established during the initial upgrade request (which *is* still HTTP and can carry headers), and then trusted for the life of the connection. That shift — authenticate once at connect time rather than per message — has real consequences the security material addresses; here it's enough to see that the familiar per-request auth simply isn't available.
+
+### The Pattern Behind All Four
+
+Read the list again and notice they're one thing wearing four faces. Caching, stateless balancing, legible errors, and per-request auth were all **gifts of statelessness and the request-response shape** — the web's infrastructure could help you precisely because every interaction was a self-contained, addressable, one-shot request. Take that away for a held-open stateful pipe (§5) and the infrastructure has nothing to grip. You didn't lose four unrelated features; you lost the *one property* they all depended on, and got a raw two-way channel in exchange.
+
+> ⚠️ **Opening a WebSocket silently opts you out of everything HTTP was doing for you.** Caching, stateless load balancing, status-code error handling, and per-request auth all vanish at once — not because WebSockets are broken, but because all four were gifts of the stateless request-response shape you just left. This is why a WebSocket is never merely "a faster API": it's a trade of the entire web-infrastructure support system for a raw channel, and you take back ownership of every problem that support system was quietly solving. Reach for one when the real-time capability is worth re-solving all of that yourself.
+
+### Quick Recap — What You Gave Up
+
+- Leaving HTTP for a WebSocket removes four conveniences **at once**: free **caching**, **stateless load balancing**, the **status-code error model**, and **per-request auth**.
+- Each is a direct consequence of §5's statefulness — a frame isn't an addressable, cacheable, individually-answered, header-carrying request.
+- The sharpest loss is **stateless load balancing** (the connection is pinned to one server, §8); the subtlest is **error handling** (no per-message verdict, only a later dead-connection signal, §7).
+- All four were **gifts of statelessness** — you lost one property, not four features, and took back ownership of every problem it was solving.
