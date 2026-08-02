@@ -437,3 +437,42 @@ Step back: connection ceilings, sticky routing, and the fan-out/backplane need a
 - Load balancing must be **sticky** — a client is bound to the server holding its connection (§5) — which is more fragile than stateless spreading, and a dead server drops every connection it held.
 - Delivering a message to clients spread across many servers needs a **backplane** (pub/sub between servers), because each server only holds its own local connections.
 - All three are the **same fact** from §5 — the connection is state bound to one server — which is why WebSocket scaling is fundamentally harder than stateless HTTP.
+
+---
+
+## 9. When Not to Reach for One
+
+Everything in §5–§8 was cost: statefulness, lost HTTP conveniences, connection upkeep, hard scaling. That cost is worth paying for the right problem and pure waste for the wrong one — so the most useful thing this document can leave you with is the discipline to *not* open a WebSocket you didn't need. A WebSocket is the heaviest real-time tool, and heaviest tools should be last resorts, not defaults.
+
+### The Question That Decides It
+
+Two properties justify a WebSocket, and you want **both** before reaching for one:
+
+1. **Both sides send frequently.** The full-duplex, either-side-any-time capability (§4) is the thing only a WebSocket gives you. If only the *server* pushes and the client rarely sends, you're using a fraction of what you're paying for.
+2. **Latency genuinely matters.** The whole point is delivering updates the instant they happen. If a few seconds of delay is acceptable, the real-time capability isn't buying anything the cost justifies.
+
+When both hold — interactive, low-latency, bidirectional — a WebSocket earns its statefulness. When either is missing, something lighter is almost always the better call.
+
+### The Lighter Options Exist for a Reason
+
+Not every "real-time" need is the full-duplex, low-latency case. Two common situations are genuinely served by less:
+
+- **The server pushes, the client rarely sends.** A live feed, notifications, a progress indicator, a dashboard that updates — the data flows one way, server to client. This doesn't need full-duplex; a **one-way server-to-client stream** (server-sent events) delivers pushes over ordinary HTTP, keeping much of what a WebSocket throws away (it's still HTTP, so it's simpler to run and scale). Reaching for a WebSocket here is buying a two-way stateful pipe to use one direction of it.
+- **Updates are occasional and a little delay is fine.** If something changes every few minutes and the client can tolerate learning about it a few seconds late, having the client simply **poll** on a sensible interval is dramatically simpler than any held-open connection, and costs the server nothing between polls.
+
+This document deliberately doesn't run the full comparison of these options — that head-to-head, and the catalogue of which real-time *features* map to which tool, are their own dedicated topics. The point here is narrower and it's a discipline, not a decision tree: **know that lighter tools exist, and default to them.**
+
+### Don't Open a Connection You Didn't Need
+
+The failure mode this section exists to prevent is reaching for WebSockets because they're the exciting real-time answer, then inheriting the whole bill of §5–§8 — statefulness, sticky routing, heartbeats, backplanes, reconnection storms — to power a feature that a one-way stream or a modest poll would have served with a fraction of the operational weight. Every open connection is a standing cost (§5); an unnecessary one is that cost with no return.
+
+The mature instinct mirrors the general rule for anything expensive and stateful: reach for the *lightest* mechanism that actually meets the need, and treat a WebSocket as what it is — the powerful, costly option you choose deliberately when genuine bidirectional low-latency interaction demands it, not the default you flip on the moment someone says "real-time."
+
+> ⚠️ **A WebSocket is the heaviest real-time tool, so make it a last resort, not a reflex.** Justify it only when *both* sides send frequently *and* latency genuinely matters — the full-duplex, low-latency case that nothing lighter serves. If only the server pushes, a one-way stream does it over plain HTTP; if updates are occasional, a poll does it far more simply. Opening a stateful connection for a feature a lighter tool would serve buys the entire §5–§8 bill for no return. Default to the lightest mechanism that meets the need.
+
+### Quick Recap — When Not to Reach for One
+
+- A WebSocket is the **heaviest real-time tool**; justify it only when **both sides send frequently AND latency truly matters** — the case nothing lighter covers.
+- If **only the server pushes**, a one-way server-to-client stream over HTTP is simpler and keeps much of what WebSockets discard.
+- If **updates are occasional** and slight delay is fine, plain **polling** is dramatically simpler and costs nothing between polls.
+- The discipline is to **default to the lightest mechanism** — an unnecessary WebSocket buys the whole statefulness bill (§5–§8) for no return. (Full comparison and use-case mapping are their own topics.)
