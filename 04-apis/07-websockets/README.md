@@ -207,3 +207,52 @@ The subtle but important thing about frames: **they are not paired.** An HTTP re
 - Frames carry **text or binary** natively, and a large message can be **split across frames** and reassembled without blocking small ones.
 - **Control frames** — ping/pong (liveness, §7) and close (graceful shutdown) — manage a connection too long-lived to leave unmonitored.
 - Frames are **unpaired**: unlike HTTP's request/response matching, correlating a reply to a request is **your** job (put an id in the message).
+
+---
+
+## 4. Full-Duplex — Both Sides Speak at Once
+
+The frames of §3 flow in both directions, and there's no rule about whose turn it is. That property has a name — **full-duplex** — and it's the capability that request-response fundamentally lacks. It's why WebSockets exist, and it quietly changes how you have to write the code on both ends.
+
+### Half-Duplex vs Full-Duplex
+
+Request-response is **half-duplex** in spirit: one side talks, then the other, strictly taking turns. The client asks; only then does the server answer; the client cannot be receiving while it's still asking. It's a walkie-talkie — one party at a time, and someone has to have started.
+
+A WebSocket is **full-duplex**: both ends can send *simultaneously and independently*, neither waiting for the other. It's a phone call — both people can talk at once, and either can start speaking at any moment without being prompted. The server can push a message the instant an event occurs while the client is, in the same moment, sending something of its own.
+
+```mermaid
+flowchart LR
+    subgraph H["📻 Half-duplex (request-response)"]
+        HC["Client asks"] --> HS["Server answers"]
+        HS --> HC2["then client asks again"]
+    end
+    subgraph F["📞 Full-duplex (WebSocket)"]
+        FC["Client ↔ Server"]
+        FC -.->|"both send, any time,<br/>at the same time"| FC
+    end
+```
+
+### This Is the Whole Point
+
+Everything §1 said was missing, full-duplex provides. The server can finally **speak first** — deliver news the instant it has it, no poll, no wait. And because it's *full*-duplex rather than just server-push, the client keeps its own voice too: it can send at any time as well. That two-way, either-side-initiates freedom is exactly the connection §1 concluded was needed, and it's what makes genuinely interactive real-time possible — chat where messages arrive as typed, collaboration where every participant's actions flow to all the others live, a game where both sides act continuously.
+
+### The New Burden It Puts on Your Code
+
+Full-duplex is liberating and it moves work onto you, because the tidy structure request-response imposed is gone. In request-response, inbound data only ever arrives as *the answer to something you asked* — you always know what a message is a response to, because you just sent the request. Over a full-duplex channel, a message can arrive **at any time, unsolicited, meaning anything**, and your code has to be ready for it constantly:
+
+- You need a **message handler always listening**, not a request-then-await-response flow — the connection can hand you a message mid-anything.
+- You have to **interpret each message yourself**, because it isn't paired to a request that would have told you what it is (§3). Is this frame a chat message, a typing indicator, a presence update? Your protocol has to say, and your code has to dispatch on it.
+- You must handle **interleaving**: your own outbound messages and the server's inbound ones are happening at once, and shared state they both touch needs care.
+
+This is real design work that request-response simply did for you by structure. The channel handed you freedom and, with it, the responsibility to impose your own order on a stream that has none built in.
+
+> 💡 **Key Insight**
+>
+> **Full-duplex** — both ends sending at once, neither waiting a turn — is the capability request-response lacks and the entire reason WebSockets exist: it's what finally lets the server *speak first*. But it removes the structure request-response gave for free. Inbound messages now arrive unsolicited, at any time, meaning anything, so your code must always be listening and must interpret and dispatch each message itself. The phone-call freedom is real, and so is the new duty to bring your own order to a channel that imposes none.
+
+### Quick Recap — Full-Duplex
+
+- Request-response is **half-duplex** (strict turns, client starts); a WebSocket is **full-duplex** — both ends send simultaneously and independently, either can start.
+- Full-duplex is **the whole point**: it lets the server *speak first* (what §1 needed) while the client keeps its own voice — true interactive real-time.
+- It shifts work onto your code: messages arrive **unsolicited, any time, meaning anything**, so you need an always-listening handler that **interprets and dispatches** each one.
+- The structure request-response gave for free (inbound = the answer to your request) is gone — **imposing order on the stream is now your job**.
