@@ -71,7 +71,7 @@ The workaround within request-response is **polling**: the client asks over and 
 
 - **It's wasteful.** The overwhelming majority of polls return "nothing new," each one a full request-response round trip spent to learn nothing.
 - **It's laggy.** An update waits, on average, half the polling interval before the client even asks for it. Poll every 10 seconds and news is up to 10 seconds stale.
-- **It scales badly.** Ten thousand clients polling every few seconds is a relentless flood of mostly-empty requests, and making it *less* laggy (poll more often) makes the flood worse.
+- **It scales badly.** Ten thousand clients polling every 5 seconds is 2,000 requests per second of load *before a single update exists* — a relentless flood of mostly-empty round trips — and making it *less* laggy (poll more often) makes the flood worse in direct proportion.
 
 There are lighter variations on this idea, and a full comparison of them is a topic of its own; the point here is only that *all* of them are working around the same wall — the server still can't actually initiate. Polling doesn't give the server a voice; it just has the client ask more frantically.
 
@@ -274,7 +274,7 @@ That amnesia is not a limitation; it's the property that makes the web easy to s
 A WebSocket inverts this completely. An open connection is, by definition, **the server remembering you** — holding your connection open, in its memory, for as long as you're connected. And it's not one client; it's *every* connected client at once. Each open WebSocket is a standing claim on the server's resources:
 
 - **Memory** — buffers and state for the connection, per client.
-- **A file descriptor** — the operating system's handle on the open connection; there's a finite supply of them per machine.
+- **A file descriptor** — the operating system's handle on the open connection; there's a finite supply of them per machine. The default limit on many systems is only about 1,024 open descriptors per process — nowhere near enough — so running WebSockets at scale means deliberately raising that ceiling into the hundreds of thousands, one of the first operational surprises teams hit.
 - **Identity** — *this* connection belongs to *this* client on *this* server, and the server must keep track of which is which to route messages correctly.
 
 Multiply that by the number of connected clients and hold it continuously, for hours. An HTTP server's cost scales with requests *in flight right now*; a WebSocket server's cost scales with clients *currently connected*, whether they're actively sending or sitting idle. Ten thousand idle-but-connected clients are ten thousand live claims on the server, doing nothing and costing the whole time.
@@ -398,7 +398,7 @@ Scaling stateless HTTP is close to a solved problem: add more identical servers 
 
 ### Connection Count Is the Ceiling
 
-The first shift is *what* limits you. A stateless server's limit is roughly requests-per-second — how much work it can churn through. A WebSocket server's limit is **concurrent connections** — how many it can *hold open at once*, whether or not they're busy. Each connection consumes memory and a file descriptor (§5) for its entire life, so a single machine tops out at some number of simultaneous connections determined by those resources, not by message throughput.
+The first shift is *what* limits you. A stateless server's limit is roughly requests-per-second — how much work it can churn through. A WebSocket server's limit is **concurrent connections** — how many it can *hold open at once*, whether or not they're busy. Each connection consumes memory and a file descriptor (§5) for its entire life, so a single machine tops out at some number of simultaneous connections determined by those resources, not by message throughput. Even at a lean tens of kilobytes of memory per connection, a hundred thousand idle connections is already gigabytes of RAM held for clients doing nothing — which is why a well-tuned node might hold anywhere from tens of thousands to a few hundred thousand connections, and a service with millions of users needs a fleet sized to *hold* them, idle or not.
 
 That changes the scaling question from "how much traffic?" to "how many connected clients?" A service with a million users who each hold an idle-but-open connection needs enough servers to *hold a million connections*, even if almost no messages are flowing. Idle connections aren't free capacity; they're the capacity being consumed.
 
