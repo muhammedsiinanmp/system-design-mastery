@@ -218,7 +218,7 @@ The frames of §3 flow in both directions, and there's no rule about whose turn 
 
 Request-response is **half-duplex** in spirit: one side talks, then the other, strictly taking turns. The client asks; only then does the server answer; the client cannot be receiving while it's still asking. It's a walkie-talkie — one party at a time, and someone has to have started.
 
-A WebSocket is **full-duplex**: both ends can send *simultaneously and independently*, neither waiting for the other. It's a phone call — both people can talk at once, and either can start speaking at any moment without being prompted. The server can push a message the instant an event occurs while the client is, in the same moment, sending something of its own.
+A WebSocket is **full-duplex**: both ends can send *simultaneously and independently*, neither waiting for the other. It's a phone call — both people can talk at once, and either can start speaking at any moment without being prompted. The server can deliver news the moment an event fires while the client is, in that same instant, sending something of its own.
 
 ```mermaid
 flowchart LR
