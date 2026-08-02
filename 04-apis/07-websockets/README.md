@@ -389,3 +389,51 @@ And reconnection has a dangerous failure mode at scale. If a server restarts and
 - **Ping/pong heartbeats** detect dead connections (freeing their state) and keep the line **visibly active** so intermediaries' idle timeouts don't cull a quiet-but-healthy connection.
 - **Reconnection is the client's job**: a held-open connection *will* drop, and the client must reconnect *and* rebuild state (re-auth, re-subscribe, reconcile).
 - Mass disconnects cause **reconnection storms** (thundering herd); the fix is **randomized, increasing backoff** so clients don't all return at once.
+
+---
+
+## 8. Scaling Stateful Connections
+
+Scaling stateless HTTP is close to a solved problem: add more identical servers behind a balancer and capacity grows almost linearly, because any server serves any request. Scaling WebSockets is genuinely harder, and every difficulty traces back to §5 — the connection is state pinned to one server. This section is that binding fighting against the way we normally scale.
+
+### Connection Count Is the Ceiling
+
+The first shift is *what* limits you. A stateless server's limit is roughly requests-per-second — how much work it can churn through. A WebSocket server's limit is **concurrent connections** — how many it can *hold open at once*, whether or not they're busy. Each connection consumes memory and a file descriptor (§5) for its entire life, so a single machine tops out at some number of simultaneous connections determined by those resources, not by message throughput.
+
+That changes the scaling question from "how much traffic?" to "how many connected clients?" A service with a million users who each hold an idle-but-open connection needs enough servers to *hold a million connections*, even if almost no messages are flowing. Idle connections aren't free capacity; they're the capacity being consumed.
+
+### The Load Balancer Can't Spread Freely
+
+With stateless HTTP, a load balancer sends each request to whichever server is least busy — total freedom, because the servers are interchangeable. With WebSockets, that freedom is gone: once a client's connection lives on server A (§5), *all* of that client's traffic must keep reaching **server A specifically**, because that's where its connection state is. The balancer can distribute the *initial* connections across servers, but after that each client is stuck to its server for the connection's life.
+
+This is **sticky** routing — the balancer must pin a client to one backend rather than spreading it — and it's more fragile than stateless balancing: if server A dies, it doesn't just lose in-flight requests, it drops *every connection it was holding*, and all those clients must reconnect (§7) and be re-pinned elsewhere. The interchangeable-fleet property that made HTTP scaling easy is exactly what a WebSocket can't have.
+
+### The Fan-Out Problem — and the Backplane
+
+Here's the hardest consequence, and it's not obvious until you hit it. Suppose 100,000 users are in one chat, spread across 50 servers because no single server can hold them all (connection ceiling, above). Someone sends a message. It must reach all 100,000 — but any given server only holds the ~2,000 connections that happen to live *on it*. The server that received the message can deliver it to its own 2,000 clients directly, but it has no connection to the other 98,000; they're on the other 49 servers.
+
+```mermaid
+flowchart TD
+    M["💬 Message arrives at Server A"] --> A["A delivers to its own<br/>2,000 connections ✅"]
+    M --> BP["📡 Publish to a backplane<br/>(pub/sub between servers)"]
+    BP --> S2["Server B → its 2,000"]
+    BP --> S3["Server C → its 2,000"]
+    BP --> SN["... all 50 servers"]
+```
+
+So the servers need a way to talk *to each other*: a **backplane** — a shared publish/subscribe channel that every WebSocket server connects to. When a server receives a message that others' clients need, it publishes it to the backplane; every server subscribed picks it up and forwards it to its own local connections. The backplane is what stitches the sharded connections back into one logical room. It's essential for any multi-server real-time feature, it's real infrastructure to run, and it becomes its own scaling concern (the backplane itself must handle the cross-server message volume). The deeper mechanics of pub/sub between services belong to a later phase; the point here is *why* WebSockets force you to need one — the connections are scattered, and something has to bridge them.
+
+### Why This Is All One Problem
+
+Step back: connection ceilings, sticky routing, and the fan-out/backplane need are three faces of the single fact from §5 — **the connection is state bound to one server.** Stateless HTTP has none of these because there's no binding: any server serves any request, so you scale by adding boxes and nothing else changes. A WebSocket's binding is what makes it real-time-capable and what makes it fight every stateless scaling technique. That's the trade in its final form: you bought the ability to push, and you pay for it in a scaling model that's fundamentally harder than the one you left.
+
+> 💡 **Key Insight**
+>
+> WebSockets scale hard because §5's binding — *this connection lives on this server* — breaks the interchangeable-fleet property stateless HTTP scales on. It shows up as three linked problems: the ceiling is **concurrent connections held**, not throughput; the balancer must **pin clients** (sticky) rather than spread them freely; and delivering a message to clients scattered across servers needs a **backplane** (pub/sub between servers) to bridge them. All three are one fact wearing three faces, and together they're why "add more servers" — trivial for HTTP — is a real engineering problem for WebSockets.
+
+### Quick Recap — Scaling Stateful Connections
+
+- The limit is **concurrent connections held**, not requests/second — idle-but-open connections consume capacity for their whole life, so scale tracks connected clients.
+- Load balancing must be **sticky** — a client is bound to the server holding its connection (§5) — which is more fragile than stateless spreading, and a dead server drops every connection it held.
+- Delivering a message to clients spread across many servers needs a **backplane** (pub/sub between servers), because each server only holds its own local connections.
+- All three are the **same fact** from §5 — the connection is state bound to one server — which is why WebSocket scaling is fundamentally harder than stateless HTTP.
