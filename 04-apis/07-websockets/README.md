@@ -345,3 +345,47 @@ Read the list again and notice they're one thing wearing four faces. Caching, st
 - Each is a direct consequence of §5's statefulness — a frame isn't an addressable, cacheable, individually-answered, header-carrying request.
 - The sharpest loss is **stateless load balancing** (the connection is pinned to one server, §8); the subtlest is **error handling** (no per-message verdict, only a later dead-connection signal, §7).
 - All four were **gifts of statelessness** — you lost one property, not four features, and took back ownership of every problem it was solving.
+
+---
+
+## 7. Keeping It Alive — Ping, Pong, Timeout, Reconnect
+
+An HTTP request is over in milliseconds, so it never needs maintenance. A WebSocket is meant to stay open for minutes or hours, and over that span the network *will* interfere — so a held-open connection needs active upkeep that request-response never did. This is ongoing work the moment you adopt WebSockets, and skipping it produces connections that look alive and aren't.
+
+### The Silent-Death Problem
+
+The core hazard: a WebSocket can **die without telling anyone.** A laptop closes its lid, a phone loses signal, a network device between the two sides quietly drops the connection from its table — and neither end necessarily gets a clean "close." Each side still *thinks* the connection is open. The server keeps holding the state (§5) for a client that's gone; the client waits for messages that will never come. Nothing errored; the connection just silently stopped being real.
+
+Because a WebSocket carries no request-response verdicts (§6), there's no natural signal that this has happened. You have to go looking for it.
+
+### Ping/Pong — Proving the Connection Is Alive
+
+The mechanism is the **ping/pong** control frames (§3). One side (usually the server) periodically sends a **ping**; a healthy peer must answer with a **pong**. If the pong doesn't come within a timeout, the connection is presumed dead and cleaned up:
+
+```mermaid
+flowchart LR
+    S["🖥️ Server"] -->|"ping (every ~30s)"| C["👤 Client"]
+    C -->|"pong ✅"| S
+    S -.->|"no pong within timeout ❌"| D["presume dead →<br/>close, free the state"]
+```
+
+This is a **heartbeat**, and it serves both directions: it lets the server detect and drop dead connections (reclaiming the memory and file descriptor they were holding, §5), and it keeps the connection *visibly active* so intermediaries that time out idle connections don't cull it. The interval is a trade — too frequent wastes traffic on a connection that's mostly idle, too infrequent means dead connections linger, holding state and delaying detection. A period on the order of tens of seconds is typical.
+
+### Idle Timeouts Work Against You
+
+There's a related hazard from the infrastructure the connection passes through. Load balancers and proxies often **close connections they consider idle** — if no bytes flow for some period, they reclaim the connection, assuming it's abandoned. A WebSocket that's legitimately quiet (a chat where no one's typing) can be silently severed by an intermediary just for being calm. The heartbeat doubles as the fix: regular ping/pong traffic keeps the connection non-idle from the infrastructure's point of view, so it isn't culled for the crime of waiting. This is a real, common cause of "my WebSocket keeps disconnecting" — an idle timeout somewhere in the path, solved by keeping the line warm.
+
+### Reconnection Is the Client's Job — and a Hazard
+
+Here's the fact to design around: **a held-open connection will eventually drop.** Networks change, servers restart for deploys, laptops sleep. It's not an edge case; over enough time and enough clients it's a certainty. So the client must be built to **detect the drop and reconnect** — and, crucially, to *re-establish whatever state the connection represented*: re-authenticate, re-subscribe to whatever it was listening to, and reconcile anything it missed while disconnected. The connection dropping isn't just a network event; it can mean lost application state that has to be rebuilt.
+
+And reconnection has a dangerous failure mode at scale. If a server restarts and drops ten thousand connections at once, all ten thousand clients try to reconnect **at the same instant** — a **reconnection storm** (a thundering herd) that can overwhelm the servers just as they come back, knocking them down again. The defense is for clients to reconnect after a *randomized, increasing* delay rather than immediately and in lockstep, spreading the reconnection load over time instead of concentrating it.
+
+> ⚠️ **A WebSocket needs active upkeep an HTTP request never did, because it can die silently and it will eventually drop.** Without heartbeats, dead connections linger — holding server state for clients that are gone — and legitimately-idle connections get culled by intermediaries' idle timeouts. Without careful reconnection, a mass disconnect becomes a **reconnection storm** that re-downs the servers as they recover. The upkeep — ping/pong to prove liveness and keep the line warm, and randomized-backoff reconnection that also rebuilds state — is not optional polish; it's the baseline cost of holding a connection open over real networks.
+
+### Quick Recap — Keeping It Alive
+
+- A WebSocket can **die silently** — no clean close — leaving the server holding state for a gone client and the client awaiting messages that never come; nothing errors.
+- **Ping/pong heartbeats** detect dead connections (freeing their state) and keep the line **visibly active** so intermediaries' idle timeouts don't cull a quiet-but-healthy connection.
+- **Reconnection is the client's job**: a held-open connection *will* drop, and the client must reconnect *and* rebuild state (re-auth, re-subscribe, reconcile).
+- Mass disconnects cause **reconnection storms** (thundering herd); the fix is **randomized, increasing backoff** so clients don't all return at once.
