@@ -256,3 +256,54 @@ This is real design work that request-response simply did for you by structure. 
 - Full-duplex is **the whole point**: it lets the server *speak first* (what §1 needed) while the client keeps its own voice — true interactive real-time.
 - It shifts work onto your code: messages arrive **unsolicited, any time, meaning anything**, so you need an always-listening handler that **interprets and dispatches** each one.
 - The structure request-response gave for free (inbound = the answer to your request) is gone — **imposing order on the stream is now your job**.
+
+---
+
+## 5. The Connection Is State the Server Holds
+
+This is the center of the whole document. Everything up to here described what a WebSocket *can do*; this section is about what it *is* from the server's side — and that one fact reshapes everything that follows.
+
+### An HTTP Server Forgets You Instantly
+
+Start with the thing a WebSocket gives up. An HTTP server is **stateless**: it receives a request, answers it, and retains nothing about you afterward. The next request — even a millisecond later — arrives as if from a stranger, carrying everything needed to handle it. The server holds no memory of any particular client between requests.
+
+That amnesia is not a limitation; it's the property that makes the web easy to scale. Because the server remembers no one, *any* server can handle *any* request. You can run a hundred identical servers behind a distributor, and it doesn't matter which one a given request lands on — they're interchangeable, because none of them is holding anything the others lack.
+
+### A WebSocket Server Remembers You — Continuously
+
+A WebSocket inverts this completely. An open connection is, by definition, **the server remembering you** — holding your connection open, in its memory, for as long as you're connected. And it's not one client; it's *every* connected client at once. Each open WebSocket is a standing claim on the server's resources:
+
+- **Memory** — buffers and state for the connection, per client.
+- **A file descriptor** — the operating system's handle on the open connection; there's a finite supply of them per machine.
+- **Identity** — *this* connection belongs to *this* client on *this* server, and the server must keep track of which is which to route messages correctly.
+
+Multiply that by the number of connected clients and hold it continuously, for hours. An HTTP server's cost scales with requests *in flight right now*; a WebSocket server's cost scales with clients *currently connected*, whether they're actively sending or sitting idle. Ten thousand idle-but-connected clients are ten thousand live claims on the server, doing nothing and costing the whole time.
+
+```mermaid
+flowchart TD
+    subgraph HTTP["🟢 Stateless HTTP server"]
+        R["request arrives"] --> A["answer + forget"]
+        A --> N["holds nothing —<br/>any server serves any request"]
+    end
+    subgraph WS["🔴 Stateful WebSocket server"]
+        C["client connects"] --> H["hold: memory + fd + identity"]
+        H --> K["...and keep holding, per client,<br/>for the whole connection"]
+    end
+```
+
+### This Client Belongs to This Server
+
+The consequence that matters most: with HTTP, a client belongs to *no particular server* — the fleet is interchangeable. With a WebSocket, the connection is a live thing held in one specific server's memory, so **this client is now bound to this server** for the life of the connection. The connection *is* the binding. You cannot casually move it to another box, because the state — the open connection itself — lives on the one that accepted it.
+
+That single fact is where the difficulty comes from. Statelessness was what made the web's scaling, caching, load-balancing, and deploys easy, and a WebSocket trades it away. The next sections are the bill: §6 is everything that stops working because the server is now stateful, §7 is the upkeep a held-open connection needs, and §8 is how the "this client belongs to this server" binding fights against scaling.
+
+> 💡 **Key Insight**
+>
+> An HTTP server is **stateless** — it forgets you the instant it answers, which is precisely what lets any server handle any request and makes the web easy to scale. A WebSocket is the opposite: an open connection *is* the server **remembering you**, holding memory, a file descriptor, and your identity — for every connected client, continuously, idle or not. And it **binds that client to that one server** for the connection's life. That traded-away statelessness, not the two-way messaging, is the true cost of a WebSocket, and every hard thing in the rest of this document flows from it.
+
+### Quick Recap — The Connection Is State
+
+- An **HTTP server is stateless** — answers and forgets — which is exactly what makes any server able to handle any request, and the web easy to scale.
+- A **WebSocket is server-held state**: each open connection costs **memory, a file descriptor, and identity**, per client, held continuously — even idle clients cost.
+- Cost scales with **clients currently connected**, not requests in flight — a fundamentally different, heavier model.
+- The connection **binds a client to one specific server** for its life, and that lost statelessness (not the messaging) is the source of every difficulty ahead (§6–§8).
