@@ -477,3 +477,73 @@ The path is a strong default, not a law. Real features can have a legitimate rea
 - The path is a **filter, not a funnel to WebSockets**: it forces you to name the shape and justify any deviation, which is what keeps "real-time" from silently meaning "WebSocket."
 
 ---
+
+## 10. Putting It All Together — A Delivery-Tracking App
+
+A team is building a food-delivery app, and the whole product is described in one word: "real-time." The customer watches the courier approach on a map; the restaurant sees new orders the instant they're placed; customer and courier can message each other; the ETA updates live; and partner systems need to know when an order completes. Someone proposes "let's put it all on WebSockets — it's a real-time app." Instead, the team runs each surface through the decision path (§9). Watch five "real-time" surfaces resolve to *four different tools*, and only one of them a WebSocket.
+
+### Surface 1 — Live Courier Location on the Map
+
+The customer watches a dot move toward them. Walk the path: both ends clients (not backend), not media, and — the decisive question — **does the customer send anything back?** No. They watch. This is **one-way server push** (Pattern A), 1:many (one courier's location, potentially several people tracking that order). So the answer is **SSE**, not a WebSocket. The server pushes location updates over an ordinary HTTP stream; the customer's device listens. The team throttles the courier's GPS updates to a few per second (a §6-style discipline — no one needs pixel-perfect motion), and reconnection is largely handled by SSE itself. No held stateful WebSocket, no sticky routing, for the app's most visibly "real-time" feature.
+
+### Surface 2 — The Restaurant's Incoming-Orders Board
+
+A screen in the restaurant lights up as orders arrive. Again: does the restaurant *send* over this channel? No — it receives orders and acts on them through ordinary requests (tapping "accept"). **One-way push** again, so **SSE** again (or even polling — the board tolerates a second or two of delay). The reflex would have been a WebSocket "so the restaurant gets orders instantly"; the path shows a listener doesn't need one.
+
+### Surface 3 — Customer ↔ Courier Chat
+
+"Where should I leave it?" — "At the front desk." Now walk the path and it goes further: clients, not media, and **both sides send**, frequently, and latency matters (a delivery is in progress). This survives to step 5. Fan-out? **1:1** — one customer, one courier. So this is **Pattern B: a genuine WebSocket**, and the tractable kind. The team builds it with the shared hard parts from §7 — messages carry sequence numbers, the client catches up on reconnect, history loads as a snapshot when the chat opens. This is the *one* surface that earns the statefulness bill.
+
+### Surface 4 — Live ETA and Order Status
+
+"Preparing" → "Picked up" → "5 min away" → "Delivered." Does the customer send back? No — status flows one way, and it changes only a handful of times per order. **One-way, and occasional.** The path exits early: this is **polling or SSE**, and given how rarely it changes, a simple poll (or piggybacking on the location stream already open from Surface 1) is the honest answer. Definitely not a WebSocket.
+
+### Surface 5 — Partner / Merchant Completion Events
+
+When an order completes, an accounting system and the restaurant's own back-office need to know. Walk the path: **one end is a backend.** It exits at step 1 — this is **webhooks** (the next topic), not a WebSocket. The delivery platform calls the partner's endpoint when the order settles. Nothing is held open; the call happens only when there's news.
+
+```mermaid
+flowchart TD
+    APP["🍔 'Real-time delivery app'"] --> S1["📍 Courier location → one-way → SSE"]
+    APP --> S2["🧾 Restaurant order board → one-way → SSE/poll"]
+    APP --> S3["💬 Customer ↔ courier chat → two-way, 1:1 → WebSocket ✅"]
+    APP --> S4["⏱️ Live ETA/status → one-way, occasional → poll"]
+    APP --> S5["🏢 Partner completion events → backend → webhook"]
+```
+
+### The Punchline
+
+Five surfaces, all honestly "real-time," resolved to **SSE, SSE, WebSocket, polling, and webhooks** — four different tools, exactly one of them a WebSocket. Had the team followed the opening reflex and "put it all on WebSockets," they'd have opened a held-open stateful connection per customer for a *map they only watch*, per restaurant for a *board they only read*, and per order for a *status that changes five times* — paying Topic 07's entire statefulness bill five times over to use the return channel exactly once.
+
+> **We almost built five WebSocket features. Running each through two questions — who sends, and to how many — collapsed our "real-time app" into what it actually was: mostly one-way push, one genuine conversation, one occasional status, and one backend notification. The chat earned its WebSocket; nothing else did. The word "real-time" described the customer's experience across all five, but it was never the answer to how to build any of them. Naming the pattern was.**
+
+---
+
+## 11. Final Recap
+
+| Pattern | Looks like | Right transport | The hard part |
+|---|---|---|---|
+| **One-way push (§3)** | Dashboards, feeds, notifications, live location, tickers | **SSE** (not a WebSocket) | Resisting the WebSocket reflex for a listener |
+| **Two-way conversation (§4)** | Chat, support, small-group collaboration | **WebSocket** (Pattern B) | Genuinely earns statefulness; keep it tractable |
+| **Shared state across many (§5)** | Multiplayer, big docs, auctions, large rooms | **WebSocket + rooms + backplane** | Quadratic fan-out; room granularity |
+| **Presence (§6)** | Online/typing/who's-here/cursors | Rides on B or C | High-frequency N×N; ghosts on dead connections |
+| **Backend event (§8)** | A charge settled, a job finished | **Webhook** / queue | It's server-to-server, never a WebSocket |
+| **Peer media (§8)** | Video, voice, screen share | **WebRTC** | Wrong topology to route through your servers |
+
+Cutting across all of them, the shared hard parts (§7): **ordering**, **delivery** (ack + retry + dedup), **reconnection catch-up**, and **initial state sync** (snapshot-then-stream) — build once as a platform, not per feature.
+
+### The One Thing to Remember
+
+> **"Real-time" is not a transport decision — it's a word for a freshness requirement that hides several completely different communication patterns, and the pattern, not the label, decides the tool. Ask only two questions of any feature someone calls real-time: who sends (one-way or two-way?) and to how many (1:1, one-to-many, many-to-many?). The answers route it — one-way push to SSE, occasional updates to polling, backend events to webhooks, peer media to WebRTC, and only genuinely two-way, frequent, low-latency, client-facing communication to a WebSocket, small-fan-out or many-to-many-with-a-backplane. A WebSocket is the last stop on that path, not the first reflex, because it carries Topic 07's entire statefulness bill and most "real-time" features never need the return channel they'd be paying for. And when a feature does earn a WebSocket, its hard parts — ordering, delivery, catch-up, snapshot-then-stream, presence — are shared across every real-time feature, so build them once as a platform. Name the pattern, and both the transport and the difficulty stop being guesses.**
+
+---
+
+## What's Next
+
+> **Topic 09 — Webhooks**
+
+This document kept exiting the decision path early with the same phrase: *if one end is a backend, it's not a WebSocket — it's a webhook.* Server-to-server "real-time" — a payment settling, a job finishing, an order completing — kept turning out to be the inverse of a held-open connection: instead of the client holding a line to the server, the event source calls *your* endpoint when there's news, and nothing is held open in between.
+
+That inversion is the next topic. **Webhooks**: how a server tells another server "this happened" without either one polling or holding a connection — how you register an endpoint, what a delivery looks like, and the genuinely hard parts (retries, ordering, duplicates, and verifying the call really came from who it claims). You've learned when the *client* should hold a connection open; next you learn what happens when the roles invert and the server calls you.
+
+---
