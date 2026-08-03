@@ -140,3 +140,58 @@ Notice what the map does: it turns "is this real-time?" (unanswerable, everythin
 - Reading a feature onto the map — **not** reading its label — is what points you at the right transport and warns you where the pain will be.
 
 ---
+
+## 3. Pattern A — One-Way Server Push
+
+The first and by far the most common pattern: the server has something to say, the client needs to hear it promptly, and the client has nothing to send back over that channel. This is where most features that get called "real-time" actually live — and the crucial, counterintuitive point of this section is that **most of them don't need a WebSocket.**
+
+### What Lives Here
+
+Run the everyday "real-time" features through Question 1 (§2) and a striking number come back *one-way*:
+
+- A **live dashboard** — metrics, charts, counts updating as data arrives. The viewer watches; they don't type back into the stream.
+- **Notifications** — "your order shipped," "someone mentioned you." Pure server-to-client.
+- A **live feed or timeline** that grows as new items appear.
+- A **price ticker or live score** — numbers changing on their own.
+- A **progress indicator** for a long-running job — the server reports 10%, 40%, done.
+- **Live location** shown on a map — a courier's dot moving, delivered to everyone tracking it.
+
+Every one of these is the server pushing news to a listening client. The client's only "sends" are ordinary, occasional, separate requests (loading the page, clicking something) — not a continuous return stream. On the §2 map, they sit squarely in the one-way column.
+
+### Why a WebSocket Is Usually the Wrong Tool Here
+
+Topic 07 was emphatic about what a WebSocket costs: the connection is state the server holds for every client, which forfeits stateless scaling, free caching, the request-response error model, and simple load balancing. You pay that entire bill for one capability — *the client being able to talk back at any instant*. In a one-way feature, **the client never talks back.** So you'd be paying the full price of full-duplex to use exactly half of it. That's the definition of over-reach.
+
+There is a tool shaped exactly for this case: **server-sent events (SSE)** — a one-way, server-to-client stream that runs over ordinary HTTP and stays open so the server can push whenever it likes. Because it's still HTTP, it keeps much of what Topic 07 showed a WebSocket throws away: it's simpler to run, plays nicely with existing HTTP infrastructure, and reconnection is largely handled for you. It does one thing — server pushes to client — and that one thing is this entire pattern.
+
+```mermaid
+flowchart LR
+    subgraph WS["🔴 WebSocket for one-way push (over-reach)"]
+        A["Server ↔ Client"] -.->|"return channel<br/>you never use"| A
+    end
+    subgraph SSE["🟢 SSE — shaped for this pattern"]
+        S["Server"] -->|"push, push, push"| C["Client (listens)"]
+    end
+```
+
+The full head-to-head — SSE versus long polling versus WebSockets, with all the tradeoffs — is a topic of its own and isn't repeated here. The point for *this* document is narrower: **one-way push is a pattern with its own right tool, and that tool usually isn't a WebSocket.**
+
+### When One-Way Push *Does* Justify a WebSocket
+
+Rarely, but honestly, a one-way feature still ends up on a WebSocket — and it's worth knowing the legitimate reasons so you can tell them from rationalization:
+
+- **You already have a WebSocket open for something else.** If the same client already holds a WebSocket for a genuinely two-way feature, pushing a one-way stream down the *existing* connection can be simpler than standing up a second SSE channel beside it. The cost is already paid; reuse is fair.
+- **A constraint rules SSE out.** Some environments or intermediaries handle SSE poorly, or a binary payload fits WebSocket frames better than SSE's text-oriented stream. These are real, specific reasons — not "it's real-time, so WebSockets."
+
+The test is simple: if the *only* reason you're reaching for a WebSocket on a one-way feature is the word "real-time," stop — you want SSE. If there's a concrete, nameable reason, it can be legitimate.
+
+> ⚠️ **Most features called "real-time" are one-way server push, and reaching for a WebSocket for them is the single most common over-reach in this area.** You pay Topic 07's entire statefulness bill — lost caching, sticky routing, held connections per client — to buy a return channel the feature never uses. One-way push has a tool built for exactly its shape: server-sent events, which pushes over ordinary HTTP and keeps most of what a WebSocket discards. Reach past it to a WebSocket only for a concrete, nameable reason — an existing connection to reuse, or a real constraint — never for the word alone.
+
+### Quick Recap — One-Way Server Push
+
+- The most common "real-time" pattern: the **server pushes**, the client **listens** and sends nothing back over the channel — dashboards, notifications, feeds, tickers, progress, live location.
+- A WebSocket here is **over-reach** — you pay the full statefulness bill (Topic 07) for a two-way capability the feature never uses.
+- **Server-sent events (SSE)** is built for this exact shape: one-way server-to-client push over ordinary HTTP, keeping much of what a WebSocket throws away.
+- A one-way feature justifies a WebSocket only for a **concrete reason** (an already-open connection to reuse, or a real constraint), never for the label "real-time" alone.
+
+---
