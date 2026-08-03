@@ -195,3 +195,50 @@ The test is simple: if the *only* reason you're reaching for a WebSocket on a on
 - A one-way feature justifies a WebSocket only for a **concrete reason** (an already-open connection to reuse, or a real constraint), never for the label "real-time" alone.
 
 ---
+
+## 4. Pattern B — Two-Way Conversation
+
+Now the pattern a WebSocket was actually built for: both sides genuinely send, continuously, and the exchange is a back-and-forth rather than a broadcast. Here the return channel you'd waste in §3 is the whole point, and the statefulness cost buys something real.
+
+### What Lives Here
+
+The defining trait is that the client is a **participant**, not a listener — it originates messages as freely as the server does:
+
+- **Chat between people** — a direct message thread, a support conversation between a user and an agent. Each side types when they have something to say; neither waits its turn.
+- **Live collaboration between a few** — two or three people editing a document, where each person's edits flow out and everyone else's flow in, simultaneously.
+- **Interactive control** — an operator adjusting a live system and seeing its response stream back in the same session; a remote-control-style surface where commands go up and telemetry comes down at once.
+
+What unites them is that both directions carry *frequent, independent* traffic. Not "the client occasionally acknowledges" — genuinely both parties initiating, often, at unpredictable moments. That is full-duplex (Topic 07's term for both ends sending at once without taking turns), and it's exactly what nothing lighter than a WebSocket provides.
+
+### Why This Genuinely Needs a WebSocket
+
+Recall Topic 07's discipline: a WebSocket is justified when **both sides send frequently *and* latency genuinely matters** — both conditions, together. Pattern B is the case where both hold by construction. Trying to serve it without a persistent bidirectional connection forces you into ugly workarounds: the client would have to *poll* to discover the other side's messages (laggy and wasteful, as §1 noted for any push), while separately POSTing its own — two clumsy half-channels stapled together to fake the one two-way channel a WebSocket gives natively. The moment a feature is truly conversational, the WebSocket stops being over-reach and becomes the honest, simplest fit.
+
+```mermaid
+sequenceDiagram
+    participant A as 👤 Client A
+    participant S as 🖥️ Server
+    participant B as 👤 Client B
+    A->>S: message (any time)
+    S-->>B: deliver
+    B->>S: reply (any time, unprompted)
+    S-->>A: deliver
+    Note over A,B: both participants originate freely — full-duplex earns its cost
+```
+
+### The Fan-Out Is Still Small — and That Matters
+
+Pattern B is two-way, but on the §2 map it sits at *low* fan-out: 1:1, or a small group. A support chat is one user and one agent. A direct message is two people. Even a small collaborative session is a handful. This keeps it the *manageable* WebSocket case: each message goes to one or a few recipients, so the delivery problem stays small even though the connection is stateful. The server holds a connection per participant (Topic 07's cost, unavoidable here), but it isn't yet wrestling with fanning one message out to thousands — that's Pattern C, and it's a different order of difficulty. Recognizing that a feature is two-way *but low-fan-out* tells you it's a real WebSocket case that will nonetheless stay tractable.
+
+> 💡 **Key Insight**
+>
+> Two-way conversation is the pattern a WebSocket exists for: both parties send frequently and independently, so the full-duplex return channel you'd waste on one-way push (§3) is the entire point, and Topic 07's two conditions — both sides send *and* latency matters — hold by construction. Faking it without a persistent bidirectional connection means poll-for-inbound plus POST-for-outbound, two half-channels stapled into a bad imitation of one. And because the fan-out stays low (1:1 or a small group), it's the *tractable* WebSocket case — genuinely stateful, but not yet fighting the many-recipient delivery problem of Pattern C.
+
+### Quick Recap — Two-Way Conversation
+
+- The pattern a WebSocket is **built for**: both sides send frequently and independently — chat between people, support, small-group collaboration, interactive control.
+- Here the return channel is the **whole point**, so the statefulness cost is justified — Topic 07's two conditions (both send *and* latency matters) both hold.
+- Faking it without a persistent bidirectional connection means **polling for inbound plus POSTing outbound** — two half-channels imitating the one a WebSocket gives natively.
+- Fan-out stays **low** (1:1 or small group), which keeps this the **tractable** WebSocket case — stateful, but not yet the many-recipient delivery problem of Pattern C.
+
+---
