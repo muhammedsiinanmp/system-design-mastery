@@ -40,3 +40,52 @@ Here's the trap it disarms. The word "real-time" acts like a switch: someone say
 11. [Final Recap](#11-final-recap)
 
 ---
+
+## 1. What "Real-Time" Actually Means
+
+Before you can decide which features need a WebSocket, you have to notice that "real-time" isn't one thing. It's a word we paste onto a dozen unrelated behaviours, and the pasting is exactly what causes the wrong tool to get picked.
+
+### One Word, Four Different Features
+
+Consider four features a product might describe, all with the same adjective:
+
+- A **live dashboard** whose numbers update as data arrives.
+- A **chat** where two people type back and forth.
+- A **multiplayer game** where a dozen players' actions affect a shared world.
+- A **push notification** that pops up the instant something happens.
+
+They're all "real-time," and they feel similar — things happen *now*, without the user hitting refresh. But look at how information actually moves in each and they could hardly be more different. The dashboard and the notification are the *server* telling the client something; the client has nothing to say back. The chat is two clients genuinely talking to each other. The game is many clients all affecting one shared thing that all of them see. Same adjective, three completely different shapes of communication — and shape, not adjective, is what determines how you build it.
+
+### "Real-Time" Is About *Freshness*, Not *Transport*
+
+Here's the confusion the word creates. "Real-time" is a statement about a **requirement**: the user should learn about a change close to when it happens, not minutes later. That's a property of the *experience*. It says nothing about the *mechanism* that delivers it. A dashboard that refreshes every two seconds feels real-time to a human and might be served perfectly by the client simply asking again on a timer. A stock ticker that must reflect a price within milliseconds is also real-time, but with a latency budget a thousand times tighter. Both are "real-time"; they need utterly different machinery.
+
+So "is this real-time?" is the wrong first question — almost everything a user-facing product does today is real-time in the loose sense. The useful questions are about the *shape and urgency* of the information flow, and those are what the next section makes precise.
+
+```mermaid
+flowchart TD
+    RT["🏷️ 'It's real-time'"] --> Q{"But what's the<br/>actual shape?"}
+    Q --> A["📊 Server tells client<br/>(dashboard, notification)"]
+    Q --> B["💬 Two clients talk<br/>(chat)"]
+    Q --> C["🎮 Many share one world<br/>(multiplayer)"]
+    A --> W["→ different transport<br/>and different hard parts"]
+    B --> W
+    C --> W
+```
+
+### Use Case Is Not Transport
+
+The mistake this whole document exists to prevent is collapsing the *use case* ("we're building chat") into a *transport* decision ("so we need WebSockets") in a single reflex, skipping the step in between. That step is identifying the communication pattern. A "chat" between a user and an automated assistant that replies once per message is barely two-way and may not need a persistent connection at all; a "dashboard" that lets an operator click to control a live system *is* two-way and might. The label pointed you at the wrong answer both times. Only the pattern — who sends, to whom, how often, how urgently — points you at the right one.
+
+> 💡 **Key Insight**
+>
+> "Real-time" is a requirement about **freshness** — the user should learn of a change close to when it happens — and it says nothing about the **transport** that delivers it. The word is pasted onto features with completely different communication shapes: server-tells-client, client-talks-to-client, many-share-one-world. Because the shapes differ, the right mechanism differs, so "is it real-time?" is the wrong first question — nearly everything is, loosely. The question that pays is *what shape is the information flow*, and answering it, not the label, is what selects the tool.
+
+### Quick Recap — What "Real-Time" Actually Means
+
+- **"Real-time" is one word for many unlike features** — a dashboard, a chat, a game, and a notification are all called real-time but move information in completely different shapes.
+- It describes a **freshness requirement** (learn of a change close to when it happens), not a **transport** — it doesn't tell you *how* to deliver it.
+- Because nearly every modern feature is real-time in the loose sense, **"is it real-time?" is the wrong first question**; the useful question is the *shape and urgency* of the flow.
+- The error to avoid is jumping from **use case straight to transport** ("chat, so WebSockets"), skipping the step — identifying the pattern — that actually decides the tool.
+
+---
