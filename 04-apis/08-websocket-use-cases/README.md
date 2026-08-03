@@ -387,3 +387,43 @@ Read the four together and the lesson is structural: ordering, delivery, catch-u
 - **Initial state sync:** a joiner needs a **snapshot** of current state before the live delta stream means anything — snapshot-then-stream is universal, and all four are shared infrastructure, not per-feature work.
 
 ---
+
+## 8. When Real-Time Isn't a WebSocket
+
+Section 3 showed one-way push usually wants SSE rather than a WebSocket. This section widens that into the full boundary: "real-time" points at *several* tools, and a WebSocket is only one of them. Knowing the alternatives — and which shape each fits — is what turns "it's real-time, so WebSockets" from a reflex into a decision.
+
+### The Alternatives and the Shapes They Fit
+
+Four tools sit around the WebSocket, each the right answer for a shape a WebSocket handles poorly or overkills:
+
+| The shape | The right tool | Why not a WebSocket |
+|---|---|---|
+| **One-way server → client push** (dashboards, feeds, notifications, live location) | **Server-sent events (SSE)** | Over-reach — you'd pay full statefulness for a return channel you never use (§3) |
+| **Occasional updates, small delay tolerable** (status that changes every few minutes) | **Polling** on a sensible interval | A held-open stateful connection for data that barely changes is pure cost between updates |
+| **Server-to-server event notification** (a payment settled, code was pushed, a job finished) | **Webhooks** (or a message queue) | The recipient is a *backend*, not a browser — it has its own address to be called at; no persistent connection needed |
+| **Peer-to-peer real-time media** (video calls, voice, screen share) | **WebRTC** | Routing high-bandwidth media through your servers over WebSockets is the wrong topology — peers should connect more directly |
+
+Each of these is its own topic; they're named here so you can *recognize the shape and route past a WebSocket*, not to be taught in full.
+
+### The Two That Get Confused With WebSockets Most
+
+Two of these deserve a closer look because they're the ones teams most often mislabel as WebSocket cases.
+
+**Server-to-server "real-time" is webhooks, not WebSockets.** When one backend needs to know the instant something happens in another — a payment provider telling your server a charge settled — it *feels* real-time, and someone will suggest a WebSocket. But the receiver is a server with its own reachable address, so the natural mechanism is the reverse of a WebSocket: the event source makes a request *to the receiver's endpoint* when the event happens — a **webhook**. No connection is held open at all; the call happens only when there's news. Webhooks are the very next topic, so this document only draws the boundary: **if both ends are backends, "real-time" almost never means a WebSocket.**
+
+**Real-time media is WebRTC, not WebSockets.** Live video and audio are as real-time as it gets, so WebSockets seem like the obvious carrier. But media is high-bandwidth and latency-critical, and forcing every participant's stream through your servers is a topology that neither scales nor performs. **WebRTC** exists for exactly this: it lets peers establish more direct connections for the media itself. (Interestingly, WebRTC often *uses* a WebSocket or similar channel for the initial coordination — but the media doesn't flow over it.) The shape "peers exchanging live media" is a different problem with its own tool.
+
+### The Discipline
+
+Pull §3 and this section together into one rule, extending Topic 07's "don't open a connection you didn't need." A WebSocket is the right tool for a genuinely *narrow* target: **two-way, frequent, low-latency communication between clients through your server** (Patterns B and C). Step outside that target in any direction and something else fits better — one-way is SSE, occasional is polling, server-to-server is webhooks, peer media is WebRTC. The word "real-time" spans all of these; the WebSocket owns only the middle of it.
+
+> ⚠️ **"Real-time" is not a synonym for "WebSocket" — it's an umbrella over several tools, and the WebSocket owns only the narrow middle: two-way, frequent, low-latency messaging between clients through your server.** One-way push is **SSE**; occasional updates are **polling**; server-to-server events are **webhooks**; peer-to-peer media is **WebRTC**. Each is the right answer for a shape a WebSocket overkills or handles badly. Before you open a stateful connection, name the shape and check it's actually in the WebSocket's target — most "real-time" features are not.
+
+### Quick Recap — When Real-Time Isn't a WebSocket
+
+- "Real-time" spans **several tools**; a WebSocket owns only **two-way, frequent, low-latency messaging between clients through your server**.
+- **One-way push → SSE**; **occasional updates → polling** — both avoid paying for a stateful connection a listener or a slow-changing feed never needs.
+- **Server-to-server events → webhooks** (the receiver is a backend with its own address; the source calls it, no held connection) — the next topic.
+- **Peer-to-peer media → WebRTC** (routing high-bandwidth media through your servers is the wrong topology) — a WebSocket may only coordinate the setup, not carry the media.
+
+---
