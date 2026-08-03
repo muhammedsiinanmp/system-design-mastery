@@ -191,7 +191,7 @@ The test is simple: if the *only* reason you're reaching for a WebSocket on a on
 
 - The most common "real-time" pattern: the **server pushes**, the client **listens** and sends nothing back over the channel — dashboards, notifications, feeds, tickers, progress, live location.
 - A WebSocket here is **over-reach** — you pay the full statefulness bill (Topic 07) for a two-way capability the feature never uses.
-- **Server-sent events (SSE)** is built for this exact shape: one-way server-to-client push over ordinary HTTP, keeping much of what a WebSocket throws away.
+- **Server-sent events (SSE)** is built for this exact shape: one-way, server-to-client streaming that rides on plain HTTP and so retains most of what Topic 07 showed a WebSocket surrenders.
 - A one-way feature justifies a WebSocket only for a **concrete reason** (an already-open connection to reuse, or a real constraint), never for the label "real-time" alone.
 
 ---
@@ -212,7 +212,7 @@ What unites them is that both directions carry *frequent, independent* traffic. 
 
 ### Why This Genuinely Needs a WebSocket
 
-Recall Topic 07's discipline: a WebSocket is justified when **both sides send frequently *and* latency genuinely matters** — both conditions, together. Pattern B is the case where both hold by construction. Trying to serve it without a persistent bidirectional connection forces you into ugly workarounds: the client would have to *poll* to discover the other side's messages (laggy and wasteful, as §1 noted for any push), while separately POSTing its own — two clumsy half-channels stapled together to fake the one two-way channel a WebSocket gives natively. The moment a feature is truly conversational, the WebSocket stops being over-reach and becomes the honest, simplest fit.
+Recall Topic 07's discipline: a WebSocket earns its place only when two things are true at once — traffic runs frequently in *both* directions, and the delay budget is genuinely tight. Pattern B is the case where both hold by construction. Trying to serve it without a persistent bidirectional connection forces you into ugly workarounds: the client would have to *poll* to discover the other side's messages (laggy and wasteful, as §1 noted for any push), while separately POSTing its own — two clumsy half-channels stapled together to fake the one two-way channel a WebSocket gives natively. The moment a feature is truly conversational, the WebSocket stops being over-reach and becomes the honest, simplest fit.
 
 ```mermaid
 sequenceDiagram
@@ -356,7 +356,7 @@ Topic 07 made this stark: a WebSocket has no per-message receipt. You send a fra
 
 ### Reconnection Catch-Up — What Did I Miss?
 
-Topic 07 established that a connection *will* drop and the client must reconnect. This section adds the part that's specific to use cases: **reconnecting isn't enough — the client has to recover what it missed while it was gone.** A chat client that reconnects must fetch the messages sent during the gap. A collaborative editor must reconcile edits it never received. A dashboard must jump to current values, not resume from stale ones. This usually means every message carries a position (a sequence number or timestamp), the client remembers the last one it saw, and on reconnect it asks "give me everything after *this*." Without catch-up, a two-second network blip leaves the user permanently missing whatever happened during it.
+Topic 07 established that a held-open connection eventually fails and the client has to re-establish it. This section adds the part that's specific to use cases: **reconnecting isn't enough — the client has to recover what it missed while it was gone.** A chat client that reconnects must fetch the messages sent during the gap. A collaborative editor must reconcile edits it never received. A dashboard must jump to current values, not resume from stale ones. This usually means every message carries a position (a sequence number or timestamp), the client remembers the last one it saw, and on reconnect it asks "give me everything after *this*." Without catch-up, a two-second network blip leaves the user permanently missing whatever happened during it.
 
 ### Initial State Sync — Joining Mid-Stream
 
@@ -415,7 +415,7 @@ Two of these deserve a closer look because they're the ones teams most often mis
 
 ### The Discipline
 
-Pull §3 and this section together into one rule, extending Topic 07's "don't open a connection you didn't need." A WebSocket is the right tool for a genuinely *narrow* target: **two-way, frequent, low-latency communication between clients through your server** (Patterns B and C). Step outside that target in any direction and something else fits better — one-way is SSE, occasional is polling, server-to-server is webhooks, peer media is WebRTC. The word "real-time" spans all of these; the WebSocket owns only the middle of it.
+Pull §3 and this section together into one rule, extending Topic 07's warning against holding open any connection a feature didn't actually require. A WebSocket is the right tool for a genuinely *narrow* target: **two-way, frequent, low-latency communication between clients through your server** (Patterns B and C). Step outside that target in any direction and something else fits better — one-way is SSE, occasional is polling, server-to-server is webhooks, peer media is WebRTC. The word "real-time" spans all of these; the WebSocket owns only the middle of it.
 
 > ⚠️ **"Real-time" is not a synonym for "WebSocket" — it's an umbrella over several tools, and the WebSocket owns only the narrow middle: two-way, frequent, low-latency messaging between clients through your server.** One-way push is **SSE**; occasional updates are **polling**; server-to-server events are **webhooks**; peer-to-peer media is **WebRTC**. Each is the right answer for a shape a WebSocket overkills or handles badly. Before you open a stateful connection, name the shape and check it's actually in the WebSocket's target — most "real-time" features are not.
 
@@ -439,7 +439,7 @@ Ask these in order and stop at the first clear answer:
 1. **Are both ends browsers/clients, or is one a backend?** If the "real-time" need is one backend learning of an event in another, you're done — that's a **webhook** (or a queue), not a WebSocket (§8). If it's clients (users), continue.
 2. **Is it live media (audio/video)?** If so, that's **WebRTC** (§8); a WebSocket at most coordinates the setup. Otherwise continue.
 3. **Does only the server send, or do both sides?** (Question 1, §2.) If only the server pushes → **one-way push**, which wants **SSE** (§3) — unless a concrete reason (an existing connection, a real constraint) says otherwise. If both sides genuinely send, continue.
-4. **How urgent, and how often?** If updates are occasional and a few seconds' delay is fine, **polling** may still be the simplest honest answer (§8). If it's frequent and latency genuinely matters, you have a real WebSocket case — continue to size it.
+4. **How urgent, and how often?** If updates are occasional and a few seconds' delay is fine, **polling** may still be the simplest honest answer (§8). If the traffic is frequent and the delay budget is genuinely tight, you have a real WebSocket case — continue to size it.
 5. **What's the fan-out?** (Question 2, §2.) **1:1 or small** → Pattern B, a tractable WebSocket (§4). **Many-to-many** → Pattern C, a WebSocket *plus* rooms and a backplane, and a fan-out budget (§5). Either way, if presence is involved, cost it as first-class (§6), and plan the shared hard parts — ordering, delivery, catch-up, snapshot-then-stream — as platform, not per-feature (§7).
 
 ```mermaid
