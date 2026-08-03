@@ -291,3 +291,53 @@ The trap in Pattern C is underestimating deliveries. A room of *N* people where 
 - The dominant cost is **fan-out**, which grows quadratically in a fully active room (N senders × N recipients) — so room granularity must be designed deliberately, not left to grow.
 
 ---
+
+## 6. Presence — The Sub-Pattern Hiding in All of Them
+
+There's one feature that isn't a pattern of its own so much as a passenger riding inside the others, and it deserves its own section because it's the thing that most often melts first. It's **presence** — the little signals that tell participants about each other's *status*: who's online, who's typing, who's in the room, where their cursor is.
+
+### It's Everywhere Once You Look
+
+Presence shows up wherever people share a space:
+
+- The **green dot** next to a contact — online or away.
+- The **"Alex is typing…"** indicator in a chat.
+- The list of **who's currently in** a document, a call, or a game lobby.
+- The **live cursors** of other editors moving around a shared document.
+
+None of these is the *main* feature — nobody builds an app to show typing indicators. They ride along inside chat (Pattern B) and collaboration and multiplayer (Pattern C) as ambient awareness. And precisely because they feel like garnish, they get added late and casually — which is how they become the thing that falls over.
+
+### Why It's Deceptively Expensive
+
+Presence looks trivial and behaves brutally, for two reasons.
+
+First, it's **high-frequency and many-to-many by nature.** A typing indicator can fire on every few keystrokes; a live cursor updates continuously as the mouse moves. And everyone in the space needs to see everyone else's status — which is the same quadratic fan-out as Pattern C, except the messages are constant rather than occasional. A room of *N* people each broadcasting cursor movements to the other *N* is an *N×N* storm of tiny updates, flowing the entire time the room is open, not just when someone deliberately acts.
+
+Second, it's **ephemeral state that still has to be maintained.** Unlike a chat message (send once, done), presence is a *current condition* the server must track and keep correct: who is online *right now*. That means it's entangled with the connection lifecycle Topic 07 detailed — when a connection drops, that user's presence must flip to offline, which depends on the heartbeats and dead-connection detection from Topic 07 actually working. A silently-dead connection shows a ghost: a user who "looks online" but left ten minutes ago.
+
+```mermaid
+flowchart TD
+    subgraph SMALL["🟢 3 people: 6 status flows"]
+        S1["manageable"]
+    end
+    subgraph BIG["🔴 1,000 people: ~1,000,000 status flows"]
+        B1["cursors + typing,<br/>continuously — melts first"]
+    end
+```
+
+### Taming It
+
+Because presence is the quadratic-fan-out problem at high frequency, it's usually the first place a real-time feature needs deliberate thinning. The common moves — named here, not detailed — are to **throttle** updates (send cursor position a few times a second, not on every pixel), **batch** many small status changes into one message, and **scope** presence to what's actually visible (you don't need every cursor in a 1,000-person document, only those near you). The lesson for classification: when a feature includes presence, budget for it as a first-class cost, not a free add-on — it often dwarfs the main feature's traffic.
+
+> 💡 **Key Insight**
+>
+> Presence — online status, typing indicators, live cursors, who's-here lists — is never the headline feature, so it gets added casually, and then it melts first. Two reasons: it's **high-frequency many-to-many** (everyone's constant status flowing to everyone else is the same quadratic fan-out as Pattern C, but continuous), and it's **ephemeral state tied to the connection lifecycle** — keeping "who's online" correct depends on Topic 07's dead-connection detection, or you show ghosts. Treat presence as a first-class cost to be throttled, batched, and scoped — not a garnish.
+
+### Quick Recap — Presence
+
+- **Presence** — online status, typing, who's-here, live cursors — is a sub-pattern that rides inside chat (§4) and collaboration/multiplayer (§5), never the headline feature.
+- It's **deceptively expensive**: high-frequency and many-to-many, so everyone's constant status to everyone else is the same **quadratic fan-out** as Pattern C, but flowing continuously.
+- It's **ephemeral state tied to the connection lifecycle** — keeping "who's online" honest depends on Topic 07's heartbeats and dead-connection detection, or you show ghosts.
+- Tame it by **throttling, batching, and scoping** updates, and budget for it as a **first-class cost** — it often dwarfs the main feature's traffic.
+
+---
