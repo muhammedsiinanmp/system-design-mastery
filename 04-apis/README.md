@@ -41,7 +41,7 @@ fail — so the two phases are read together.
 | 5 | [REST vs GraphQL](05-rest-vs-graphql/README.md) | One tradeoff, not a rivalry — who should decide the shape of a response, and which side should you default to? *(standalone — assumes no prior reading)* |
 | 6 | [GraphQL](06-graphql/README.md) | What actually happens when the server turns a query into data — and why every hard part follows from it being a graph? *(standalone — assumes no prior reading)* |
 | 7 | [WebSockets](07-websockets/README.md) | The web is request-response, so how does a server *push* — and why is the connection that lets it so much costlier to run than an ordinary API? *(standalone — assumes no prior reading)* |
-| 8 | WebSocket Use Cases *(coming)* | Where persistent bidirectional channels earn their keep — and where they don't |
+| 8 | [WebSocket Use Cases](08-websocket-use-cases/README.md) | "Real-time" hides several different patterns — so how do you tell which features genuinely need a WebSocket, which want something lighter, and what will actually be hard? *(builds on Topic 07)* |
 | 9 | Webhooks *(coming)* | Inverting the call so the server tells you, instead of you asking |
 | 10 | gRPC *(coming)* | Contract-first, binary, and built for service-to-service speed |
 | 11 | API Gateways *(coming)* | The one front door that owns auth, routing, limits, and aggregation |
