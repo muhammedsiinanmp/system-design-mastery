@@ -89,3 +89,54 @@ The mistake this whole document exists to prevent is collapsing the *use case* (
 - The error to avoid is jumping from **use case straight to transport** ("chat, so WebSockets"), skipping the step — identifying the pattern — that actually decides the tool.
 
 ---
+
+## 2. The Two Questions That Classify Any Feature
+
+If the shape of the flow is what matters, you need a reliable way to find it. It turns out two questions are enough to place almost any real-time feature, and once placed, its transport and its hard parts are largely determined. This section is the tool the rest of the document uses.
+
+### Question 1 — Which Direction Does Information Flow?
+
+The first and most decisive question: **does only the server send, or do both sides send?**
+
+- **One-way (server → client).** The server has news; the client receives it and does not send anything back over the same channel (beyond the acknowledgements the transport handles for you). A dashboard, a notification, a live feed, a progress bar — the client is a *listener*. It might occasionally make an ordinary separate request, but the real-time flow is one-directional.
+- **Two-way (both send).** Both ends originate messages, independently and continuously, over the same connection. A chat, a collaborative editor, a game — the client is a *participant*, not just a listener.
+
+This one question does most of the work, because two-way is precisely the capability a WebSocket exists to provide and nothing lighter does (Topic 07 called this full-duplex, and named it the whole reason WebSockets exist). If the honest answer is "only the server sends," you are very likely *not* looking at a WebSocket, no matter what the feature is called — a point §3 and §8 develop.
+
+### Question 2 — How Many Recipients Does a Message Reach?
+
+The second question shapes the *difficulty*: **when a message is sent, how many others need to see it?** This is called **fan-out** — the number of recipients a single message must be delivered to.
+
+- **1:1** — a message goes to exactly one other party. A direct message; a support chat between one user and one agent.
+- **One-to-many (broadcast)** — one sender, many receivers. A live score pushed to everyone watching a match; a courier's location shown to everyone tracking that order.
+- **Many-to-many** — many senders, many receivers, all sharing one logical space. Every player in a game sends actions and receives everyone else's; every editor in a shared document does the same.
+
+Fan-out barely affects a one-way 1:1 feature but dominates a many-to-many one: the number of message *deliveries* grows with the size of the group, not the number of *sends*, and that is where the operational pain (and Topic 07's backplane) lives.
+
+### The Two Questions Form a Map
+
+Put the two questions on two axes and the real-time landscape organizes itself. Direction chooses the *transport family*; fan-out chooses *how hard the delivery is*. The named patterns in §3–§5 are just the populated cells of this map.
+
+```mermaid
+flowchart TD
+    F["🧭 Any real-time feature"] --> D{"Q1: Direction?"}
+    D -->|"one-way<br/>(server pushes)"| ONE["📊 Pattern A — Server Push<br/>usually NOT a WebSocket (§3)"]
+    D -->|"two-way<br/>(both send)"| TWO{"Q2: Fan-out?"}
+    TWO -->|"1:1 / small"| CONV["💬 Pattern B — Conversation<br/>a genuine WebSocket (§4)"]
+    TWO -->|"many-to-many"| SHARED["🎮 Pattern C — Shared State<br/>WebSocket + backplane (§5)"]
+```
+
+Notice what the map does: it turns "is this real-time?" (unanswerable, everything is) into two concrete questions with concrete answers, and those answers point at a pattern. The rest of the document walks the three patterns in turn, then the sub-pattern (presence) that rides inside them, then the hard parts they share.
+
+> 💡 **Key Insight**
+>
+> Two questions classify almost any real-time feature. **Direction** (one-way server push vs two-way) is the decisive one — two-way is the capability only a WebSocket provides, so a one-way answer usually means you don't need one. **Fan-out** (1:1, one-to-many, many-to-many) sets the *difficulty*, because deliveries grow with group size, not with sends. Together they form a map whose cells are the named patterns, and reading a feature onto the map — rather than reading its label — is what selects both the transport and the hard part.
+
+### Quick Recap — The Two Questions
+
+- **Question 1 (direction):** does only the server send, or do both sides? Two-way is exactly what a WebSocket provides and nothing lighter does — so a one-way answer usually means *not* a WebSocket.
+- **Question 2 (fan-out):** how many recipients must one message reach — 1:1, one-to-many, or many-to-many? This sets the *difficulty*, since deliveries scale with group size.
+- The two axes form a **map** whose populated cells are the three patterns: one-way push (§3), two-way conversation (§4), and many-to-many shared state (§5).
+- Reading a feature onto the map — **not** reading its label — is what points you at the right transport and warns you where the pain will be.
+
+---
