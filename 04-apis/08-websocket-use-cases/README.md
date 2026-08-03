@@ -427,3 +427,53 @@ Pull §3 and this section together into one rule, extending Topic 07's "don't op
 - **Peer-to-peer media → WebRTC** (routing high-bandwidth media through your servers is the wrong topology) — a WebSocket may only coordinate the setup, not carry the media.
 
 ---
+
+## 9. A Practical Way to Choose
+
+Everything so far becomes useful only if you can run it on a real feature in a few minutes. This section compresses the whole document into a decision path — the two questions of §2, plus the boundaries of §8 — that you can walk end to end for any feature someone calls "real-time."
+
+### The Decision Path
+
+Ask these in order and stop at the first clear answer:
+
+1. **Are both ends browsers/clients, or is one a backend?** If the "real-time" need is one backend learning of an event in another, you're done — that's a **webhook** (or a queue), not a WebSocket (§8). If it's clients (users), continue.
+2. **Is it live media (audio/video)?** If so, that's **WebRTC** (§8); a WebSocket at most coordinates the setup. Otherwise continue.
+3. **Does only the server send, or do both sides?** (Question 1, §2.) If only the server pushes → **one-way push**, which wants **SSE** (§3) — unless a concrete reason (an existing connection, a real constraint) says otherwise. If both sides genuinely send, continue.
+4. **How urgent, and how often?** If updates are occasional and a few seconds' delay is fine, **polling** may still be the simplest honest answer (§8). If it's frequent and latency genuinely matters, you have a real WebSocket case — continue to size it.
+5. **What's the fan-out?** (Question 2, §2.) **1:1 or small** → Pattern B, a tractable WebSocket (§4). **Many-to-many** → Pattern C, a WebSocket *plus* rooms and a backplane, and a fan-out budget (§5). Either way, if presence is involved, cost it as first-class (§6), and plan the shared hard parts — ordering, delivery, catch-up, snapshot-then-stream — as platform, not per-feature (§7).
+
+```mermaid
+flowchart TD
+    START["🏷️ 'It's real-time'"] --> BE{"One end a<br/>backend?"}
+    BE -->|"yes"| WH["📩 Webhook / queue"]
+    BE -->|"no"| MED{"Live media?"}
+    MED -->|"yes"| RTC["🎥 WebRTC"]
+    MED -->|"no"| DIR{"Both sides<br/>send?"}
+    DIR -->|"only server"| SSE["📡 SSE (one-way push)"]
+    DIR -->|"both"| FREQ{"Frequent +<br/>latency critical?"}
+    FREQ -->|"no"| POLL["🔁 Polling"]
+    FREQ -->|"yes"| FAN{"Fan-out?"}
+    FAN -->|"1:1 / small"| WSB["💬 WebSocket (Pattern B)"]
+    FAN -->|"many-to-many"| WSC["🎮 WebSocket + rooms + backplane (Pattern C)"]
+```
+
+### The Path Is a Filter, Not a Funnel to WebSockets
+
+Notice the shape of the path: it's designed so a feature has to *survive several exits* before it reaches a WebSocket. Backend-to-backend leaves at step 1, media at step 2, one-way at step 3, occasional at step 4 — and only a genuinely two-way, frequent, low-latency, client-facing feature makes it all the way to the WebSocket answers at step 5. That ordering is deliberate: it encodes the document's whole thesis, that a WebSocket is the *last* stop, reached only by features that truly need it, not the first thing you reach for when you hear "real-time."
+
+### Judgment Still Matters
+
+The path is a strong default, not a law. Real features can have a legitimate reason to deviate — the §3 case of reusing an already-open connection for a one-way stream is the clearest example, where a feature that "should" be SSE rides an existing WebSocket because the connection is already paid for. The value of walking the path isn't that it's always right; it's that it forces you to *name the shape* and justify any deviation, which is exactly the discipline that stops "real-time" from silently becoming "WebSocket."
+
+> 💡 **Key Insight**
+>
+> A five-step path classifies any "real-time" feature: backend-to-backend → **webhook**; live media → **WebRTC**; one-way → **SSE**; occasional → **polling**; and only a genuinely two-way, frequent, low-latency, client-facing feature reaches a WebSocket — Pattern B if fan-out is small, Pattern C (rooms + backplane) if many-to-many. The path is a **filter**, ordered so a feature must survive several exits before it earns a WebSocket, encoding the thesis that a WebSocket is the last stop, not the first reflex. Deviations are allowed but must be *named and justified*, not assumed.
+
+### Quick Recap — A Practical Way to Choose
+
+- Walk a **five-step path** in order, stopping at the first clear answer: backend? → media? → one-way? → occasional? → fan-out?
+- The early exits route away from WebSockets — **webhook**, **WebRTC**, **SSE**, **polling** — so only two-way, frequent, low-latency, client-facing features reach the WebSocket answers.
+- At the end, **fan-out** splits the WebSocket cases: **1:1/small → Pattern B**; **many-to-many → Pattern C** (rooms + backplane + fan-out budget), plus presence and shared hard parts.
+- The path is a **filter, not a funnel to WebSockets**: it forces you to name the shape and justify any deviation, which is what keeps "real-time" from silently meaning "WebSocket."
+
+---
