@@ -341,3 +341,49 @@ Because presence is the quadratic-fan-out problem at high frequency, it's usuall
 - Tame it by **throttling, batching, and scoping** updates, and budget for it as a **first-class cost** — it often dwarfs the main feature's traffic.
 
 ---
+
+## 7. The Hard Parts Are Shared, Not Per-Feature
+
+Here is the real payoff of classifying by pattern rather than by label. Once you see that chat, collaboration, and multiplayer are all the same few patterns underneath, you also see that their *hard parts are the same* — the difficult problems recur across features rather than being invented fresh for each. Build them once, as infrastructure, and every real-time feature you ship inherits the solution. Treat each feature as a snowflake and you'll solve the same four problems four times, badly.
+
+### Ordering — Messages Can Arrive Out of Sequence
+
+Over a single connection, frames arrive in the order sent. But real features involve *many* connections, servers, and a backplane (§5), and once messages take different paths, the order they arrive in may not match the order they happened. Two edits to the same document, two moves in a game, two chat messages — if they land out of order, the shared state diverges between participants. So real-time systems need a way to establish *what happened when*: sequence numbers, logical timestamps, or server-assigned ordering. This is a genuinely deep problem — the ordering and consistency machinery of distributed systems is its own phase — but the point here is that **it's the same problem for every pattern**, not a chat problem or a game problem.
+
+### Delivery — A Message Can Simply Be Lost
+
+Topic 07 made this stark: a WebSocket has no per-message receipt. You send a frame; there's no `200 OK` telling you it arrived, and if the connection dies mid-flight the message can vanish with no error. For a live cursor, losing one update is harmless — the next one corrects it. For a chat message or a game action, a silent loss is a bug the user sees. So features that can't tolerate loss need **delivery guarantees** built on top: the receiver acknowledges messages, the sender retries unacknowledged ones, and — because a retry can duplicate — receivers must handle the same message arriving twice. "At-least-once delivery plus handling duplicates" is a recurring shape, and again it's shared across every pattern that carries messages that matter.
+
+### Reconnection Catch-Up — What Did I Miss?
+
+Topic 07 established that a connection *will* drop and the client must reconnect. This section adds the part that's specific to use cases: **reconnecting isn't enough — the client has to recover what it missed while it was gone.** A chat client that reconnects must fetch the messages sent during the gap. A collaborative editor must reconcile edits it never received. A dashboard must jump to current values, not resume from stale ones. This usually means every message carries a position (a sequence number or timestamp), the client remembers the last one it saw, and on reconnect it asks "give me everything after *this*." Without catch-up, a two-second network blip leaves the user permanently missing whatever happened during it.
+
+### Initial State Sync — Joining Mid-Stream
+
+The mirror image of catch-up, and the one most often forgotten. When a client *first* joins, it needs the **current state**, not just the stream of future changes. A player joining a game needs the world as it is now; an editor opening a document needs its current contents; someone entering a chat needs the recent history. A real-time stream delivers *deltas* — what changed — but a newcomer has nothing for the deltas to apply to. So every real-time feature needs a way to hand a joiner a **snapshot** of current state, after which the live stream of deltas keeps them current. Snapshot-then-stream is the universal shape for joining any shared real-time thing.
+
+```mermaid
+flowchart LR
+    J["👤 Client joins"] --> SNAP["📸 Snapshot:<br/>current state"]
+    SNAP --> STREAM["🌊 Live deltas<br/>from here on"]
+    STREAM --> DROP["🔌 Drops"]
+    DROP --> CATCH["⏪ Reconnect →<br/>catch up from last seen"]
+    CATCH --> STREAM
+```
+
+### One Set of Machinery, Every Feature
+
+Read the four together and the lesson is structural: ordering, delivery, catch-up, and initial-state-sync are **not features of chat or of games** — they're properties of *carrying meaningful messages over an unreliable, distributed, resumable connection*, which every pattern does. This is exactly why classifying by pattern pays: it reveals that the expensive engineering is shared, so it should be built once as a real-time *platform* and reused, rather than reinvented per surface. Teams that miss this ship three chat-shaped features each with its own subtly-broken reconnection logic.
+
+> 💡 **Key Insight**
+>
+> The genuinely hard parts of real-time — **ordering** (messages take different paths and arrive out of sequence), **delivery** (no per-message receipt, so meaningful messages need acks-and-retries plus dedup), **reconnection catch-up** (recover what you missed, not just reconnect), and **initial state sync** (a joiner needs a snapshot before deltas mean anything) — are not per-feature problems. They're properties of carrying important messages over an unreliable, distributed, resumable connection, which every pattern does. Build them once as a shared platform; reinvent them per feature and you'll ship the same bugs repeatedly.
+
+### Quick Recap — The Hard Parts Are Shared
+
+- **Ordering:** across many connections, servers, and a backplane, messages can arrive out of sequence, so shared state needs sequence numbers or server-assigned order — the same problem for every pattern.
+- **Delivery:** a WebSocket has no per-message receipt (Topic 07), so messages that matter need **acknowledge-and-retry plus duplicate handling** on top.
+- **Reconnection catch-up:** reconnecting isn't enough — the client must recover what it **missed** during the gap, usually by tracking the last position it saw.
+- **Initial state sync:** a joiner needs a **snapshot** of current state before the live delta stream means anything — snapshot-then-stream is universal, and all four are shared infrastructure, not per-feature work.
+
+---
