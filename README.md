@@ -211,14 +211,14 @@ you will likely find this useful.
 
 ## Current Status
 
-**25 of 150 topics complete.** Phases 01 and 02 are finished; Phases 03 and 04 are in progress.
+**26 of 150 topics complete.** Phases 01 and 02 are finished; Phases 03 and 04 are in progress.
 
 | # | Phase | Done | Status |
 | --- | ----- | ---- | ------ |
 | 01 | Introduction & Foundations | 7 / 7 | ✅ Complete |
 | 02 | Core System Properties | 5 / 5 | ✅ Complete |
 | 03 | Networking Deep Dives | 6 / 7 | 🔄 In Progress |
-| 04 | APIs & Communication | 7 / 15 | 🔄 In Progress |
+| 04 | APIs & Communication | 8 / 15 | 🔄 In Progress |
 | 05 | Storage & Databases | 0 / 27 | 🔒 Planned |
 | 06 | Scaling & Performance | 0 / 10 | 🔒 Planned |
 | 07 | Async & Events | 0 / 13 | 🔒 Planned |
@@ -230,7 +230,7 @@ you will likely find this useful.
 [ROADMAP.md](ROADMAP.md) is the **source of truth** for status — this table is a
 summary of it. If the two ever disagree, the roadmap is right.
 
-*Status as of 2026-08-02.*
+*Status as of 2026-08-03.*
 
 ---
 
