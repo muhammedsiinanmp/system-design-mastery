@@ -242,3 +242,52 @@ Pattern B is two-way, but on the §2 map it sits at *low* fan-out: 1:1, or a sma
 - Fan-out stays **low** (1:1 or small group), which keeps this the **tractable** WebSocket case — stateful, but not yet the many-recipient delivery problem of Pattern C.
 
 ---
+
+## 5. Pattern C — Shared State Across Many
+
+The third pattern keeps Pattern B's two-way flow but cranks the fan-out all the way up: many participants, all sending, all needing to see one another's messages, all sharing a single logical space. This is the most powerful thing WebSockets enable and, by a wide margin, the most expensive — and the expense comes almost entirely from the fan-out, not the two-wayness.
+
+### What Lives Here
+
+- **Multiplayer games** — every player's action affects a shared world, and every other player must see it, fast.
+- **Large collaborative documents and whiteboards** — dozens of people editing or drawing on one surface, each change visible to all.
+- **Live auctions or trading floors** — every bid must reach every participant, because a stale view means acting on wrong information.
+- **Big group chats and live-event rooms** — hundreds or thousands in one conversation, each message fanning out to the whole room.
+
+The common shape: there is a *shared thing* — a game world, a document, an auction, a room — and a message from any participant must reach all the others who share it. This is the many-to-many corner of the §2 map.
+
+### The Room Is the Core Abstraction
+
+You cannot reason about many-to-many delivery one connection at a time. The abstraction that makes it tractable is the **room**: a named logical group of participants, where a message sent "to the room" is delivered to everyone currently in it. A game match is a room; a document's editors are a room; each live-event channel is a room. The application stops thinking "send this to connections X, Y, Z" and starts thinking "publish this to room R" — and the infrastructure handles turning that into individual deliveries.
+
+Rooms also bound the problem. A message doesn't fan out to *all* users, only to the room it belongs to, so the cost scales with room size, not total user count. Designing the right room granularity — one big room versus many small ones — is often the difference between a feature that scales and one that doesn't.
+
+```mermaid
+flowchart TD
+    P["👤 Participant sends to Room R"] --> RT["🏠 Room R<br/>(logical group)"]
+    RT --> D1["deliver → member 1"]
+    RT --> D2["deliver → member 2"]
+    RT --> D3["deliver → member 3"]
+    RT --> DN["deliver → member N"]
+```
+
+### Why the Backplane Becomes Non-Negotiable Here
+
+This is where Topic 07's hardest lesson comes due. A single server can only hold so many connections, so a large room's members are inevitably spread across many servers. But a server can only directly deliver to the connections it *itself* holds — it has no line to a participant connected to a different server. So a message arriving at one server must somehow reach every *other* server holding a member of that room.
+
+That bridge is the **backplane** — the pub/sub channel between servers that Topic 07 introduced. A server that receives a room message publishes it to the backplane; every server holding members of that room picks it up and delivers to its own local connections. In Patterns A and B you might avoid a backplane (one-way push and small conversations can sometimes be pinned to a single server); in Pattern C, with a room spread across the fleet, **the backplane is not optional** — it is the only thing that makes the room one logical space instead of many disconnected fragments. This document doesn't re-teach how the backplane works (Topic 07 did); it names *why this pattern forces you to have one*.
+
+### The Cost Is Fan-Out, and It Grows Fast
+
+The trap in Pattern C is underestimating deliveries. A room of *N* people where everyone sends produces, per message, up to *N* deliveries — and if all *N* are active, the total delivery volume scales with *N* senders times *N* recipients. A cozy 10-person room is ~100 deliveries per round of activity; a 1,000-person room is ~1,000,000. The *sends* grew 100×; the *work* grew 10,000×. This quadratic blow-up is why large shared-state features need deliberate design — capping room sizes, sharding big rooms, thinning or batching updates — rather than just "opening more connections."
+
+> ⚠️ **Pattern C is the most powerful use of WebSockets and the one that punishes naïveté hardest — and the cost is fan-out, not two-wayness.** A message from any participant must reach all the others, so deliveries scale with room size, and in a fully active room with the *many-to-many* shape they scale with the *square* of it: a 1,000-person room is a million deliveries per round, not a thousand. The **room** abstraction bounds the blast radius, and Topic 07's **backplane** becomes mandatory the moment a room outgrows one server. Reach for this pattern only when the feature is genuinely a shared live space — and design the room granularity before the traffic, not after.
+
+### Quick Recap — Shared State Across Many
+
+- Pattern C keeps two-way flow but at **many-to-many** fan-out: many participants sharing one logical space — multiplayer, big collaborative docs, auctions, large rooms.
+- The **room** is the core abstraction — a named group a message is published to — which bounds delivery to room size rather than total users.
+- Topic 07's **backplane** (pub/sub between servers) is **non-optional** here, because a large room's members are spread across servers and each server only reaches its own connections.
+- The dominant cost is **fan-out**, which grows quadratically in a fully active room (N senders × N recipients) — so room granularity must be designed deliberately, not left to grow.
+
+---
