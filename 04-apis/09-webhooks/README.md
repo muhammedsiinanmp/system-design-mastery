@@ -89,3 +89,62 @@ That inversion — *they* contact *you* when something happens, rather than you 
 - The real fix is to **invert who speaks**: let the system that knows about the event reach out once, when it happens — the entire idea behind a webhook.
 
 ---
+
+## 2. The Inversion — You Become the Server
+
+The idea from §1 — let the other system speak — becomes concrete through one mechanical move: you turn your own application into something the other system can call. That move is the heart of what a webhook is, and it reframes your role in a way that explains everything difficult later.
+
+### The Mechanism, Start to Finish
+
+A **webhook** is a registered HTTP callback: a URL you give another system in advance, which it calls when a specified event happens. The whole arrangement is three steps:
+
+1. **You register a URL.** Ahead of time, you tell the other system (the **provider** — the system where events happen): "here is a URL of mine; call it when these events occur." That URL is your **webhook endpoint** — an ordinary address in your application, like `https://yourapp.example/hooks/payments`.
+2. **The event happens.** Later, something occurs inside the provider — a payment settles, a job completes. The provider looks up who asked to be told about that event, and finds your registered URL.
+3. **The provider calls you.** The provider makes an **HTTP POST request to your endpoint**, with the details of the event in the request body. Your application receives it exactly as it would receive any other incoming request, reads the body, and acts.
+
+That's it. There is no new protocol and no special connection — a webhook is a plain HTTP request, the same kind of request your own app makes to others all day. What's different is the *direction*.
+
+### The Roles Have Flipped
+
+In an ordinary API call, your app is the **client** (it initiates the request) and the other system is the **server** (it receives and responds). A webhook turns that around completely:
+
+| | Ordinary API call | Webhook delivery |
+|---|---|---|
+| Who initiates | **You** call them | **They** call you |
+| Who is the client | You | The provider |
+| Who is the server | The provider | **You** |
+| Who needs a public address | The provider | **You** |
+| When it happens | When *you* need data | When *their* event occurs |
+
+The single most important line in that table is the last-but-one: **you now need a publicly reachable address, because you are now the server.** In an ordinary integration, only the provider had to run an always-available, callable endpoint; you just made outbound calls. With a webhook, that obligation lands on you. This is why webhooks are sometimes called a "reverse API" — the callee and caller swap seats.
+
+```mermaid
+sequenceDiagram
+    participant Y as 🖥️ Your App
+    participant P as 🏦 Provider
+    Note over Y,P: setup (once)
+    Y->>P: register https://yourapp.example/hooks/payments
+    Note over P: later — an event occurs
+    P->>Y: POST /hooks/payments (event details)
+    Y-->>P: 200 OK
+    Note over Y: act on the event
+```
+
+### Why This Is Inherently Server-to-Server
+
+The inversion has a hard consequence: a webhook can only target something that has a **stable, public address to be called at.** A backend server has one — a domain and a URL that exists whether or not anyone is currently looking. That's why webhooks are the natural fit for one backend notifying another.
+
+A browser tab, by contrast, has *no* such address. It isn't a server; nothing on the public internet can initiate a call to it. So "notify a user's browser the instant something happens" is a fundamentally different problem, solved by the browser holding a connection open to a server (a WebSocket) or subscribing to a one-way server stream — approaches with their own topic. The dividing line is clean and worth remembering: **if the thing to be notified is a server with a public URL, a webhook fits; if it's a browser, it doesn't.**
+
+> 💡 **Key Insight**
+>
+> A webhook is nothing exotic — it's an ordinary HTTP POST — but it **inverts direction**: instead of you calling the provider, you register a URL and the provider calls *you* when an event happens. That flip makes **you the server**, which is the fact everything else in this document follows from: you now run a publicly reachable, always-available endpoint that another system invokes on its own schedule. And because it requires a public address to call, a webhook is inherently **server-to-server** — a browser, which has no such address, needs a different mechanism entirely.
+
+### Quick Recap — The Inversion
+
+- A **webhook** is a registered HTTP callback: you give a provider a URL in advance, and it makes an **HTTP POST to that URL** when a specified event happens.
+- It **inverts the roles** of an ordinary API call — the provider becomes the client, and **you become the server**, receiving the call instead of making it.
+- The key consequence is that **you now need a public, always-available endpoint**, an obligation an ordinary outbound integration never placed on you — hence "reverse API."
+- Because it requires a callable public address, a webhook is inherently **server-to-server**; notifying a browser (which has no such address) is a different problem with different tools.
+
+---
