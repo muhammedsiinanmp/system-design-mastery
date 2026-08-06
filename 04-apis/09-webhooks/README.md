@@ -55,7 +55,7 @@ But flip the situation. Suppose the thing you care about happens inside a system
 
 Within ask-and-answer, there's exactly one way to cope: **poll.** Ask repeatedly, on a timer — "did the payment clear yet? did it clear yet? how about now?" — hoping to catch the event shortly after it happens. It technically works, and for a long time it was all anyone could do, but it's a bad fit dressed as a solution:
 
-- **It's wasteful.** The overwhelming majority of polls come back "nothing new." Every one is a full round trip — a request, a response, work on both sides — spent to learn that nothing changed.
+- **It's wasteful.** Nearly every poll comes back empty — "nothing new" — and each one is still a full round trip, a request and a response and work on both sides, spent only to learn that nothing changed.
 - **It's laggy.** An event waits, on average, half your polling interval before you even ask about it. Poll once a minute and you learn about a payment up to a minute late.
 - **It scales badly.** Tightening the lag means polling more often, which multiplies the wasted requests; and every integration you add polls too, so the load grows with both frequency and number of partners. The external service, meanwhile, is answering a flood of "nope" responses it gains nothing from.
 
