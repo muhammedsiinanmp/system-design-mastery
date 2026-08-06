@@ -40,3 +40,52 @@ Here's the trap it disarms. A webhook looks trivial: the other service sends you
 11. [Final Recap](#11-final-recap)
 
 ---
+
+## 1. The Problem — Knowing Without Asking
+
+Webhooks exist to solve one specific, common problem, and the cleanest way to understand them is to feel that problem first — to see exactly why the ordinary way of getting data breaks down.
+
+### The Ordinary Way: You Ask, They Answer
+
+Almost all communication between systems follows one pattern: *you* make a request, the other system sends a response, done. Your code calls another service's API, gets back the data, moves on. This works beautifully when **you** are the one who knows *when* the data is needed — you want a user's profile, so you ask for it right then.
+
+But flip the situation. Suppose the thing you care about happens inside a system you don't own — a payment settles at an external payments service, a video finishes transcoding on a processing service, an order is fulfilled by a logistics partner. *They* know the moment it happens. *You* don't, and you have no way to know, because it happened on the far side of a boundary you can't see across. The ask-and-answer pattern assumes the asker knows when to ask — and here, the asker is exactly the party in the dark.
+
+### The Only Workaround: Ask Over and Over
+
+Within ask-and-answer, there's exactly one way to cope: **poll.** Ask repeatedly, on a timer — "did the payment clear yet? did it clear yet? how about now?" — hoping to catch the event shortly after it happens. It technically works, and for a long time it was all anyone could do, but it's a bad fit dressed as a solution:
+
+- **It's wasteful.** The overwhelming majority of polls come back "nothing new." Every one is a full round trip — a request, a response, work on both sides — spent to learn that nothing changed.
+- **It's laggy.** An event waits, on average, half your polling interval before you even ask about it. Poll once a minute and you learn about a payment up to a minute late.
+- **It scales badly.** Tightening the lag means polling more often, which multiplies the wasted requests; and every integration you add polls too, so the load grows with both frequency and number of partners. The external service, meanwhile, is answering a flood of "nope" responses it gains nothing from.
+
+```mermaid
+flowchart LR
+    subgraph POLL["🔴 Polling — you keep asking"]
+        Y1["Your system"] -->|"anything new?"| T1["Their system"]
+        T1 -->|"nope"| Y1
+        Y1 -->|"anything new?"| T1
+        T1 -->|"nope"| Y1
+        Y1 -->|"anything new?"| T1
+        T1 -->|"finally: yes"| Y1
+    end
+```
+
+### What's Actually Needed: Let Them Tell You
+
+Strip the problem to its core and the requirement is simple: **the party that knows about the event should be the one to speak.** Instead of you asking a hundred times and hearing "no" ninety-nine, the other system should reach out *once*, exactly when the event happens, and tell you. No wasted asks, no lag, no flood — one message at the one moment it matters.
+
+That inversion — *they* contact *you* when something happens, rather than you repeatedly contacting them — is the whole idea of a webhook. (When the party that needs telling is a *browser* rather than a backend, different tools apply — a held-open connection like a WebSocket, or a one-way server-sent stream — because a browser can't be called back at a fixed address. Webhooks are the answer for the far more common case where both parties are servers, which the next section makes precise.)
+
+> 💡 **Key Insight**
+>
+> The ask-and-answer pattern that underlies most system-to-system communication assumes the asker knows *when* to ask — and it collapses precisely when the event you care about happens inside a system you don't control, because then you're the party in the dark. The only workaround within ask-and-answer is to **poll**: ask over and over, which is wasteful (mostly "nothing new"), laggy (you learn late), and scales badly (tightening the lag multiplies the load). What's actually needed is to invert who speaks — let the system that *knows* about the event reach out once, the instant it happens. That inversion is the entire idea of a webhook.
+
+### Quick Recap — Knowing Without Asking
+
+- Ordinary system-to-system communication is **ask-and-answer** — you request, they respond — which works only when *you* know when the data is needed.
+- It breaks when the event happens inside **a system you don't control**: they know instantly, you have no way to know, because it's across a boundary you can't see.
+- The only workaround within ask-and-answer is to **poll** — ask repeatedly — which is wasteful, laggy, and scales badly for both sides.
+- The real fix is to **invert who speaks**: let the system that knows about the event reach out once, when it happens — the entire idea behind a webhook.
+
+---
