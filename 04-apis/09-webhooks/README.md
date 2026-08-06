@@ -274,3 +274,49 @@ The lesson is stark and it lands entirely on the receiver: **you must assume eve
 - **Exactly-once delivery is impossible on the wire** — so the receiver must assume every event may arrive again and make duplicates harmless (§5).
 
 ---
+
+## 5. Idempotency — Processing the Same Event Twice Safely
+
+Section 4 proved that duplicates are inevitable. This section is the receiver's answer to them, and it's the single most important thing to get right when building a webhook handler. The property you need has a name — **idempotency** — and the good news is that achieving it for webhooks is concrete and mechanical.
+
+### What Idempotency Means
+
+An operation is **idempotent** if performing it more than once has the same effect as performing it once. "Set the account balance to $50" is idempotent — run it ten times, the balance is $50. "Add $50 to the account balance" is *not* — run it ten times and you've added $500. The distinction is the whole game for webhooks: since the same event may be delivered repeatedly (§4), your handling of it must land in the idempotent category, so that a redelivery changes nothing.
+
+The trap is that many real actions are naturally *non*-idempotent: charging a card, shipping an order, sending an email, crediting a wallet. Each is an "add," not a "set" — do it twice and the customer is charged twice, gets two packages, two emails. Left alone, a webhook handler that performs one of these actions is a double-execution bug waiting for the first lost acknowledgement.
+
+### The Mechanism: Deduplicate on the Event Id
+
+You don't make the *action* idempotent so much as make the *handling* idempotent, and the tool is the unique **event id** from §3 (the value stable across all redeliveries of the same event). The pattern is short:
+
+1. When an event arrives, look up its id in a store of **already-processed event ids**.
+2. If you've seen it before, it's a duplicate — **do nothing** (well, return `2xx` so the provider stops retrying) and skip the action.
+3. If you haven't, **process it and record its id** as processed, so any future redelivery is recognized.
+
+```mermaid
+flowchart TD
+    IN["📩 Event arrives (id = evt_9f2a)"] --> SEEN{"id already in<br/>processed store?"}
+    SEEN -->|"yes — duplicate"| SKIP["skip the action<br/>return 2xx"]
+    SEEN -->|"no — first time"| DO["process the event"]
+    DO --> REC["record id as processed"]
+    REC --> ACK["return 2xx"]
+```
+
+Done carefully, this turns an at-least-once *stream* into exactly-once *effects* — the delivery still happens many times, but the meaningful action happens exactly once. That's the "exactly-once" everyone wanted, reconstructed where it's actually achievable: in the receiver, not on the wire.
+
+### The Detail That Bites: Make the Check and the Work Atomic
+
+There's a subtle race that separates a handler that *mostly* works from one that's correct. If two copies of the same event arrive at nearly the same moment (a retry landing while the first attempt is still processing), both can check the store, both see "not processed," and both proceed — a duplicate slips through the very guard meant to stop it. The fix is to make "record this id" collide with itself: rely on the store rejecting a second insert of the same id (a uniqueness constraint), so exactly one of the racing handlers wins the right to process and the other is turned away. The principle to carry: the check-and-record must be **atomic**, or the dedup has a hole. The general machinery of idempotency keys and safe retries is a topic of its own; what webhooks require is exactly this — dedupe on the event id, atomically.
+
+> 💡 **Key Insight**
+>
+> Because duplicates are guaranteed (§4), a correct webhook receiver must be **idempotent** — handling the same event twice must have the same effect as handling it once. Since the real actions are usually non-idempotent (charge, ship, email), you make the *handling* idempotent by **deduplicating on the unique event id**: record which ids you've processed, and skip any you've seen. That converts an at-least-once delivery stream into exactly-once *effects* — the exactly-once guarantee, rebuilt in the one place it's possible. The one non-negotiable detail is that the check-and-record must be **atomic**, or two racing redeliveries both slip through.
+
+### Quick Recap — Idempotency
+
+- **Idempotent** means doing an operation twice has the same effect as doing it once — the property a webhook handler needs, because duplicates are inevitable (§4).
+- Real webhook actions (charge, ship, email) are usually **non-idempotent** by nature, so a naive handler double-executes on the first redelivery.
+- The mechanism is to **deduplicate on the unique event id**: skip ids you've already processed, and record each new one — turning at-least-once delivery into **exactly-once effects**.
+- The check-and-record must be **atomic** (e.g. a uniqueness constraint), or two near-simultaneous redeliveries both pass the guard; the deeper idempotency-key technique is its own topic.
+
+---
