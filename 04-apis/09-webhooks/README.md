@@ -412,3 +412,46 @@ The deeper cryptography behind keyed hashes and secure comparison belongs to the
 - Signing a **timestamp** and rejecting stale deliveries defeats **replay** of captured genuine calls; verify every delivery before acting, and reject old ones.
 
 ---
+
+## 8. The Endpoint Is Your Responsibility Now
+
+Every previous section has been a consequence of one fact from §2 — you became the server — and this section names the operational weight of that directly. You are running a **public, always-on endpoint that another system calls on its schedule, not yours.** That reframes webhook receiving from "write a handler" to "operate a service," and four responsibilities come with it.
+
+### Respond Fast — Acknowledge First, Work Later
+
+The provider is waiting for your `2xx`, and it won't wait long — providers enforce a short timeout (often just a few seconds) and treat a slow response as a failure to be retried (§4). If your handler does expensive work *before* responding — charging systems, sending emails, updating records — a slow moment can blow the timeout, and the provider retries an event you were *successfully processing*, creating duplicates and cascading load.
+
+The fix is to split acknowledgement from processing: **verify the signature (§7), record the event, return `2xx` immediately — then do the real work asynchronously**, typically by placing the event on a queue that your own workers drain at their own pace. The webhook handler's only synchronous job is "safely accept and acknowledge"; everything else happens after. This keeps you well inside the timeout regardless of how heavy the actual processing is.
+
+```mermaid
+flowchart LR
+    IN["📩 Delivery"] --> V["verify + dedupe"]
+    V --> Q["enqueue event"]
+    Q --> ACK["return 2xx ⏱️ (fast!)"]
+    Q -.-> W["⚙️ workers process<br/>asynchronously, later"]
+```
+
+### Stay Available — Downtime Means Missed Calls
+
+Because the provider calls *whenever* an event happens, your endpoint has to be up *whenever* that might be — which is always. If it's down, deliveries during the outage fail. Retries (§4) soften this greatly: a brief outage just means the provider redelivers once you're back, which is exactly why at-least-once is a blessing here. But retry schedules are finite — a provider that gives up after a day of failures will *drop* events if you're down longer. So availability still matters; retries buy you recovery time, not immunity.
+
+### Absorb Bursts — Events Don't Arrive Evenly
+
+Events happen on the world's schedule, so they cluster. A sale, a batch job on the provider's side, a viral moment — any of these can turn a trickle of deliveries into a spike of thousands in a short window. Your endpoint must not fall over under that burst (which would trigger mass retries, compounding the load — a feedback loop). The ack-fast-then-queue design above is also your burst defense: accepting quickly and buffering to a queue lets you absorb a spike at the door and process it steadily behind, rather than trying to do all the heavy work at arrival rate. (Deliberately shedding or throttling excess load is its own topic.)
+
+### Observe and Recover — Log, Debug, Replay
+
+Finally, because deliveries are asynchronous and invisible to your users, you need to be able to *see* them. Log every delivery — received, verified, processed, or failed — so that when something goes wrong (and across enough events, it will), you can answer "did that event arrive? did we process it?" Good providers keep a delivery log on their side too, and offer **manual replay** — the ability to re-send past events on demand — which is how you recover events lost to an outage longer than the retry window, or reprocess after fixing a handler bug. Events that repeatedly fail even your own processing should land in a **dead-letter** holding area for inspection rather than being silently dropped. Observability isn't polish here; it's how you close the loop on a channel you otherwise can't watch.
+
+> 💡 **Key Insight**
+>
+> Receiving webhooks is **operating a service**, not writing a handler, because you run a public, always-on endpoint another system calls on its schedule. Four duties follow: **respond fast** (verify, record, `2xx` immediately, then process asynchronously off a queue — or a slow moment triggers duplicate-causing retries); **stay available** (downtime drops events once the finite retry window expires); **absorb bursts** (events cluster, and ack-fast-then-queue is the defense); and **observe and recover** (log every delivery and use replay/dead-letter, since the channel is invisible otherwise). Each is a direct cost of the inversion.
+
+### Quick Recap — The Endpoint Is Your Responsibility
+
+- **Respond fast:** providers time out in seconds, so verify, record, and return `2xx` immediately, then do the real work **asynchronously** (often via a queue) — or slow processing triggers duplicate-causing retries.
+- **Stay available:** the provider calls anytime, so downtime means failed deliveries; retries buy recovery time but the finite retry window means long outages still **drop** events.
+- **Absorb bursts:** events cluster into spikes, and ack-fast-then-queue lets you accept at the door and process steadily behind, avoiding a retry feedback loop.
+- **Observe and recover:** log every delivery and rely on **manual replay** and **dead-letter** handling, because an asynchronous channel is invisible unless you make it visible.
+
+---
