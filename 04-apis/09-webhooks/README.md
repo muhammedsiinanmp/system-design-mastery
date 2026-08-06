@@ -219,3 +219,58 @@ The deliveries only happen because of the setup step from §2: **registration** 
 - **Registration** (done once) sets which **URL** is called and which **event types** you receive, and is where the signature secret (§7) is obtained.
 
 ---
+
+## 4. At-Least-Once — Retries and the Duplicates They Cause
+
+The status-code contract from §3 sets up the first genuinely hard part of receiving webhooks, and it's a consequence the provider *cannot* avoid: because the network and your endpoint can fail, the provider must retry — and retrying, unavoidably, means the same event can reach you more than once.
+
+### The Provider Must Retry, or Events Vanish
+
+Put yourself on the provider's side. It sends you a POST and… gets a timeout. What happened? It cannot tell the difference between these cases:
+
+- Your endpoint was down and never received it.
+- Your endpoint received it, processed it, but its `2xx` got lost on the way back.
+- Your endpoint is just slow and is still working.
+
+From the provider's view all three look identical: no `2xx` arrived. If it gives up, and the truth was "your endpoint was momentarily down," the event is **lost forever** — a payment notification that never came. For events that matter, silent loss is unacceptable, so the provider does the only safe thing: it **retries**, resending the event until it finally gets a `2xx` (or until it exhausts a retry schedule and gives up much later — §8).
+
+Retries are spaced out with **exponential backoff** — wait a little, retry; wait longer, retry; longer still — rather than hammering a struggling endpoint. A typical schedule stretches from seconds to hours across a handful of attempts over a day or more, giving a down endpoint time to recover.
+
+### Retrying Guarantees Duplicates
+
+Now the unavoidable consequence. Consider the middle case above: your endpoint **received the event, processed it successfully, and then its `2xx` response was lost** — a dropped connection on the way back. You did everything right. But the provider never saw the `2xx`, so by its rules the delivery failed, and it retries. **The same event arrives at your endpoint a second time.**
+
+There is no way to design this away. As long as the acknowledgement can be lost — and over a real network it always can — the sender must choose between two imperfect guarantees:
+
+- **At-most-once:** never retry, so never duplicate — but *lose* events whenever an ack is missed. Unacceptable for anything important.
+- **At-least-once:** retry until acknowledged, so never lose — but *duplicate* whenever an ack is lost.
+
+Webhook providers universally choose **at-least-once**, because losing a payment event is far worse than delivering it twice. "Exactly-once" delivery — the thing everyone actually wants — is not achievable over an unreliable network; it can only be *simulated*, and only by the receiver (§5).
+
+```mermaid
+sequenceDiagram
+    participant P as 🏦 Provider
+    participant Y as 🖥️ Your App
+    P->>Y: POST event evt_9f2a (attempt 1)
+    Y->>Y: process successfully ✅
+    Y--xP: 200 OK (lost on the way back)
+    Note over P: no 2xx seen → assume failure
+    P->>Y: POST event evt_9f2a (attempt 2 — same event!)
+    Y->>Y: ...must not process it twice
+    Y-->>P: 200 OK
+```
+
+### The Burden This Places on You
+
+The lesson is stark and it lands entirely on the receiver: **you must assume every event may arrive more than once, and design so that a duplicate does no harm.** This is not an edge case to handle if you have time; over enough deliveries it is a certainty. A receiver that assumes each event arrives exactly once will, sooner or later, process a payment twice, send two shipping notifications, or credit an account twice — the classic, expensive webhook bug. The fix is idempotency, and it's important enough to be its own section.
+
+> ⚠️ **At-least-once delivery is not a provider quirk you can opt out of — it is the only safe choice over an unreliable network, and it guarantees duplicates.** Because an acknowledgement can be lost *after* you've already processed an event, the provider that retries to avoid *losing* events will inevitably *resend* some, and the same event will reach you twice. Exactly-once delivery is impossible on the wire; it can only be reconstructed by the receiver. So treat "this event may arrive again" as a certainty, not a possibility — a receiver that assumes otherwise will eventually double-charge someone.
+
+### Quick Recap — At-Least-Once
+
+- The provider **cannot distinguish** "you never got it," "your ack was lost," and "you're slow" — all look like no `2xx` — so to avoid losing events it must **retry**, with exponential backoff.
+- Retrying means an event whose `2xx` was **lost after successful processing** gets **resent** — the same event arrives twice, unavoidably.
+- Over an unreliable network the choice is **at-most-once** (may lose) or **at-least-once** (may duplicate); providers choose **at-least-once**, because losing important events is worse.
+- **Exactly-once delivery is impossible on the wire** — so the receiver must assume every event may arrive again and make duplicates harmless (§5).
+
+---
