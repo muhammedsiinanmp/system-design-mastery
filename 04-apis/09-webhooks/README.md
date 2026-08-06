@@ -498,3 +498,72 @@ One more piece of judgment. Webhooks reduce polling, but they don't abolish it, 
 - Webhooks reduce but don't abolish **polling** — pairing them with an authoritative re-fetch (§6) and a periodic backstop poll is what makes a critical integration robust.
 
 ---
+
+## 10. Putting It All Together — A Payment-Provider Integration
+
+A team is adding payments to their app. They don't process cards themselves — they use an external **payment provider**, and the money moves on the provider's side, not theirs. Which means the single most important fact in their whole system — *did this customer actually pay?* — happens somewhere they can't see. This is the archetypal webhook problem, and building it correctly exercises every section of this document in order.
+
+### Setup and the Happy Path
+
+They register a webhook endpoint with the provider — `https://shop.example/hooks/payments` — and subscribe to the events they care about: `charge.succeeded`, `charge.refunded`, `charge.disputed` (§2, §3). At registration they receive a **shared secret** for verifying signatures.
+
+A customer checks out. Moments later, the provider POSTs a `charge.succeeded` event to their endpoint. The handler does exactly what §7 and §8 prescribe, in order: **verify the signature** against the shared secret (reject if it fails), **check the event id** against the processed store (§5), **record it and enqueue** the fulfillment work, and **return `200 OK` immediately** (§8). A background worker then fulfills the order. On the happy path it's clean and fast — the customer's order is confirmed within a second of paying, no polling anywhere. Then reality tests each defense.
+
+### Reality Test 1 — The Duplicate
+
+One evening, a `charge.succeeded` is processed successfully, but the `200 OK` is lost to a network blip on the way back (§4). The provider, seeing no acknowledgement, retries — and the *same* charge event arrives again. Because the handler dedupes on the event id (§5), the second arrival is recognized as already-processed: it returns `200` and does nothing. **The customer is charged once and fulfilled once.** Without that check, they'd have shipped the order twice. The lost ack — invisible, unavoidable — was silently absorbed.
+
+### Reality Test 2 — The Out-of-Order Refund
+
+A customer pays and, within seconds, cancels for a refund. The provider emits `charge.succeeded` then `charge.refunded` — but the succeeded event hits a retry after a transient failure, so **the refund event arrives first** (§6). A naive handler would throw: "refund for a charge I've never seen." Theirs doesn't, because it treats each event as a *signal to fetch current state* (§6): on the refund event, it asks the provider's API for the charge's authoritative status, sees `refunded`, and records the order as refunded — correctly, regardless of arrival order. When the succeeded event arrives moments later, a fetch shows the same authoritative picture, and nothing breaks.
+
+### Reality Test 3 — The Deploy Outage
+
+The team ships a routine deploy, and their endpoint is down for ninety seconds. Three charge events fire during the window and fail to deliver. Two things save them (§4, §8): the provider **retries** on its backoff schedule, so the events redeliver automatically once the endpoint is back; and for belt-and-suspenders, a scheduled **backstop reconciliation** job (§9) sweeps recent charges from the provider's API once an hour and fills any gaps. No payment is lost to a routine deploy.
+
+```mermaid
+flowchart TD
+    C["💳 Customer pays"] --> P["🏦 Provider"]
+    P -->|"POST charge.succeeded"| E["🖥️ /hooks/payments"]
+    E --> V["1. verify signature (§7)"]
+    V --> D["2. dedupe on event id (§5)"]
+    D --> Q["3. enqueue + 200 OK fast (§8)"]
+    Q --> W["⚙️ worker: fetch current state (§6) → fulfill"]
+    P -.->|"retry on lost ack (§4)"| E
+    BK["⏰ hourly backstop poll (§9)"] -.-> P
+```
+
+### What the Team Learned
+
+The feature works, and it moves real money correctly — but the lesson isn't "webhooks are easy." It's where the work actually was:
+
+> **Receiving the payment notification was one POST handler — an afternoon. Everything that made it *trustworthy* was the rest of the month: verifying every call because our URL is public and money is on the line; deduplicating because the provider must retry and retries duplicate; fetching authoritative state because a refund can beat its charge; acknowledging in milliseconds and working in the background so we don't time out and cause the very retries we fear; and a backstop poll for the events a deploy would otherwise lose. We didn't build a message receiver. We built a small, reliable, security-critical service for someone else's events — because that's what a webhook endpoint actually is.**
+
+---
+
+## 11. Final Recap
+
+| The hard part | Why it happens | What the receiver must do |
+|---|---|---|
+| **You run a public server** | The webhook inverts the call — the provider calls you (§2) | Operate an always-on, reachable endpoint |
+| **Duplicates** | At-least-once retries resend when an ack is lost (§4) | Be **idempotent** — dedupe on the event id (§5) |
+| **Out-of-order events** | Independent deliveries and retries race (§6) | Check timestamps; **fetch current state** rather than trust the delta |
+| **Forged calls** | Your URL is public, so anyone can POST (§7) | **Verify the signature** on every delivery; reject stale ones (replay) |
+| **Slow responses cause retries** | Providers time out in seconds (§8) | Ack `2xx` fast; do the work **asynchronously** off a queue |
+| **Missed events** | Downtime beyond the finite retry window (§8) | Rely on **replay**; add a periodic **backstop poll** (§9) |
+
+### The One Thing to Remember
+
+> **A webhook is trivial to send and hard to trust, because it crosses the boundary between two independently-failing systems that don't control each other — and everything difficult follows from one move: the call is inverted, so you become the server. You are no longer receiving a tidy message; you are operating a public, always-on endpoint that another system invokes on its own schedule over an unreliable network. Once you see it that way, every hard part is obvious rather than surprising: it will retry (the network fails), so events will duplicate (retries do that) and you must be idempotent; deliveries race, so events arrive out of order and you should fetch authoritative state instead of trusting the payload; your URL is public, so you must verify a signature before believing anything; and the provider won't wait, so you acknowledge in milliseconds and do the real work asynchronously. The POST is the easy afternoon. The trustworthy endpoint — idempotent, verified, order-tolerant, fast to ack, observable, and backstopped — is the project. Build the endpoint, not the handler.**
+
+---
+
+## What's Next
+
+> **Topic 10 — gRPC**
+
+This document, like the several before it, lived in the world of HTTP and JSON — human-readable text, flexible payloads, a request (or a callback) per interaction. That flexibility is exactly right for crossing boundaries between systems you don't control, where readability and universality matter more than raw speed. But turn inward, to the calls a system makes to *its own* services — thousands per second, between machines you own, where every millisecond and every byte counts — and those same conveniences become overhead.
+
+That inward turn is the next topic. **gRPC**: a contract-first, binary protocol built not for public reach but for fast, strongly-typed calls between internal services — where you define the exact shape of every call ahead of time, serialize it compactly instead of as text, and stop paying for the flexibility you don't need. You've seen how systems talk across boundaries they don't control; next you'll see how they talk *within* one, when speed is the whole point.
+
+---
