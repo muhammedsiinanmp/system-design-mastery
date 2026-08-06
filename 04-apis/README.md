@@ -42,7 +42,7 @@ fail — so the two phases are read together.
 | 6 | [GraphQL](06-graphql/README.md) | What actually happens when the server turns a query into data — and why every hard part follows from it being a graph? *(standalone — assumes no prior reading)* |
 | 7 | [WebSockets](07-websockets/README.md) | The web is request-response, so how does a server *push* — and why is the connection that lets it so much costlier to run than an ordinary API? *(standalone — assumes no prior reading)* |
 | 8 | [WebSocket Use Cases](08-websocket-use-cases/README.md) | "Real-time" hides several different patterns — so how do you tell which features genuinely need a WebSocket, which want something lighter, and what will actually be hard? *(builds on Topic 07)* |
-| 9 | Webhooks *(coming)* | Inverting the call so the server tells you, instead of you asking |
+| 9 | [Webhooks](09-webhooks/README.md) | When an event happens in a system you don't control, how does it tell you — and why is receiving that call correctly so much harder than sending it? *(standalone — assumes no prior reading)* |
 | 10 | gRPC *(coming)* | Contract-first, binary, and built for service-to-service speed |
 | 11 | API Gateways *(coming)* | The one front door that owns auth, routing, limits, and aggregation |
 | 12 | Rate Limiting *(coming)* | Protecting a shared resource from abuse and runaway clients |
