@@ -234,7 +234,7 @@ Put yourself on the provider's side. It sends you a POST and… gets a timeout. 
 
 From the provider's view all three look identical: no `2xx` arrived. If it gives up, and the truth was "your endpoint was momentarily down," the event is **lost forever** — a payment notification that never came. For events that matter, silent loss is unacceptable, so the provider does the only safe thing: it **retries**, resending the event until it finally gets a `2xx` (or until it exhausts a retry schedule and gives up much later — §8).
 
-Retries are spaced out with **exponential backoff** — wait a little, retry; wait longer, retry; longer still — rather than hammering a struggling endpoint. A typical schedule stretches from seconds to hours across a handful of attempts over a day or more, giving a down endpoint time to recover.
+Retries are spaced out with **exponential backoff** — wait a little, retry; wait longer, retry; longer still — rather than hammering a struggling endpoint. A typical schedule might attempt redelivery after roughly 5 seconds, then 30 seconds, then 5 minutes, an hour, and several hours — on the order of 10 to 20 attempts spread across two or three days before the provider finally gives up, giving a down endpoint plenty of time to recover.
 
 ### Retrying Guarantees Duplicates
 
@@ -398,7 +398,7 @@ The crucial property is that the secret **never travels with the request** — o
 
 ### Replay Attacks and Why the Timestamp Is Signed
 
-Signatures stop forgery, but there's a subtler attack: **replay.** Suppose an attacker captures one *genuine*, correctly-signed delivery (say, off a mis-configured proxy). Its signature is valid. Could they resend that exact request a thousand times to make you fulfill an order a thousand times? Idempotency (§5) blocks the *duplicate-event* version of this, but the defense built into signing is the **timestamp**: because the signature covers a timestamp, and you **reject deliveries whose timestamp is too old** (outside a tolerance window of a few minutes), a captured request quickly becomes unusable — its timestamp ages out and re-sending it fails verification. Signing the body proves *who and what*; signing the timestamp and enforcing freshness proves *when*, closing the replay window.
+Signatures stop forgery, but there's a subtler attack: **replay.** Suppose an attacker captures one *genuine*, correctly-signed delivery (say, off a mis-configured proxy). Its signature is valid. Could they resend that exact request a thousand times to make you fulfill an order a thousand times? Idempotency (§5) blocks the *duplicate-event* version of this, but the defense built into signing is the **timestamp**: because the signature covers a timestamp, and you **reject deliveries whose timestamp is too old** (outside a tolerance window commonly set to about 5 minutes), a captured request quickly becomes unusable — its timestamp ages out and re-sending it fails verification. Signing the body proves *who and what*; signing the timestamp and enforcing freshness proves *when*, closing the replay window.
 
 The deeper cryptography behind keyed hashes and secure comparison belongs to the security material; what every webhook receiver must do is concrete and non-negotiable: **verify the signature on every delivery before acting on it, and reject stale ones.**
 
@@ -419,7 +419,7 @@ Every previous section has been a consequence of one fact from §2 — you becam
 
 ### Respond Fast — Acknowledge First, Work Later
 
-The provider is waiting for your `2xx`, and it won't wait long — providers enforce a short timeout (often just a few seconds) and treat a slow response as a failure to be retried (§4). If your handler does expensive work *before* responding — charging systems, sending emails, updating records — a slow moment can blow the timeout, and the provider retries an event you were *successfully processing*, creating duplicates and cascading load.
+The provider is waiting for your `2xx`, and it won't wait long — providers enforce a short timeout, commonly in the range of 5 to 30 seconds and sometimes as tight as a couple of seconds, and treat a slow response as a failure to be retried (§4). If your handler does expensive work *before* responding — charging systems, sending emails, updating records — a slow moment can blow the timeout, and the provider retries an event you were *successfully processing*, creating duplicates and cascading load.
 
 The fix is to split acknowledgement from processing: **verify the signature (§7), record the event, return `2xx` immediately — then do the real work asynchronously**, typically by placing the event on a queue that your own workers drain at their own pace. The webhook handler's only synchronous job is "safely accept and acknowledge"; everything else happens after. This keeps you well inside the timeout regardless of how heavy the actual processing is.
 
