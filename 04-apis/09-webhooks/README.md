@@ -148,3 +148,74 @@ A browser tab, by contrast, has *no* such address. It isn't a server; nothing on
 - Because it requires a callable public address, a webhook is inherently **server-to-server**; notifying a browser (which has no such address) is a different problem with different tools.
 
 ---
+
+## 3. Anatomy of a Delivery
+
+Now that the shape is clear — the provider POSTs to your endpoint — it's worth looking at exactly what arrives and exactly what you send back, because the details of a single **delivery** (one attempt to hand you one event) are where the contract between the two systems lives.
+
+### What Arrives: The Event Payload
+
+The body of the POST is the **event payload** — a description of what happened, almost always as JSON. A few fields recur across essentially every webhook system because the receiver genuinely needs them:
+
+```
+POST /hooks/payments HTTP/1.1
+Host: yourapp.example
+Content-Type: application/json
+Webhook-Id: evt_9f2a7c1b4e
+Webhook-Timestamp: 1717430400
+Webhook-Signature: v1,k8sf2h4Jd9...
+
+{
+  "id": "evt_9f2a7c1b4e",
+  "type": "charge.succeeded",
+  "created": 1717430400,
+  "data": {
+    "charge_id": "chg_51xQ",
+    "amount": 4200,
+    "currency": "usd"
+  }
+}
+```
+
+Four parts of that are load-bearing, and each maps to a problem a later section solves:
+
+- **A unique event id** (`id`) — a value that identifies *this specific event*, stable across redeliveries of it. It's the key you'll use to recognize a duplicate (§4–§5).
+- **An event type** (`type`) — what happened, so your handler can dispatch (a succeeded charge is handled differently from a refund).
+- **A timestamp** (`created`) — when the event actually happened, which lets you reason about ordering and staleness (§6).
+- **The data** — the details of the event itself, enough to act on (or enough to know what to go fetch).
+
+Alongside the body, **headers** carry delivery metadata — commonly a delivery/event id and, critically, a **signature** used to prove the call is authentic (§7).
+
+### What You Send Back: The Status Code Is the Whole Reply
+
+Here is the part newcomers underestimate. The provider doesn't want data back from you — it wants one thing: **did you receive this?** And you answer with the **HTTP status code** of your response, nothing more:
+
+- A **2xx** status (commonly `200 OK`) means **"received."** The provider marks the delivery successful and moves on.
+- **Anything else** — a `4xx`, a `5xx`, a timeout, a connection refused — means **"not received,"** and the provider will **try again later** (§4).
+
+That's the entire reply protocol, and it has a sharp implication: your status code is a *promise*. Returning `2xx` tells the provider "you can forget this event; I've got it." If you return `2xx` before you've actually safely handled the event and then crash, the provider believes it's delivered and won't resend — the event is lost. Conversely, if you do the work but fail to return `2xx` in time, the provider assumes failure and sends it again. The status code isn't a formality; it's the hinge the whole delivery guarantee turns on.
+
+```mermaid
+flowchart TD
+    E["🏦 Event occurs at provider"] --> POST["POST payload → your endpoint"]
+    POST --> R{"Your response?"}
+    R -->|"2xx"| OK["✅ Provider: delivered, done"]
+    R -->|"non-2xx / timeout / no response"| RETRY["🔁 Provider: failed, will retry (§4)"]
+```
+
+### Registration Decides What You Get
+
+The deliveries only happen because of the setup step from §2: **registration** (also called subscribing). When you register, you typically specify two things — the **URL** to call, and *which* event types you want (you rarely want all of them; a payments integration might subscribe to charges and refunds but ignore dozens of other event types the provider emits). Registration is usually done once, through the provider's dashboard or an API, and it's also where you obtain the shared secret used for signatures (§7). Get registration right and the right events start flowing to the right endpoint; that's the setup the rest of the mechanism assumes.
+
+> 💡 **Key Insight**
+>
+> A webhook delivery is a POST whose **body is the event payload** — carrying a unique **event id**, a **type**, a **timestamp**, and the **data** — and whose **reply is nothing but a status code**: a **2xx means "received, forget it,"** and anything else (including a timeout) means "failed, I'll retry." That makes your status code a *promise* the provider acts on, and mis-timing it either loses events (2xx before you're safe) or duplicates them (work done but no 2xx). Which events arrive at all is set once, at **registration**, where you choose the URL and subscribe to specific event types.
+
+### Quick Recap — Anatomy of a Delivery
+
+- The POST body is the **event payload** (usually JSON) carrying a unique **event id**, an event **type**, a **timestamp**, and the **data** to act on — each tied to a later problem.
+- Your reply is **just the HTTP status code**: a **2xx** means "received," and anything else (or a timeout) means "failed, will be retried."
+- The status code is therefore a **promise** — return it too early and you can lose an event; fail to return it in time and the event is resent.
+- **Registration** (done once) sets which **URL** is called and which **event types** you receive, and is where the signature secret (§7) is obtained.
+
+---
