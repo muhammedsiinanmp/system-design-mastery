@@ -320,3 +320,50 @@ There's a subtle race that separates a handler that *mostly* works from one that
 - The check-and-record must be **atomic** (e.g. a uniqueness constraint), or two near-simultaneous redeliveries both pass the guard; the deeper idempotency-key technique is its own topic.
 
 ---
+
+## 6. Ordering — Events Can Arrive Out of Sequence
+
+Duplicates aren't the only way the boundary between two systems distorts what you receive. The other is order: events do not necessarily reach you in the sequence they happened. This one surprises people because it violates a deep intuition — surely a refund can't arrive before the charge it refunds — but over independent deliveries, it can, and a handler that assumes otherwise breaks.
+
+### Why Order Isn't Preserved
+
+Several forces conspire to scramble sequence, all rooted in the fact that each delivery is an independent HTTP request racing across the network:
+
+- **Retries reshuffle timing.** Suppose event A is sent, fails, and enters the backoff schedule (§4). Meanwhile event B, which happened *after* A, is sent and succeeds on the first try. B has now arrived and been processed while A is still waiting to be retried — so you see B before A, even though A happened first.
+- **Concurrent delivery races.** Providers often dispatch deliveries in parallel for throughput, and two requests sent microseconds apart can arrive in either order depending on network paths and your own server's scheduling.
+- **The network has no ordering guarantee.** Separate HTTP requests are exactly that — separate. Nothing about them promises that the one sent first arrives first.
+
+The upshot: **webhook delivery generally does not guarantee order.** Some providers offer partial ordering guarantees for related events, but the safe default assumption — the one that keeps you correct everywhere — is that events can arrive in any order relative to one another.
+
+```mermaid
+sequenceDiagram
+    participant P as 🏦 Provider (real order)
+    participant Y as 🖥️ Your App (arrival order)
+    Note over P: charge happens, then refund
+    P-->>Y: refund event (arrives first! 😵)
+    P-->>Y: charge event (arrives second)
+    Note over Y: naive handler: "refund for a charge I don't have"
+```
+
+### The Defenses
+
+You don't fix ordering — you can't, it's a property of the transport — you design so that order doesn't matter, or matters less. Three techniques, in rough order of robustness:
+
+- **Carry and check timestamps or sequence numbers.** Every event has a timestamp (§3). If you receive an event older than the state you already have, you can recognize it as stale and avoid overwriting newer data with it. This makes handlers *tolerant* of disorder.
+- **Treat the webhook as a signal, not the source of truth.** The most robust pattern: when an event arrives, don't blindly apply the delta it carries — use it as a prompt to **fetch the current state** from the provider's API. If a "refund" arrives before you've recorded the "charge," fetching the charge's current state from the provider shows you the authoritative, up-to-date picture regardless of what order the notifications came in. The webhook tells you *something changed*; the fetch tells you *what's true now*.
+- **Design handlers to be order-insensitive.** Where possible, make each event's handling depend only on the event and the current state, not on assumed prior events — the same mindset as idempotency (§5), applied to sequence.
+
+The second technique is worth internalizing because it dissolves several problems at once: an authoritative re-fetch is naturally robust to disorder *and* to duplicates *and* to missed events, which is why "webhook as a trigger to reconcile" is a mature default for anything important.
+
+> 💡 **Key Insight**
+>
+> Webhook deliveries are independent HTTP requests, so **order is not guaranteed** — retries and concurrent dispatch mean a later event (a refund) can arrive before an earlier one (its charge). You can't fix this on the transport; you design around it. The weakest defense is checking **timestamps** to reject stale data; the strongest is treating the webhook as a **signal to fetch current state** from the provider rather than trusting the delta it carries — a re-fetch is authoritative and so is naturally robust to disorder, duplicates, *and* gaps at once. Assume any order, and prefer reconciling over applying.
+
+### Quick Recap — Ordering
+
+- Because each delivery is an **independent HTTP request**, and retries and parallel dispatch reshuffle timing, **events can arrive out of order** — even a refund before its charge.
+- The safe assumption is that **order is not guaranteed**; some providers offer partial guarantees, but designing for any order keeps you correct everywhere.
+- Defenses range from **checking timestamps/sequence numbers** (reject stale data) to designing **order-insensitive handlers**.
+- The strongest pattern is to treat the webhook as a **signal to fetch current state** from the provider — authoritative, and robust to disorder, duplicates, and gaps together.
+
+---
