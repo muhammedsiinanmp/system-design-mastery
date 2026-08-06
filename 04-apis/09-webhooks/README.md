@@ -455,3 +455,46 @@ Finally, because deliveries are asynchronous and invisible to your users, you ne
 - **Observe and recover:** log every delivery and rely on **manual replay** and **dead-letter** handling, because an asynchronous channel is invisible unless you make it visible.
 
 ---
+
+## 9. When Webhooks Fit — and When They Don't
+
+You now know the full cost of a webhook — the inversion, the duplicates, the ordering, the verification, the endpoint you must operate. As with any tool that carries real cost, the mature skill is knowing the shape it fits and, just as important, the shapes it doesn't, so you reach for it deliberately rather than by reflex.
+
+### Where Webhooks Fit
+
+Webhooks are the right answer when all of these hold:
+
+- **Both parties are servers.** The receiver has a stable public address to be called at — the server-to-server requirement from §2.
+- **The interaction is event-driven** — "tell me when X happens" — rather than "give me data when I ask." The provider knows about the event; you don't and can't easily poll for it.
+- **Event volume is moderate.** Notifications happen occasionally-to-frequently, not as an unrelenting firehose — one HTTP request per event is a comfortable fit at these rates.
+
+This describes an enormous share of real integrations: third-party services notifying your backend of things that happened in them — a payment settling, a document finishing processing, a shipment updating, a repository receiving a push. For all of these, a webhook replaces wasteful polling with a single call at the right moment, and the costs in §4–§8 are well worth paying.
+
+### Where Webhooks Don't Fit
+
+Three shapes are outside the target, each with a better-fitting tool:
+
+| The shape | Why a webhook is wrong | The better fit |
+|---|---|---|
+| **Notifying a browser / end user** | A browser has no public address to be called at (§2) | A held-open connection (**WebSocket**) or a one-way server stream (**SSE**) |
+| **Very high-frequency event streams** | One HTTP request *per event* is enormous overhead at firehose rates | A **streaming platform / message queue** built for high throughput |
+| **Strict ordering or true exactly-once** | Webhooks are unordered and at-least-once by nature (§4, §6) | A **message broker** with ordering and stronger delivery guarantees, between systems you control |
+
+The pattern behind the three: webhooks are for *moderate-rate, order-tolerant, server-to-server notifications across a trust boundary you don't control.* Push past any of those edges — a browser, a firehose, a strict-ordering requirement — and something purpose-built serves better. Notice too that the last two point at message queues and streaming, which are the natural choice **when you own both ends**; webhooks earn their place precisely because they work across a boundary between systems that *don't* share infrastructure.
+
+### Webhooks and Polling Are Not Enemies
+
+One more piece of judgment. Webhooks reduce polling, but they don't abolish it, and the strongest integrations use both. The reconcile pattern from §6 — treat a webhook as a *signal to fetch current state* — is webhooks and a request-response API working together. And a periodic poll as a **backstop** (once an hour, "did I miss anything?") is a sensible safety net against the events that webhooks legitimately lose to expired retry windows (§8). Webhooks make polling rare and cheap; they rarely make it entirely unnecessary for anything critical.
+
+> 💡 **Key Insight**
+>
+> Webhooks fit **moderate-rate, event-driven, server-to-server** notifications across a boundary you don't control — an enormous class of real integrations, where they replace wasteful polling with one call at the right moment. They *don't* fit three shapes: notifying a **browser** (no public address → WebSocket/SSE), **firehose-rate** streams (one POST per event is too much → streaming/queues), and **strict-ordering or exactly-once** needs (→ a message broker, typically when you own both ends). And webhooks don't abolish polling — pairing them with an authoritative re-fetch and a periodic backstop poll is what makes an integration genuinely robust.
+
+### Quick Recap — When Webhooks Fit
+
+- Webhooks fit when **both parties are servers**, the interaction is **event-driven** ("tell me when X happens"), and event **volume is moderate** — a huge share of third-party integrations.
+- They **don't fit browsers** (no public address → WebSocket/SSE), **firehose-rate streams** (one POST per event is too costly → streaming/queues), or **strict-ordering / exactly-once** needs (→ a message broker).
+- The last two point at queues/streaming, which fit **when you own both ends**; webhooks earn their place by working across a boundary between systems that *don't* share infrastructure.
+- Webhooks reduce but don't abolish **polling** — pairing them with an authoritative re-fetch (§6) and a periodic backstop poll is what makes a critical integration robust.
+
+---
