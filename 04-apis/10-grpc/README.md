@@ -147,3 +147,64 @@ This is what "contract-first" actually means in practice: the schema isn't writt
 - "Contract-first" means the schema is written **first and code is produced from it** — an inversion that's the root of gRPC's safety, tooling, and later coupling costs.
 
 ---
+
+## 3. The Call Feels Local — What the Stub Hides
+
+The generated stub from §2 is where gRPC's central illusion is delivered. From the calling code's point of view, invoking a service on another machine looks *identical* to calling a function in the same process — and that resemblance is not cosmetic; it's the whole design goal, and it's worth seeing exactly what it hides.
+
+### At the Call Site, the Network Disappears
+
+Here is what calling the `Pricing` service actually looks like in the caller's code:
+
+```
+resp = pricing.Quote(QuoteRequest(sku="A-100", quantity=3))
+print(resp.price_cents)
+```
+
+That's it. There is no URL, no HTTP client, no JSON to build or parse, no status code to inspect by hand. You construct a typed request object, call a method, and get a typed response object back — the same shape as calling any local function. The remote service, running on another machine possibly across the data center, is invoked as if it were a library you imported. This is the RPC promise Topic 03 named — "make a remote call feel like a local one" — now visible in a single line.
+
+And because the request and response types are *generated* (§2), your editor autocompletes their fields, your compiler rejects a typo or a wrong type, and a change to the contract that breaks this call site is caught before the code ever runs. The call isn't just concise; it's *checked*.
+
+### What the Stub Does Under the Hood
+
+The single line above is a facade over a sequence of steps the stub performs so you don't have to. Understanding them is understanding both the convenience and, later, its limits:
+
+1. **Marshal** — serialize the `QuoteRequest` object into compact Protobuf bytes (Topic 02's format).
+2. **Send** — open or reuse a connection to the `Pricing` server and transmit the bytes as a call to the `Quote` operation.
+3. **Wait** — block (or await) while the request crosses the network, the server runs your implementation, and the reply comes back.
+4. **Unmarshal** — deserialize the returned bytes into a `QuoteResponse` object and hand it back to your code.
+
+```mermaid
+sequenceDiagram
+    participant App as 🧑‍💻 Your code
+    participant Stub as 🔌 Generated stub
+    participant Srv as 🖥️ Pricing server
+    App->>Stub: pricing.Quote(req)  ← looks local
+    Stub->>Stub: marshal req → Protobuf bytes
+    Stub->>Srv: send over the network
+    Srv->>Srv: run Quote() implementation
+    Srv-->>Stub: response bytes
+    Stub->>Stub: unmarshal → QuoteResponse
+    Stub-->>App: return resp  ← looks local
+```
+
+The server side is the mirror image: gRPC receives the bytes, unmarshals them into a `QuoteRequest`, calls the `Quote` method *you* implemented on the generated skeleton, and marshals whatever you return. You write pricing logic; the generated code handles everything between the wire and your function.
+
+### The Value — and the Seed of the Cost
+
+What this buys is significant and worth naming plainly: **no manual serialization, no URL or endpoint wrangling, no drift between what the caller sends and what the callee expects, and full type-checking across a network boundary.** Two services in different languages, generated from the same `.proto`, call each other as if they shared a codebase.
+
+But hold onto step 3 — *wait while it crosses the network*. That's the seam. A real local function call doesn't traverse a network, can't time out, can't find the other side unreachable. A gRPC call can do all three, because it only *looks* local; underneath, it is still a message to another machine. The illusion is powerful and productive, and §6 and §7 are about the places it necessarily leaks. For now, the point is how convincingly, and how usefully, the stub sustains it.
+
+> 💡 **Key Insight**
+>
+> The generated **stub** delivers gRPC's core illusion: calling a remote service is a single typed line — `pricing.Quote(req)` — with no URL, no JSON, no status code, indistinguishable from a local function call and fully checked by the compiler. Under that one line the stub **marshals** the request to Protobuf, **sends** it, **waits** for the network round trip, and **unmarshals** the reply, while the server runs your implementation of the generated interface. The convenience is real — cross-language calls with no drift and full type-safety — but the "wait for the network" step is the seam where the illusion will leak, because a call that only *looks* local can still time out, fail, and be unreachable.
+
+### Quick Recap — The Call Feels Local
+
+- At the call site, a gRPC call is a **typed method call** — `pricing.Quote(req)` — with no URL, JSON, or status code, looking exactly like a local function and checked by the compiler.
+- Under the hood the **stub marshals** the request to Protobuf, **sends**, **waits** for the round trip, and **unmarshals** the reply; the server runs your implementation of the generated skeleton.
+- The payoff is **no manual serialization, no caller/callee drift, and type-safety across the network** — even between services in different languages.
+- The **"wait for the network" step** is the seam: the call only *looks* local, so it can still time out, fail, or find the other side unreachable — the leaks of §6–§7.
+
+---
