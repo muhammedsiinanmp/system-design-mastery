@@ -265,3 +265,48 @@ This is a capability an ordinary request/response API simply doesn't have native
 - This range is impossible in one-shot request/response and exists because gRPC's transport (§5) can **hold a call open** while messages flow.
 
 ---
+
+## 5. HTTP/2 Underneath — Why It's Fast and Can Stream
+
+Two claims from earlier sections have gone unexplained: that gRPC makes high call *volume* cheap (§1), and that it can *stream* in four shapes (§4). Both come from the transport gRPC runs on — **HTTP/2** — and specifically from one property of it. HTTP/2 is its own deep topic in the networking material; here you need only the working idea and why it matters to gRPC.
+
+### The One Property That Matters: Multiplexing
+
+Older HTTP (HTTP/1.1) has a limitation: on a single connection, requests are effectively handled one at a time — a request must wait for the previous response before its own can proceed, so a slow response holds up everything behind it. To do many things at once, clients open *many* connections, each with its own setup cost.
+
+HTTP/2 removes this with **multiplexing**: a single connection carries **many independent calls at the same time**, interleaved, none waiting for the others. Each call is an independent **stream** within the one connection; a slow call doesn't block the fast calls sharing the pipe. One connection, many concurrent conversations.
+
+```mermaid
+flowchart TD
+    subgraph H1["🔴 One HTTP/1.1 connection"]
+        A1["call A"] --> B1["then call B"] --> C1["then call C"]
+    end
+    subgraph H2["🟢 One HTTP/2 connection (multiplexed)"]
+        M["single connection"] --> SA["stream: call A"]
+        M --> SB["stream: call B"]
+        M --> SC["stream: call C"]
+    end
+```
+
+### Why This Makes gRPC Fast at Volume
+
+Recall §1's problem: a service making thousands of calls a second to its neighbours. On a one-at-a-time transport that means either serializing those calls (slow) or maintaining a large pool of connections (expensive — each connection is memory and setup on both ends). HTTP/2's multiplexing collapses that: a service can hold **one long-lived connection** to each neighbour and push thousands of concurrent calls through it, no per-call connection setup, no head-of-line stalls between independent calls. The connection is established once and reused continuously. Combine that with Protobuf's compact bytes (Topic 02) — small payloads *and* a cheap way to send lots of them at once — and you have gRPC's performance, from the two ingredients working together.
+
+It's worth being precise about the source, because Topic 03 flagged the common error of crediting gRPC's speed to the RPC *paradigm*. It isn't the paradigm. The speed comes from **transport and format** — HTTP/2's multiplexing plus Protobuf's compact binary encoding. The procedure-call model is about how the API is *shaped*; the performance is a separate axis that gRPC happens to bundle with it.
+
+### Why This Enables Streaming
+
+Multiplexing is also exactly what makes §4's streaming possible. Because an HTTP/2 stream is a call that stays open with messages flowing in both directions, gRPC maps each of its call shapes directly onto it: a unary call is a stream with one message each way; a server-streaming call is a stream where the server keeps sending; a bidirectional call is a stream both sides write to freely. Streaming isn't something gRPC bolted on beside HTTP/2 — it's HTTP/2's open, bidirectional streams surfaced as typed, generated method calls. The transport had the capability; gRPC gave it a contract and a function-call face.
+
+> 💡 **Key Insight**
+>
+> gRPC runs on **HTTP/2**, and the property that matters is **multiplexing**: one connection carries many independent calls at once, each an interleaved stream, none blocking the others. That's what makes high volume cheap — a service holds **one long-lived, reused connection** per neighbour and pushes thousands of concurrent calls through it, no per-call setup, no cross-call stalls — and, paired with Protobuf's compact bytes (Topic 02), it's the whole source of gRPC's speed. (Not the RPC paradigm — as Topic 03 warned, speed is a *transport-and-format* property.) The same open, bidirectional streams are exactly what gRPC surfaces as its four typed call shapes (§4).
+
+### Quick Recap — HTTP/2 Underneath
+
+- gRPC runs on **HTTP/2**, whose key property is **multiplexing**: one connection carries many independent calls concurrently, each a stream, none blocking the others.
+- That makes volume cheap — a service keeps **one long-lived connection** per neighbour and sends thousands of concurrent calls through it, without per-call connection setup or head-of-line stalls.
+- Paired with **Protobuf's compact bytes** (Topic 02), multiplexing is the real source of gRPC's speed — which comes from **transport and format**, not the RPC paradigm (as Topic 03 warned).
+- HTTP/2's open, bidirectional **streams** are exactly what gRPC surfaces as its four typed call shapes (§4) — streaming is the transport's capability given a contract.
+
+---
