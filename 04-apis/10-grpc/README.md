@@ -363,3 +363,47 @@ Finally, a call can carry **metadata**: key-value pairs sent alongside the reque
 - **Metadata** carries cross-cutting concerns (auth tokens, tracing ids) as key-value pairs beside the typed message, keeping the contract about domain data — the machinery a local call never needs but a remote one must.
 
 ---
+
+## 7. Where the Illusion Leaks — The Costs
+
+gRPC's power is the illusion that a remote call is a local one (§3), bought with a binary, schema-bound, HTTP/2 protocol (§2, §5). This section is the bill. None of these is a defect — each is the *direct consequence* of a choice that bought something earlier, which is why they can't simply be fixed away. They're the price of the illusion, and knowing them is what tells you where gRPC belongs (§8–§9).
+
+### Browsers Can't Speak It Directly
+
+The most consequential limit: **a web browser cannot make a gRPC call directly.** gRPC needs precise control over HTTP/2 framing and sends raw binary, and browsers don't expose the low-level control it requires. So a browser-facing endpoint can't be plain gRPC — it needs a **proxy** that translates between something the browser *can* speak and gRPC behind it (the variant built for this, grpc-web, still relies on such a proxy). This single fact is why gRPC is an *internal* technology: the moment the caller is a browser, gRPC alone can't reach it. It bought binary-HTTP/2 speed and spent the universal reach that lets anything call a REST endpoint.
+
+### The Wire Is Unreadable
+
+Protobuf's compactness (Topic 02) comes from dropping field names and text encoding — which also means **you cannot read a gRPC call by looking at it.** With REST and JSON you can eyeball a request in logs, replay it with a generic HTTP tool, and see exactly what was sent. A gRPC call on the wire is opaque bytes, meaningless without the `.proto` schema and tooling to decode them. Debugging, ad-hoc inspection, and casual "just curl it" testing all get harder and require gRPC-aware tools. The size win and the readability loss are the same coin.
+
+### You're Coupled to the Schema and the Toolchain
+
+Contract-first code generation (§2) is a benefit and a commitment. Every service in the call graph must **share the `.proto`, run the code generator, and rebuild** when the contract changes. That's a real toolchain in every language you use — a build-time dependency REST's "just send JSON" never imposes. And the tight coupling that catches mismatches at compile time (§2) is still *coupling*: caller and callee are bound to one contract, which is an asset when you own both and a burden when you don't.
+
+### The Contract Must Be Versioned With Discipline
+
+Because callers are generated from the contract, **changing it carelessly breaks them.** Protobuf's numbered fields (Topic 02) make *compatible* evolution possible — add new fields without disturbing old readers — but only if you follow the rules: never reuse or renumber a field, add rather than repurpose, and never remove something callers still depend on. Evolving a gRPC contract across independently-deployed services is a discipline (with its own dedicated topic later in this phase); get it wrong and a schema change ripples out as broken builds or, worse, silently misread data.
+
+### Load-Balancing Long-Lived Connections Is Its Own Problem
+
+gRPC's speed comes partly from **one long-lived, multiplexed connection** per neighbour (§5) — but that fights the ordinary way we balance load. A simple connection-level (L4) balancer distributes *connections*, and since a gRPC client holds *one* connection carrying all its calls, every call rides to whichever single backend that connection landed on — no balancing at all. Spreading gRPC calls across backends needs a balancer that understands individual calls/streams (L7), or client-side load balancing. The long-lived connection that made calls cheap is exactly what makes naïve load-balancing ineffective.
+
+```mermaid
+flowchart TD
+    ILL["✨ 'It's just a function call'"] --> L1["🌐 browsers can't call it → need a proxy"]
+    ILL --> L2["🔍 wire is opaque → need tooling to debug"]
+    ILL --> L3["🔗 shared .proto + codegen in every service"]
+    ILL --> L4["📈 careless contract change breaks generated callers"]
+    ILL --> L5["⚖️ one long-lived connection → L4 balancing fails"]
+```
+
+> ⚠️ **Every gRPC cost is the flip side of a benefit, which is why none can be fixed away.** It bought binary-HTTP/2 speed and spent **universal reach** — browsers can't call it without a proxy. It bought compactness and spent **readability** — the wire is opaque without the schema. It bought compile-time safety and spent **decoupling** — every service shares the `.proto` and its toolchain, and the contract must be versioned with discipline or generated callers break. And the long-lived multiplexed connection that made calls cheap **defeats naïve (L4) load balancing**, demanding call-aware routing. These aren't bugs to route around; they're the shape of the trade, and they're exactly why gRPC is an internal tool (§8).
+
+### Quick Recap — Where the Illusion Leaks
+
+- **Browsers can't call gRPC directly** (it needs low-level HTTP/2 control and sends binary) — a browser-facing edge needs a translating **proxy**, which is why gRPC is internal.
+- **The wire is unreadable** without the schema and tooling — the flip side of Protobuf's compactness, making debugging and ad-hoc testing harder.
+- **Schema + toolchain coupling**: every service shares the `.proto`, runs code generation, and must **version the contract with discipline** or break generated callers.
+- **Long-lived multiplexed connections defeat naïve (L4) load balancing** — all a client's calls ride one connection to one backend, so gRPC needs call-aware (L7) or client-side balancing.
+
+---
