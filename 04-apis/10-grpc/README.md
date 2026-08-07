@@ -92,3 +92,58 @@ That wish list is, almost exactly, the specification for gRPC. It's what you get
 - The internal wish list — call it like a **typed function**, checked at **build time**, sent as **compact bytes**, able to **stream** — is essentially the specification for gRPC.
 
 ---
+
+## 2. Contract First — Define the Service, Generate Both Sides
+
+The first wish from §1 — a checked, function-like call — is granted by one move that defines gRPC's whole character: you don't write the calling code or the routing by hand at all. You write a **contract**, and a build step generates both sides from it. Everything else follows from that.
+
+### The `.proto` Gains a `service`
+
+Topic 02 introduced the `.proto` file as the place you define Protobuf **messages** — the typed shapes of your data. gRPC adds one thing on top: a **`service`**, a named group of **`rpc`** methods, each declaring the operation's name, its request message, and its response message.
+
+```proto
+// messages — the data shapes (this is Protobuf, from Topic 02)
+message QuoteRequest  { string sku = 1; int32 quantity = 2; }
+message QuoteResponse { int64  price_cents = 1; string currency = 2; }
+
+// service — the operations (this is the gRPC part)
+service Pricing {
+  rpc Quote(QuoteRequest) returns (QuoteResponse);
+}
+```
+
+Read that `service` block as an interface: "there is a service called `Pricing`; it has an operation `Quote` that takes a `QuoteRequest` and returns a `QuoteResponse`." It is a complete, precise, machine-readable description of *how to call this service* — the exact operations, and the exact type of every input and output. Note what's absent: no URL, no HTTP verb, no hand-built JSON. The unit is an **operation**, named like a function, which is the RPC paradigm Topic 03 described — here made concrete.
+
+### One Contract Generates Two Sides
+
+The `.proto` file is not documentation; it's *source*. A compiler (the Protobuf/gRPC toolchain) reads it and **generates code in your language for both ends of the call**:
+
+- On the **client** side, it generates a **stub** — an object with a real `Quote(...)` method you call directly, that takes a `QuoteRequest` and returns a `QuoteResponse`. Calling the remote service is calling that method.
+- On the **server** side, it generates a **skeleton** (a base interface) — a `Pricing` interface with a `Quote` method for you to *implement* with the actual pricing logic. gRPC handles receiving the call and routing it to your implementation.
+
+```mermaid
+flowchart TD
+    P["📄 pricing.proto<br/>(service + messages)"] --> GEN["⚙️ code generator"]
+    GEN --> STUB["🟢 client stub<br/>quote() method to call"]
+    GEN --> SKEL["🟢 server skeleton<br/>Pricing interface to implement"]
+    STUB -.->|"both generated from<br/>one contract → always in sync"| SKEL
+```
+
+### Why This Changes Everything Downstream
+
+Because both sides are generated from the *same* file, they cannot silently disagree. If the server changes `Quote` to require a new field and regenerates, the client's generated stub changes too, and code that doesn't match **fails to compile** — the runtime mismatch of §1 becomes a build-time error, exactly the wish. The contract is a single source of truth that the compiler enforces on everyone.
+
+This is what "contract-first" actually means in practice: the schema isn't written *after* the code to describe it, nor maintained *alongside* the code and hoped to match — the schema is written *first* and the code is *produced from it*. That inversion — contract as the source, code as the output — is the root from which gRPC's type-safety, its tooling, and (as later sections show) its coupling costs all grow.
+
+> 💡 **Key Insight**
+>
+> gRPC's defining move is **contract-first code generation**: you write a `.proto` **`service`** of typed **`rpc`** operations (atop Protobuf messages from Topic 02), and one toolchain generates *both* a client **stub** to call and a server **skeleton** to implement. Because both ends come from the same file, they can't drift — a mismatch is a **compile error, not a runtime failure**, granting §1's wish for a build-time-checked call. The schema is the *source* and the code is the *output*, and that single inversion is the root of gRPC's safety, its tooling, and the coupling costs that come later.
+
+### Quick Recap — Contract First
+
+- A gRPC `.proto` adds a **`service`** — a set of **`rpc`** operations, each naming its request and response message types (the messages being Protobuf, from Topic 02).
+- The `.proto` is **source, not documentation**: a toolchain generates a client **stub** (a method to call) and a server **skeleton** (an interface to implement) from it.
+- Because both ends are generated from **one contract**, they can't silently disagree — a mismatch becomes a **build-time error**, the §1 wish granted.
+- "Contract-first" means the schema is written **first and code is produced from it** — an inversion that's the root of gRPC's safety, tooling, and later coupling costs.
+
+---
