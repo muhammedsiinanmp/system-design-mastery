@@ -208,3 +208,60 @@ But hold onto step 3 — *wait while it crosses the network*. That's the seam. A
 - The **"wait for the network" step** is the seam: the call only *looks* local, so it can still time out, fail, or find the other side unreachable — the leaks of §6–§7.
 
 ---
+
+## 4. Four Ways to Call — Unary and Streaming
+
+The last item on §1's wish list was "allow more than one-shot request/response," and it's the one that most distinguishes gRPC from an ordinary API. A REST call is fundamentally one request, one response. gRPC offers **four** call shapes, because the transport underneath (§5) can hold a call open and let messages flow while it's open. You choose the shape per `rpc` method, right in the contract.
+
+### The Four Shapes
+
+- **Unary** — one request, one response. The ordinary call, exactly like §3's `Quote`: ask once, get one answer. The overwhelming majority of calls are unary, and it's the right default.
+- **Server streaming** — one request, *many* responses. The client asks once, and the server sends back a *sequence* of messages over time before finishing. Good for a large result delivered in chunks, or a feed of updates in response to a single subscription.
+- **Client streaming** — *many* requests, one response. The client sends a sequence of messages and the server replies once at the end. Good for uploading a large input in pieces, or aggregating a stream of data points into a single summary.
+- **Bidirectional streaming** — *many* requests and *many* responses, independently, over one open call. Both sides send whenever they have something, in any interleaving, until the call ends. Good for genuinely interactive, long-lived exchanges between two services.
+
+In the contract, streaming is declared with the `stream` keyword on the request and/or response type:
+
+```proto
+service Analytics {
+  rpc GetReport(ReportRequest) returns (ReportResponse);                 // unary
+  rpc TailEvents(TailRequest)  returns (stream Event);                   // server streaming
+  rpc UploadRows(stream Row)   returns (UploadSummary);                  // client streaming
+  rpc LiveSync(stream Change)  returns (stream Change);                  // bidirectional
+}
+```
+
+```mermaid
+flowchart LR
+    subgraph U["Unary"]
+        UC["client: 1"] --> US["server: 1"]
+    end
+    subgraph SS["Server streaming"]
+        SC["client: 1"] --> SSV["server: many →→→"]
+    end
+    subgraph CS["Client streaming"]
+        CSC["client: many →→→"] --> CSV["server: 1"]
+    end
+    subgraph BD["Bidirectional"]
+        BDC["client: many ↔"] --> BDV["server: many ↔"]
+    end
+```
+
+### Streaming Is Part of the Contract, Not a Bolt-On
+
+The important thing is that these aren't four separate features with four separate APIs — they're four shapes of the *same* generated-stub mechanism from §3. A server-streaming method generates a stub call that hands you an iterable of responses instead of a single one; a client-streaming method generates one you push messages into. The same contract-first, typed, code-generated model (§2) covers all four, so streaming keeps every benefit of §3 — it's type-checked, marshalled to Protobuf, and called like local code that happens to yield or accept a sequence.
+
+This is a capability an ordinary request/response API simply doesn't have natively, and it exists because gRPC's transport was chosen to support it. That transport is the next section — and it's also the reason unary calls are so cheap in the first place.
+
+> 💡 **Key Insight**
+>
+> gRPC offers **four call shapes**, chosen per method in the contract: **unary** (1→1, the everyday default), **server streaming** (1→many, a sequence of responses), **client streaming** (many→1, a sequence of inputs summarized), and **bidirectional** (many↔many, interactive and long-lived). They aren't bolt-ons — all four are the *same* generated-stub, contract-first, Protobuf-typed mechanism from §3, just yielding or accepting sequences instead of single values. This range — impossible in plain one-shot request/response — exists because the transport underneath (§5) can hold a call open, which is the next section.
+
+### Quick Recap — Four Ways to Call
+
+- gRPC has **four call shapes**, declared per `rpc` method: **unary** (1→1), **server streaming** (1→many), **client streaming** (many→1), and **bidirectional** (many↔many).
+- **Unary is the default** and the vast majority of calls; the streaming shapes fit large or chunked results, piecewise uploads, and interactive long-lived exchanges.
+- Streaming is declared with `stream` in the contract and is the **same generated-stub mechanism** as a unary call — still typed, still Protobuf, still called like local code.
+- This range is impossible in one-shot request/response and exists because gRPC's transport (§5) can **hold a call open** while messages flow.
+
+---
