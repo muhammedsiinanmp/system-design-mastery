@@ -310,3 +310,56 @@ Multiplexing is also exactly what makes §4's streaming possible. Because an HTT
 - HTTP/2's open, bidirectional **streams** are exactly what gRPC surfaces as its four typed call shapes (§4) — streaming is the transport's capability given a contract.
 
 ---
+
+## 6. Call Semantics — Deadlines, Cancellation, Status, Metadata
+
+Everything so far has sold the illusion (§3): a gRPC call looks like a local function call. This section is the first place gRPC itself admits the illusion is only that. A local function returns or throws, promptly, always. A call across a network can hang, be abandoned, or fail in ways that have nothing to do with your logic — so gRPC gives every call a set of built-in semantics for exactly those situations. Using them well is the difference between a robust service and one that mysteriously hangs.
+
+### Deadlines — Every Call Should Have One
+
+A local function call doesn't need a timeout; a remote one always does, because the other side might never answer. gRPC builds this in as a **deadline**: the caller sets, per call, "I will wait at most *this long* for a result." If the deadline passes before the response arrives, the call fails immediately with a specific status (below), rather than blocking forever.
+
+The feature that makes deadlines powerful in a real system is **propagation across a call chain**. When service A calls B with a 500 ms deadline, and B must call C to answer, B passes the *remaining* time down to C. If A's 500 ms is already half gone, C is told it has ~250 ms. The whole *tree* of calls behind one request shares a single shrinking budget, so the moment the top-level deadline is blown, every downstream call still in flight gives up too — instead of B and C grinding on to produce an answer A stopped waiting for. Without propagated deadlines, a slow leaf service can pin resources all the way up the chain long after the work became useless.
+
+```mermaid
+flowchart LR
+    A["🅰️ Service A<br/>deadline: 500ms"] -->|"~450ms left"| B["🅱️ Service B"]
+    B -->|"~250ms left"| C["🅲 Service C"]
+    C -.->|"budget blown →<br/>whole tree gives up together"| A
+```
+
+### Cancellation — Stopping Work No One Wants
+
+Closely related: a caller can **cancel** an in-flight call (the user navigated away, a parallel call already failed the request, the deadline fired). Cancellation propagates to the server, signalling it to stop working and release resources rather than finishing a computation whose result will be discarded. In a streaming call (§4), either side can end the stream. This matters most under load, where wasted work on abandoned calls is exactly what you can't afford.
+
+### Status Codes — gRPC's Own Vocabulary
+
+When a call ends, it carries a **status code** saying how it went — and gRPC defines its *own* set, distinct from HTTP's. Every call returns `OK` on success or one of a fixed set of error codes, including:
+
+| Status | Meaning |
+|---|---|
+| `OK` | Success |
+| `DEADLINE_EXCEEDED` | The deadline passed before completion |
+| `UNAVAILABLE` | The server couldn't be reached (often retriable) |
+| `NOT_FOUND` / `ALREADY_EXISTS` | Domain outcomes, like their REST cousins |
+| `INVALID_ARGUMENT` | The caller sent something wrong |
+| `PERMISSION_DENIED` / `UNAUTHENTICATED` | Authorization outcomes |
+
+Because the set is small and uniform, generic machinery — retry logic, monitoring, tracing — can act on outcomes consistently across every service without parsing bespoke error bodies. A caller can, for instance, safely retry `UNAVAILABLE` and never retry `INVALID_ARGUMENT`, as a general rule.
+
+### Metadata — Key-Value Headers Alongside the Call
+
+Finally, a call can carry **metadata**: key-value pairs sent alongside the request and response messages, separate from the typed body. Metadata is where cross-cutting concerns ride — an authentication token, a tracing/correlation id, other context — the gRPC counterpart to HTTP headers. It keeps the message contract (§2) about the *domain data* while auth, tracing, and similar travel beside it. (How auth tokens and mutual TLS actually secure a gRPC call belongs to the security material; here it's enough that metadata is the channel they use.)
+
+> 💡 **Key Insight**
+>
+> A gRPC call only *looks* local (§3); these semantics are gRPC admitting it isn't. **Deadlines** cap how long a caller waits and, crucially, **propagate down a call chain** so a whole request tree shares one shrinking budget and abandons together. **Cancellation** stops work whose result is no longer wanted. **Status codes** — gRPC's own small, uniform set (`OK`, `DEADLINE_EXCEEDED`, `UNAVAILABLE`, …) — let generic retry, monitoring, and tracing act on every call consistently. And **metadata** carries cross-cutting concerns like auth and tracing beside the typed body. A local call needs none of these; a networked one needs all of them.
+
+### Quick Recap — Call Semantics
+
+- **Deadlines** cap how long a caller waits per call and **propagate across a chain** — the whole request tree shares one shrinking budget and gives up together, freeing resources on a blown deadline.
+- **Cancellation** lets a caller (or a fired deadline) tell the server to stop unwanted work and release resources — vital under load.
+- gRPC has its **own status-code set** (`OK`, `DEADLINE_EXCEEDED`, `UNAVAILABLE`, `INVALID_ARGUMENT`, …), small and uniform so generic retry/monitoring/tracing act consistently across services.
+- **Metadata** carries cross-cutting concerns (auth tokens, tracing ids) as key-value pairs beside the typed message, keeping the contract about domain data — the machinery a local call never needs but a remote one must.
+
+---
