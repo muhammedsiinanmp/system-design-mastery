@@ -494,3 +494,78 @@ The through-line is the same one that governs every powerful, heavyweight tool: 
 - **Judge carefully at small scale and in polyglot/loosely-governed settings** — its benefits are benefits of scale and coordination; reach for the lightest tool that meets the need and adopt gRPC only where its trade is repaid.
 
 ---
+
+## 10. Putting It All Together — An Internal Microservices Fan-Out
+
+A commerce platform handles checkout. A single "place order" request from a customer, once it's past the public edge, fans out into a burst of internal calls: the order service must get a price, confirm stock, screen for fraud, and gather recommendations before it can respond. Every one of those internal hops is gRPC, and this is exactly its home — the calls are internal, high-volume, own-both-ends, and latency-critical (§8). Watch each part of the document appear in one request.
+
+### The Request Arrives and Fans Out
+
+The customer's browser sends an ordinary **REST** request to the platform's edge — readable, universal, browser-friendly (§8). The edge translates it into internal work and calls the **order** service over gRPC. The order service, to build its answer, calls three services, each a generated **stub** method (§2–§3) that reads like a local function:
+
+```
+price  = pricing.Quote(QuoteRequest(cart=cart))          // unary
+stock  = inventory.Check(CheckRequest(items=cart.items)) // unary
+risk   = fraud.Score(ScoreRequest(order=order))          // unary
+```
+
+No URLs, no JSON assembly, each call type-checked against the shared contract at build time. On the wire they're compact Protobuf, and — because all three go to services the order service already holds **long-lived HTTP/2 connections** to — they're multiplexed over those existing connections with no per-call setup (§5). Three concurrent remote calls cost about what three concurrent local calls would, which is the entire point.
+
+### A Deadline Governs the Whole Tree
+
+The edge stamped the request with a **500 ms deadline**, and gRPC **propagates** it (§6). The order service's calls inherit the remaining budget; when `fraud.Score` in turn calls a downstream model service, that call gets whatever time is left, not a fresh 500 ms. The whole call tree shares one shrinking clock, so nothing downstream keeps working on an answer the customer stopped waiting for.
+
+A recommendations panel needs a *sequence* of suggestions, so that call is **server streaming** (§4) — one request, a stream of `Recommendation` messages the order service forwards as they arrive, rather than blocking for the full list.
+
+```mermaid
+flowchart TD
+    B["🌐 Browser"] -->|"REST, 500ms budget"| E["🚪 Edge"]
+    E -->|"gRPC (deadline propagated)"| O["⚙️ Order service"]
+    O -->|"unary"| PR["💲 Pricing"]
+    O -->|"unary"| IN["📦 Inventory"]
+    O -->|"unary"| FR["🕵️ Fraud"]
+    O -->|"server streaming"| RE["✨ Recommendations"]
+    FR -.->|"slow → DEADLINE_EXCEEDED"| O
+```
+
+### Reality Tests the Design
+
+Then the fraud service has a slow moment. Its call doesn't hang the whole checkout: the propagated deadline fires and the call returns **`DEADLINE_EXCEEDED`** (§6) — a typed status the order service handles deliberately (here, proceed with a conservative default and flag for review) rather than a mystery timeout. Because the status set is uniform (§6), the same handling and monitoring apply to any service that breaches its budget.
+
+When the on-call engineer investigates, they can't just read the calls off the wire — they're opaque Protobuf (§7) — so they lean on the **tracing id carried in metadata** (§6) to follow the request across services in the tracing system. The debugging story is different from REST's "eyeball the JSON," and the team invested in gRPC-aware tooling precisely because §7 told them they'd have to.
+
+### Why This Pays Off Here — and Only Here
+
+Every trade gRPC made lands on the right side of the ledger in this scenario: the binary Protobuf and multiplexed HTTP/2 make a high-volume fan-out cheap; the generated contracts mean pricing, inventory, and fraud can't silently drift from what the order service expects; deadlines keep a slow dependency from cascading into a stuck checkout. And every cost is affordable *because it's internal* — no browser is on these hops, the team owns every service and its `.proto`, and the volume repays the toolchain many times over. The very same design, pushed out to the public edge, would be a disaster (§9) — which is exactly why the edge stayed REST.
+
+> **We didn't choose gRPC because it's fast in the abstract. We chose it for the checkout fan-out because we own every service on that path, we make these calls millions of times a day, and a slow or drifting internal call is a customer-facing outage. The generated contracts stop pricing and order from disagreeing; the propagated deadline stops a slow fraud check from hanging the whole order; the binary multiplexed transport makes a dozen internal hops cost almost nothing. And we kept the public edge on REST, because the moment a browser is on the other end, every reason gRPC won here reverses. Same company, two protocols, one line between them: who's on the other end of the call.**
+
+---
+
+## 11. Final Recap
+
+| gRPC choice | What it buys | What it costs |
+|---|---|---|
+| **Contract-first codegen** (§2) | Compile-time-checked calls; no caller/callee drift | Shared `.proto` + toolchain in every service; disciplined versioning |
+| **Generated stub** (§3) | A remote call that reads like a typed local function | The illusion leaks — it can still time out, fail, be unreachable |
+| **Streaming call types** (§4) | Unary + 3 streaming shapes, one model | More than plain request/response can offer, but only internally |
+| **HTTP/2 transport** (§5) | Multiplexed volume + streaming on one connection | Long-lived connections defeat naïve (L4) load balancing |
+| **Protobuf on the wire** (Topic 02) | Compact, fast payloads | Opaque — unreadable without the schema and tooling |
+| **Call semantics** (§6) | Deadlines, cancellation, uniform status, metadata | The machinery a local call never needed — you must use it |
+| **Internal-only reach** (§7–§8) | Optimized for owned, high-volume call paths | Browsers can't call it; public reach needs REST at the edge |
+
+### The One Thing to Remember
+
+> **gRPC makes a call to another machine feel like calling a local function — and everything about it is the two sides of that one bargain. To create the illusion, it makes the contract the source of truth and generates both the caller's stub and the callee's skeleton from it, so a mismatch is a compile error, not a 2 a.m. incident; it runs on HTTP/2, whose multiplexing lets one connection carry thousands of concurrent calls and every streaming shape; and it sends Protobuf, so each call is tiny on the wire. That's the speed and the safety. The price is everything the illusion has to hide: the call can still fail because the network can, so it needs deadlines, cancellation, and its own status codes; the wire is unreadable, the schema and toolchain couple every service together, and a browser can't call it at all. Those costs are fixed and the benefits scale, so gRPC only comes out ahead in one place — internal, high-volume, synchronous calls where you own both ends — which is exactly where "resources face outward, procedures face inward" comes from. Keep REST at the edge for the world; speak gRPC between the services behind it. The whole decision is one question: who's on the other end of the call?**
+
+---
+
+## What's Next
+
+> **Topic 11 — API Gateways**
+
+This document kept pointing at a boundary it never quite crossed: the **edge**. A browser sends a readable REST request; something translates it into a fan-out of fast internal gRPC calls; results come back and are shaped into one response. That "something" — the single front door where the public world meets your internal services — has been lurking in the case study and the coexistence diagram, unnamed and undescribed.
+
+That front door is the next topic. **API gateways**: the one entry point that fronts a fleet of services and takes on the concerns that don't belong in any single one of them — routing a request to the right service, authenticating and rate-limiting before anything internal is touched, translating between the public protocol and the internal ones, and aggregating several backend calls into a single response. You've seen how services talk to each other; next you'll see the door they all sit behind.
+
+---
