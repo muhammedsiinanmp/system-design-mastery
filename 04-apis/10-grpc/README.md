@@ -407,3 +407,56 @@ flowchart TD
 - **Long-lived multiplexed connections defeat naïve (L4) load balancing** — all a client's calls ride one connection to one backend, so gRPC needs call-aware (L7) or client-side balancing.
 
 ---
+
+## 8. gRPC, REST, and Who's on the Other End
+
+With the benefits (§2–§6) and the costs (§7) both on the table, the choice between gRPC and an ordinary REST/HTTP+JSON API stops being a matter of taste and becomes almost mechanical. The two aren't rivals competing for the same job; they're optimized for *opposite* situations, and the deciding question is simple: **who is on the other end of the call?**
+
+### The Costs of One Are the Strengths of the Other
+
+Lay gRPC's costs beside REST's and notice they line up as exact opposites:
+
+| | gRPC | REST / HTTP + JSON |
+|---|---|---|
+| Reach | Internal only (browsers need a proxy) | **Universal** — any client, any language, browsers |
+| Wire | Compact binary, unreadable | **Human-readable** text |
+| Contract | Strict, generated, compile-checked | Loose, by convention, documented |
+| Coupling | Tight (shared `.proto` + toolchain) | **Loose** — just an HTTP client |
+| Speed at volume | **Very fast** (HTTP/2 + Protobuf) | Slower (text, parsing, more connections) |
+| Streaming | **Four call shapes** built in | One-shot request/response |
+
+Every row where gRPC wins, REST loses, and vice versa. gRPC's opacity, coupling, and browser-unreachability are precisely the price of its speed and safety; REST's universality and readability are precisely the price of its verbosity and looseness. There is no row where one dominates on every axis — which is the clearest possible sign that they're built for different callers.
+
+### The Deciding Question: Own Both Ends, or Not?
+
+That table collapses to a single decision. **Do you own both ends of the call?**
+
+- **You own both ends** — an internal service calling another internal service, both written and deployed by your team(s), at high volume, where speed and a strict contract are assets and browser reach is irrelevant. This is gRPC's home. The coupling is fine because you control both sides; the opacity is manageable because you have the tooling; the speed compounds because the volume is high.
+- **You don't own the other end** — a public API, a browser front-end, a third-party integration, where callers are strangers who need to reach you from anything with minimal ceremony. This is REST's home. Universality and readability are worth far more than the speed you'd gain, and gRPC's coupling and browser problem are disqualifying.
+
+This is the "resources face outward, procedures face inward" split the architectural-styles topic named — here explained by the mechanics: gRPC's every trade *assumes* you control both sides, and every one of those trades becomes a liability the moment you don't.
+
+### They Coexist — gRPC Inside, REST at the Edge
+
+The two aren't a system-wide either/or; mature architectures use **both, by layer.** A public **edge** — often an API gateway (the next topic) — speaks REST (or GraphQL) to the outside world: browsers, mobile apps, partners. Behind that edge, the internal services talk to *each other* over gRPC. The edge translates the universal, public-facing request into fast internal gRPC calls and translates the results back. So a single user action can arrive as a readable REST request and fan out into a dozen binary gRPC calls no browser ever sees. Choosing gRPC internally doesn't cost you public reach — it just moves the boundary to where it belongs.
+
+```mermaid
+flowchart LR
+    B["🌐 Browser / partner"] -->|"REST / HTTP+JSON"| E["🚪 Edge / gateway"]
+    E -->|"gRPC"| S1["⚙️ Service A"]
+    E -->|"gRPC"| S2["⚙️ Service B"]
+    S1 -->|"gRPC"| S3["⚙️ Service C"]
+```
+
+> 💡 **Key Insight**
+>
+> gRPC and REST aren't rivals — their scorecards are **mirror images**: every strength of one (gRPC's speed, strict contract, streaming; REST's universality, readability, loose coupling) is the other's weakness. So the choice collapses to one question — **do you own both ends?** Own both (internal, high-volume, speed matters) → gRPC, whose every trade *assumes* you control both sides. Don't (public, browser, third-party) → REST, because universality outweighs speed and gRPC's coupling and browser-unreachability become disqualifying. And they **coexist by layer**: REST at the public edge, gRPC between the internal services behind it.
+
+### Quick Recap — gRPC, REST, and Who's on the Other End
+
+- gRPC's costs and REST's costs are **exact opposites** — reach, readability, coupling, speed, streaming — so neither dominates; they're built for different callers.
+- The decision collapses to one question: **do you own both ends?** Own both (internal, high-volume) → gRPC; strangers on the other end (public, browser, third-party) → REST.
+- This is the mechanical explanation of "**procedures face inward, resources face outward**": gRPC's every trade assumes you control both sides, and becomes a liability when you don't.
+- They **coexist by layer** — a REST (or gateway) edge faces the world, and internal services speak gRPC behind it, translating one user request into many fast internal calls.
+
+---
