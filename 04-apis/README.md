@@ -43,7 +43,7 @@ fail — so the two phases are read together.
 | 7 | [WebSockets](07-websockets/README.md) | The web is request-response, so how does a server *push* — and why is the connection that lets it so much costlier to run than an ordinary API? *(standalone — assumes no prior reading)* |
 | 8 | [WebSocket Use Cases](08-websocket-use-cases/README.md) | "Real-time" hides several different patterns — so how do you tell which features genuinely need a WebSocket, which want something lighter, and what will actually be hard? *(builds on Topic 07)* |
 | 9 | [Webhooks](09-webhooks/README.md) | When an event happens in a system you don't control, how does it tell you — and why is receiving that call correctly so much harder than sending it? *(standalone — assumes no prior reading)* |
-| 10 | gRPC *(coming)* | Contract-first, binary, and built for service-to-service speed |
+| 10 | [gRPC](10-grpc/README.md) | How do you make a call to another machine feel — and cost — as little as calling a local function, and what do you give up to get there? *(builds on Topics 02 & 03)* |
 | 11 | API Gateways *(coming)* | The one front door that owns auth, routing, limits, and aggregation |
 | 12 | Rate Limiting *(coming)* | Protecting a shared resource from abuse and runaway clients |
 | 13 | Idempotency *(coming)* | Making a retried request safe to run more than once |
