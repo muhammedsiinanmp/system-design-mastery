@@ -134,7 +134,7 @@ is Phase 02's topic.
 | 07 | WebSockets | ✅ Done | `04-apis/07-websockets/README.md` |
 | 08 | WebSocket Use Cases | ✅ Done | `04-apis/08-websocket-use-cases/README.md` |
 | 09 | Webhooks | ✅ Done | `04-apis/09-webhooks/README.md` |
-| 10 | gRPC | 🚧 In Progress | `04-apis/10-grpc/README.md` |
+| 10 | gRPC | ✅ Done | `04-apis/10-grpc/README.md` |
 | 11 | API Gateways | 📋 Planned | `04-apis/11-api-gateways/README.md` |
 | 12 | Rate Limiting | 📋 Planned | `04-apis/12-rate-limiting/README.md` |
 | 13 | Idempotency | 📋 Planned | `04-apis/13-idempotency/README.md` |
@@ -374,7 +374,7 @@ is Phase 02's topic.
 | 01 | Introduction | 7 | 7 | 0 | 0 | 0 |
 | 02 | Core System Properties | 5 | 5 | 0 | 0 | 0 |
 | 03 | Networking | 7 | 6 | 0 | 0 | 1 |
-| 04 | APIs & Communication | 15 | 9 | 1 | 4 | 1 |
+| 04 | APIs & Communication | 15 | 10 | 0 | 4 | 1 |
 | 05 | Storage & Databases | 27 | 0 | 0 | 19 | 8 |
 | 06 | Scaling & Performance | 10 | 0 | 0 | 10 | 0 |
 | 07 | Async & Events | 13 | 0 | 0 | 12 | 1 |
@@ -382,8 +382,8 @@ is Phase 02's topic.
 | 09 | Architecture & Microservices | 13 | 0 | 0 | 7 | 6 |
 | 10 | Observability & Security | 13 | 0 | 0 | 11 | 2 |
 | 11 | Interview Preparation | 21 | 0 | 0 | 4 | 17 |
-| **Total** | | **150** | **27** | **1** | **82** | **40** |
+| **Total** | | **150** | **28** | **0** | **82** | **40** |
 
 ---
 
-*Last updated: 2026-08-07*
+*Last updated: 2026-08-08*
