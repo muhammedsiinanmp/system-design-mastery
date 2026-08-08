@@ -460,3 +460,37 @@ flowchart LR
 - They **coexist by layer** — a REST (or gateway) edge faces the world, and internal services speak gRPC behind it, translating one user request into many fast internal calls.
 
 ---
+
+## 9. When Not to Reach for gRPC
+
+Section 8 gave the positive rule — own both ends, want speed, reach for gRPC. This section is the discipline that keeps the rule honest: the specific situations where gRPC is the *wrong* call even though it's technically available, because its costs (§7) land without its benefits paying them back. gRPC is a powerful tool with a heavy toolchain, and a heavy tool used where a light one would do is pure cost.
+
+### The Clear "Don'ts"
+
+Three cases are unambiguous:
+
+- **A public or browser-facing API.** This is the disqualifying one from §7 and §8: browsers can't call gRPC without a proxy, and third-party callers shouldn't be forced to adopt your `.proto` and toolchain just to integrate. Public reach *is* the requirement, and gRPC spends exactly that. Use REST (or GraphQL) at anything the outside world touches.
+- **Low-volume calls.** gRPC's speed advantage compounds with volume; its costs (the toolchain, the codegen step, the opacity, the versioning discipline) are paid whether you make a million calls or a hundred. For a call made occasionally — an admin action, a rarely-hit internal endpoint — the performance you'd gain is negligible and the overhead you'd take on is not. The juice isn't worth the squeeze.
+- **When an async, decoupled flow fits better.** gRPC is a *synchronous* request/response model at heart — the caller waits for the callee. If the interaction is really "hand off this work and don't wait," or "broadcast this event to whoever cares," a **message queue or event stream** (a later phase) fits the shape far better than a synchronous call. Forcing a fire-and-forget or fan-out-to-many interaction into synchronous gRPC couples services that wanted to be decoupled.
+
+### The Judgment Calls
+
+Beyond the clear cases, two situations call for honest judgment rather than a rule:
+
+- **Small systems and small teams.** gRPC's benefits — enforced contracts across many services, speed at high volume — are benefits *of scale*. A handful of services with modest traffic may get more value from REST's simplicity, universal tooling, and eyeball-debuggability than from a contract-generation pipeline. Adopt gRPC when the coordination and performance problems it solves are ones you actually have, not preemptively.
+- **Deeply polyglot or loosely-governed environments.** gRPC assumes every service can run the code generator and share the contract. That's smooth when your languages are well-supported and teams coordinate on the `.proto`. In an environment with fringe languages or teams that can't be relied on to regenerate and stay in sync, the toolchain coupling (§7) can cost more than it saves.
+
+### The Underlying Discipline
+
+The through-line is the same one that governs every powerful, heavyweight tool: **reach for the lightest mechanism that genuinely meets the need, and adopt the heavy one only when you have the problem it solves.** gRPC is superb at internal, high-volume, own-both-ends, synchronous calls — and its costs are only repaid *there*. Everywhere else, the fact that gRPC *could* do the job is not a reason to use it; the question is whether its specific trade — speed and strict contracts, bought with reach, readability, and coupling — is one this particular interaction benefits from. Often, inside a data center at scale, it emphatically is. Outside those conditions, something lighter usually wins.
+
+> ⚠️ **gRPC's costs are fixed but its benefits scale — so using it outside its home means paying full price for little return.** Don't reach for it on a **public or browser-facing** API (it spends the reach that's the whole requirement), for **low-volume** calls (the toolchain and opacity are paid regardless, the speed gain is negligible), or where an **async** queue/event flow fits a hand-off or fan-out better than a synchronous call. Judge carefully in **small systems** and **polyglot/loosely-governed** environments, where the contract-generation machinery may cost more than it saves. Reach for the lightest mechanism that meets the need; adopt gRPC where its trade is actually repaid — internal, high-volume, synchronous, both ends owned.
+
+### Quick Recap — When Not to Reach for gRPC
+
+- **Not for public or browser-facing APIs** — gRPC spends the universal reach those require; use REST/GraphQL at the edge.
+- **Not for low-volume calls** — the toolchain, opacity, and versioning costs are paid regardless, while the speed benefit only compounds at high volume.
+- **Not where an async flow fits** — gRPC is synchronous request/response; hand-offs and fan-out-to-many belong on a queue or event stream, not a blocking call.
+- **Judge carefully at small scale and in polyglot/loosely-governed settings** — its benefits are benefits of scale and coordination; reach for the lightest tool that meets the need and adopt gRPC only where its trade is repaid.
+
+---
