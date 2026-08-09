@@ -330,3 +330,50 @@ Aggregation is the gateway's most valuable trick and the beginning of its bigges
 - Aggregation is the gateway's most powerful trick and the **start of its biggest trap**: choosing and merging services is real logic, the first step toward business logic creeping into the edge (§8).
 
 ---
+
+## 7. The Cost — One Door Is a Chokepoint
+
+Everything so far has been the case *for* a gateway, and it's strong. Now the case against — or rather, the price of the case for. Every benefit in this document came from the same property: it's the single door every request passes through. That property has a shadow, and it's exactly as fundamental as the benefits: **a single door that everything depends on is a single thing that can fail, slow everything down, and block everyone at once.** The value and the cost are the same fact seen from two sides.
+
+### It's a Single Point of Failure
+
+If every external request must pass through the gateway, then when the gateway is down, *the entire system is unreachable* — not one service, all of them. The healthiest fleet in the world is invisible to the outside if the one door in front of it is closed. This makes the gateway the most availability-critical component you run: a place where a single failure takes down everything, which is the one shape of design you most want to avoid.
+
+The answer is that the gateway must never actually *be* single. In practice you run *several* instances of it behind a mechanism that spreads traffic across them, so that no one instance is the whole door and the loss of one doesn't close it. "Single logical door, many redundant instances" is mandatory, not optional — the gateway is one component you cannot afford to run as one machine. (The general principle of eliminating single points of failure through redundancy is a reliability subject of its own; here it's enough that the gateway is a textbook case demanding it.)
+
+### It's a Latency Hop
+
+The gateway sits *between* the client and the services, so every request now makes an extra stop it didn't before: client → gateway → service, instead of client → service. That added hop costs time — the network leg to the gateway, plus whatever work it does (authenticating, rate-limiting, routing) before forwarding. For most systems this is a small, worthwhile tax, easily repaid by everything the gateway does. But it is never *zero*, and a gateway that does heavy work on every request (elaborate transformations, slow authentication lookups) can turn a small tax into a real one. The gateway's own latency is now part of *every* request's latency, so it has to be fast.
+
+### It's a Deployment and Scaling Bottleneck
+
+Because all traffic converges on it, the gateway is a bottleneck in two more senses:
+
+- **Scaling.** The gateway must handle the *sum* of all traffic to all services — it has to scale to the whole system's load, not any one service's. It can't be the weakest link in throughput, or it caps everything behind it.
+- **Deployment.** A change to the gateway is a change to the component *every* request depends on, so a bad gateway deploy doesn't break one feature — it can break the entire surface at once. This raises the stakes on every gateway release and makes the gateway a place where caution and careful rollout matter more than almost anywhere else.
+
+```mermaid
+flowchart TD
+    subgraph RISK["⚠️ Everything converges on one door"]
+        C["🌐 All clients"] --> G["🚪 Gateway"]
+        G --> F["🟢 Healthy fleet"]
+        G -.->|"gateway down →"| X["🔴 whole system unreachable"]
+        G -.->|"gateway slow →"| Y["🐢 every request slow"]
+        G -.->|"bad deploy →"| Z["💥 whole surface broken"]
+    end
+```
+
+### The Cost Is the Benefit, Inverted
+
+Look at the three costs and notice they are the three benefits turned over. The gateway is *one control point* — which is why it's *one point of failure*. It's *on the path of every request* — which is why it *adds latency to every request*. It *handles all traffic in one place* — which is why it *must scale to all traffic and a bad change breaks all traffic*. You cannot take the centralization benefit without the centralization risk; they are literally the same structural fact. This doesn't argue against gateways — the benefits usually win decisively — but it does mean a gateway must be built for the responsibility it takes on: redundant, fast, and deployed with care. And it sets up the subtler failure of the next section, where the "do everything in one place" temptation goes a step too far.
+
+> ⚠️ **Every gateway benefit has an inverted cost, because they're the same fact — one door — seen from two sides.** One control point is one **point of failure** (down → the whole system is unreachable, so it must run as many redundant instances, never truly one). On the path of every request is a **latency hop** on every request (so it must be fast and not do heavy per-request work). All traffic in one place means it must **scale to the whole system's load** and a **bad deploy breaks the entire surface** at once. The centralization can't be had without the risk — so a gateway must be redundant, fast, and released with unusual care.
+
+### Quick Recap — One Door Is a Chokepoint
+
+- The gateway is a **single point of failure** — if it's down, the whole system is unreachable, not one service — so it must run as **many redundant instances**, never truly one.
+- It adds a **latency hop** to every request (client → gateway → service), a small worthwhile tax that a heavy gateway can turn costly — so it must stay fast.
+- It's a **scaling and deployment bottleneck**: it must handle the *sum* of all traffic, and a bad gateway deploy can break the **entire surface** at once, raising the stakes on every release.
+- The costs are the **benefits inverted** — one control point is one failure point; on every path is latency on every path; all traffic in one place is all traffic at risk — so a gateway must be redundant, fast, and released carefully.
+
+---
