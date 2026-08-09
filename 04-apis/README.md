@@ -44,7 +44,7 @@ fail — so the two phases are read together.
 | 8 | [WebSocket Use Cases](08-websocket-use-cases/README.md) | "Real-time" hides several different patterns — so how do you tell which features genuinely need a WebSocket, which want something lighter, and what will actually be hard? *(builds on Topic 07)* |
 | 9 | [Webhooks](09-webhooks/README.md) | When an event happens in a system you don't control, how does it tell you — and why is receiving that call correctly so much harder than sending it? *(standalone — assumes no prior reading)* |
 | 10 | [gRPC](10-grpc/README.md) | How do you make a call to another machine feel — and cost — as little as calling a local function, and what do you give up to get there? *(builds on Topics 02 & 03)* |
-| 11 | API Gateways *(coming)* | The one front door that owns auth, routing, limits, and aggregation |
+| 11 | [API Gateways](11-api-gateways/README.md) | Where should the shared work of a whole fleet live, who should the outside world talk to — and why does one front door solve the problem and create a new one at once? *(standalone — assumes no prior reading)* |
 | 12 | Rate Limiting *(coming)* | Protecting a shared resource from abuse and runaway clients |
 | 13 | Idempotency *(coming)* | Making a retried request safe to run more than once |
 | 14 | API Versioning *(coming)* | Evolving a contract without breaking the callers you can't control |
