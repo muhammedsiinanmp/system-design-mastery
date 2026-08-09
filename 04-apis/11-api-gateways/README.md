@@ -461,3 +461,75 @@ One distinction prevents a common confusion. A gateway and a **load balancer** b
 - A gateway is **not a load balancer**: a balancer spreads load across *identical* instances; a gateway routes and polices across *different* services — they coexist but do different jobs.
 
 ---
+
+## 10. Putting It All Together — A Streaming App's Mobile Edge
+
+A video-streaming company runs its backend as a fleet of services — accounts, playback, a "continue watching" service, recommendations, billing — and a mobile app that millions of people open on phones over cellular connections. Between the app and the fleet sits one API gateway. Follow a single tap on the app's home screen through it, and every part of this document appears in one request.
+
+### The Home Screen Opens
+
+The user opens the app. The phone makes **one** request to the gateway: "give me the home screen." Before that request touches anything internal, the gateway does its door work (§4): it **terminates the TLS** connection the phone established over the internet, **authenticates** the user from the token in the request, and checks the device against its **rate limit** so a misbehaving client can't hammer the fleet. A request that failed any of these would be rejected right here, having reached no service at all.
+
+### One Request Becomes Many
+
+The home screen needs data from three different services, but the phone — on a slow, high-latency cellular link — should not make three separate round trips. So the gateway **aggregates** (§6): from the single incoming request it fans out, in parallel, to the profile service, the continue-watching service, and the recommendations service, over the fast internal network. Some of those internal services speak a compact binary protocol for speed; the gateway **translates** (§5), accepting the phone's ordinary web request and calling the internal services in their own protocol. It waits for the three responses, composes them into one payload shaped for exactly what the home screen renders — nothing the small screen won't use — and returns it. The phone paid for **one** slow round trip; the three internal calls happened where round trips are nearly free.
+
+Because this shaping is specific to the mobile client, it lives in a **mobile Backend-for-Frontend** (§6) — a gateway owned by the mobile team, separate from the one the web app uses, so each client gets a purpose-built response and each team ships on its own schedule.
+
+```mermaid
+flowchart TD
+    P["📱 Home screen: one request<br/>(one cellular round trip)"] --> G["🚪 Mobile BFF gateway"]
+    G --> D["🔒 TLS · 🔑 auth · 🚦 rate-limit (§4)"]
+    D --> A["fan out in parallel (§6) + translate (§5)"]
+    A --> S1["👤 Profile"]
+    A --> S2["▶️ Continue watching"]
+    A --> S3["✨ Recommendations"]
+    S1 --> C["compose one shaped response"]
+    S2 --> C
+    S3 --> C
+    C --> P
+```
+
+### The Costs Show Up Too
+
+The design is excellent, and it comes with the bill from §7 and §8, which the team feels directly.
+
+Because *every* user's *every* screen goes through this gateway, it is the system's **single point of failure** (§7): if it's down, the app shows nothing, no matter how healthy playback and recommendations are. So the team never runs one — they run **many redundant gateway instances** behind traffic-spreading, and treat a gateway deploy with far more caution than a single service's, because a bad one darkens the whole app at once.
+
+And the temptation of §8 arrives on schedule. A product team wants the home screen to hide titles a user has finished and boost newly-added ones — and the gateway, already composing the home screen, looks like the obvious place to put that rule. The platform team pushes back: that's **business logic about what the product does**, not a cross-cutting concern, so it belongs in the recommendations service, not the edge. Keeping that line is what stops the mobile BFF from slowly thickening into a second application that every product team has to edit to ship.
+
+### Why the Gateway Was the Right Call
+
+This system has exactly the shape §9 described: many services, a public boundary, varied and distant clients. The gateway earns its cost many times over — one place authenticates and limits every request, one request replaces many over the slow last mile, and the internal fleet stays private, simple, and free to change behind a stable public contract. The team pays for it with redundancy, careful deploys, and the constant discipline of keeping the edge thin — and for a fleet serving millions of phones, that's a trade worth making.
+
+> **The gateway is the most powerful and the most dangerous box we run. It's why the phone makes one call instead of six, why every service behind it can assume the caller is already authenticated, and why we can rewrite a service overnight without breaking a single app. It's also the one thing that, if we get a deploy wrong, takes down everything at once — so we run it redundantly and ship it carefully. And the hardest part isn't building it; it's keeping it thin. Every quarter someone has a good reason to put 'just one' piece of product logic in the gateway, and every quarter we say no, because the day we stop saying no is the day our thin edge becomes a monolith with our whole company queued up to deploy it.**
+
+---
+
+## 11. Final Recap
+
+| Gateway job | What it centralizes | The danger if overdone |
+|---|---|---|
+| **Routing** (§3) | One surface → the right service; public URLs decoupled from topology | — (structural, low-risk) |
+| **Auth & rate limiting** (§4) | Identity and limits enforced once, before anything internal | — (this is core; defer the *how* to their topics) |
+| **TLS / logging / CORS** (§4) | Boundary mechanics done once, consistently | — |
+| **Translation** (§5) | Public contract insulated from internal protocol/version/shape | Transformation logic accumulating at the edge |
+| **Aggregation / BFF** (§6) | Many backend calls → one shaped response per client | Business logic creeping into the gateway (§8) |
+| **Being the one door** (§7) | One control point for the whole surface | Single point of failure · latency hop · deploy bottleneck |
+| **Doing too much** (§8) | — | A fat gateway = a distributed monolith every team must edit |
+
+### The One Thing to Remember
+
+> **An API gateway is the single application-aware front door to a fleet of services, and its entire character — every benefit and every danger — comes from that one fact. Because it's the one place every request passes through, it's where all the work that's true of every request should live: authenticating the caller, enforcing limits, terminating encryption, logging, routing to the right service, translating the public contract to the internal one, and aggregating many backend calls into a single response so a distant client makes one round trip instead of many. That centralization is the whole point: services behind it stay simple, private, and consistent, and the public contract is held apart from the internal implementation so each can change on its own schedule. But a door that owns everything is a door everything depends on — so it's a single point of failure that must be run redundantly, a latency hop that must be kept fast, and a deployment bottleneck that must be released with care. And its subtlest failure is the most common: because it can do so much, business logic creeps into it until the thin edge becomes a fat shared component every team must edit to ship — a distributed monolith in your most critical tier. So run a gateway when you genuinely have many services behind a public boundary, make it redundant and fast, and above all keep it thin: it owns what is true of every request, and nothing about what your product means.**
+
+---
+
+## What's Next
+
+> **Topic 12 — Rate Limiting**
+
+This document named one of the gateway's jobs on almost every page and never once explained how it works: **rate limiting**. The gateway is *where* a limit is enforced — the one door all traffic converges on, the natural place to count each caller's requests and turn away the ones that exceed their share — but *how* you actually count, what "their share" means, and how you decide in the instant whether a request is over the line, this document deliberately left to its own topic.
+
+That's next. **Rate limiting**: the algorithms that decide, request by request, whether a caller has used more than they're allowed — token buckets and their cousins — and the real questions underneath them, like what to do with a request you reject, how to limit fairly across many gateway instances at once, and why protecting a shared resource from a runaway or hostile client is one of the defining obligations of any public boundary. You've seen the door; next you'll see how it decides how much to let through.
+
+---
