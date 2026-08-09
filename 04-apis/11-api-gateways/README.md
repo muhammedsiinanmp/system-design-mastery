@@ -90,3 +90,53 @@ State the problem precisely and its solution is already implied: there is a body
 - Work that must run everywhere, stay identical, and be enforced in one place wants to be **lifted into a single entry point** every request passes through first — the gateway.
 
 ---
+
+## 2. The Gateway Is the One Front Door
+
+The problem in §1 asked for a single place that every request passes through, where shared work is done once and the fleet is controlled from one spot. Give that place a name and a job description and you have the API gateway.
+
+### The Definition
+
+An **API gateway** is a single, application-aware entry point that all external requests pass through on their way to a fleet of internal services. To the outside world it *is* the API — one address, one surface — while behind it the request is served by whichever of many services is responsible. The clients never address those services directly; they only ever talk to the gateway, which stands between the public internet and a private internal network.
+
+Two words in that definition carry the weight. **Single**: there is one door, so the shared work of §1 has exactly one home and the boundary has exactly one place to be enforced. **Application-aware**: the gateway doesn't just pass bytes along — it understands the request as an *API call* and acts on that understanding.
+
+```mermaid
+flowchart TD
+    C["🌐 Clients<br/>(one API to them)"] --> G["🚪 API Gateway<br/>auth · limits · TLS · logging · routing"]
+    G --> S1["▶️ Playback"]
+    G --> S2["✨ Recommendations"]
+    G --> S3["👤 Account"]
+    G --> S4["💳 Billing"]
+    G -.->|"services are private,<br/>never addressed directly"| S1
+```
+
+### Not Just a Reverse Proxy
+
+There is a simpler, older idea a gateway resembles: a **reverse proxy** — an intermediary that holds the public address and forwards incoming requests to servers hidden behind it, so the internal machines are never reached directly. A gateway *is* built on that foundation; everything a reverse proxy gives — hiding the fleet, one public address, a single choke point for traffic — a gateway inherits. (The reverse proxy is a networking subject of its own; here it's named as the substrate, not re-explained.)
+
+What makes it a *gateway* rather than *just* a reverse proxy is how deep it reads. A plain reverse proxy forwards by **position** — this hostname, that path prefix — and is largely indifferent to what the request actually is. A gateway reads up to the **application layer**: it interprets the request as a specific API call, and acts on its meaning — *who* is calling (identity), *how much* they may call (limits), *which* combination of services should serve it, *what shape* the answer should take. The reverse proxy answers "where do I forward this?"; the gateway answers "what should happen to this API call, from the moment it arrives to the moment it leaves?"
+
+| | Plain reverse proxy | API gateway |
+|---|---|---|
+| Reads up to | Host / path (position) | The full API call (meaning) |
+| Decides | Which server to forward to | Identity, limits, routing, shaping, aggregation |
+| Knows the caller? | Not really | Yes — authenticates and applies per-caller policy |
+| Fan-out / compose? | No | Yes — one request → several services → one response |
+
+### Why "One Door" Is the Whole Idea
+
+Everything the rest of this document covers — routing, the cross-cutting jobs, translation, aggregation — is something the gateway can do *because* it's the single application-aware door. Being single is what lets it be the one home for shared work and the one control point. Being application-aware is what lets that work be meaningful — you can't enforce a per-user limit if you can't tell who the user is, and you can't fan a request across services if you don't understand the request. Hold onto "single" and "application-aware" together: they're the two properties every later capability, and every later cost, descends from.
+
+> 💡 **Key Insight**
+>
+> An **API gateway** is a **single, application-aware** entry point that every external request passes through to reach a private fleet — to clients it *is* the API. It's built on the reverse proxy (one public address, the fleet hidden behind it) but goes further: a reverse proxy forwards by **position** (host, path) and doesn't care what a request means, while a gateway reads up to the **API layer** and acts on the request's *meaning* — who's calling, their quota, which services serve it, what shape to return. "Single" gives the shared work one home and one control point; "application-aware" makes that work meaningful. Every capability and every cost ahead descends from those two properties.
+
+### Quick Recap — The One Front Door
+
+- An **API gateway** is a **single, application-aware** entry point all external requests pass through to reach a fleet of private internal services — to clients, it *is* the API.
+- It's built on the **reverse proxy** (holds the public address, hides the fleet) but is more: a proxy forwards by **position**, a gateway acts on the request's **meaning**.
+- Application-awareness is what lets it authenticate the caller, apply per-caller policy, route by API, and compose responses — things a position-only forwarder can't do.
+- **"Single" and "application-aware"** are the two load-bearing properties: every later capability *and* every later cost descends from them.
+
+---
