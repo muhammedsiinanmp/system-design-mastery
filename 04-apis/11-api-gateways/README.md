@@ -283,3 +283,50 @@ The deep value is **insulation**: the public contract and the internal implement
 - Translation is a major reason to run a gateway — and also **logic that lives in the gateway**, a thread the cost sections (§8) pick back up.
 
 ---
+
+## 6. Aggregation and the Backend-for-Frontend
+
+The gateway's most powerful capability — and its most dangerous — is that it can turn *one* request from a client into *several* requests to internal services, then compose the results into a single response. This is **aggregation**, and it's where the gateway stops being plumbing and starts shaping the client experience.
+
+### One Client Request, Many Backend Calls
+
+When a system is split into services, the data a single screen needs is often scattered across several of them. A client that talked to services directly would have to make many separate requests — one to each service — and stitch the results together itself. Over a fast internal network that's cheap; over a phone on a mobile connection, each round trip is expensive, and a screen needing six of them feels slow no matter how quick each service is.
+
+Aggregation moves that fan-out to the gateway. The client makes **one** request; the gateway calls the several internal services (in parallel where it can), waits for them, combines their responses into one payload shaped for the client, and returns it. The client pays for a single round trip over the slow link; the several calls behind it happen over the fast internal network where round trips are nearly free.
+
+```mermaid
+flowchart TD
+    C["📱 Client: one request<br/>(one slow round trip)"] --> G["🚪 Gateway"]
+    G -->|"parallel"| S1["👤 Profile"]
+    G -->|"parallel"| S2["▶️ Continue watching"]
+    G -->|"parallel"| S3["✨ Recommendations"]
+    S1 --> G
+    S2 --> G
+    S3 --> G
+    G -->|"one composed response"| C
+```
+
+This is a real win, especially for clients far from the data center: fewer round trips over the expensive last mile, less logic in the client, and a payload tailored to exactly what the screen needs instead of the client fetching more than it uses.
+
+### Backend-for-Frontend
+
+Aggregation raises a question: shaped for *which* client? A mobile app and a web app often want the same underlying data in different shapes — the phone wants a lean payload tuned for a small screen and a slow link; the web app wants a richer one. Trying to serve both from one general-purpose aggregation leads to a lowest-common-denominator API that's ideal for neither.
+
+The **Backend-for-Frontend (BFF)** pattern answers this: instead of one gateway serving all clients, you run a *separate* gateway tailored to each client type — a mobile BFF, a web BFF — each aggregating and shaping the backend services into exactly what *its* client needs. The internal services stay the same; each BFF presents them differently. The benefit is that each client gets a purpose-built API, and — importantly for later — the team that owns a client can own its BFF, changing it without coordinating with everyone else.
+
+### The Power Is Also a Warning
+
+Aggregation is the gateway's most valuable trick and the beginning of its biggest trap. Deciding *which* services to call, *how* to combine them, and *what* the composed shape should be is not neutral plumbing — it's logic, and often logic that starts to resemble the application's own. A little composition is clearly the gateway's job; a lot of it, with rules about how data from different services should be merged and interpreted, is business logic quietly migrating into the edge. Hold that tension — it's exactly the danger §8 is about, and aggregation is where it usually begins.
+
+> 💡 **Key Insight**
+>
+> **Aggregation** lets the gateway turn one client request into several parallel internal calls and compose one response — so a client on a slow link pays for a single round trip while the fan-out happens over the fast internal network, with a payload shaped to exactly what the screen needs. The **Backend-for-Frontend** pattern extends this: a separate gateway per client type (mobile, web), each shaping the same services into what *its* client needs and often owned by *its* client's team. But aggregation is also where **business logic starts creeping into the edge** — deciding which services to call and how to merge them is real logic, not neutral plumbing — which is precisely the trap §8 examines.
+
+### Quick Recap — Aggregation and the BFF
+
+- **Aggregation** turns one client request into several parallel internal calls composed into one response — the client pays one slow round trip while the fan-out runs over the fast internal network.
+- It's especially valuable for **distant/mobile clients**: fewer round trips over the expensive last mile, thinner clients, and payloads tailored to the screen.
+- **Backend-for-Frontend (BFF)** runs a *separate* gateway per client type (mobile, web), each shaping the same backend services into what its client needs — often owned by that client's team.
+- Aggregation is the gateway's most powerful trick and the **start of its biggest trap**: choosing and merging services is real logic, the first step toward business logic creeping into the edge (§8).
+
+---
