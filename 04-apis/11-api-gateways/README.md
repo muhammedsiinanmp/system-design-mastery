@@ -420,3 +420,44 @@ When aggregation genuinely does need client-specific shaping, the **Backend-for-
 - When per-client shaping is genuinely needed, a **per-team Backend-for-Frontend** relieves the pressure — keep the edge boring, thin, and stable.
 
 ---
+
+## 9. When You Need One — and When You Don't
+
+A gateway is powerful infrastructure with a real cost (§7) and a real failure mode (§8), so like any such tool it's worth knowing exactly when it earns its place and when adding it is a mistake. The answer follows directly from *why* it exists.
+
+### When a Gateway Earns Its Place
+
+The gateway solves the §1 problem — cross-cutting concerns scattered across a fleet — so it earns its place exactly when you *have* that problem: **many services behind a public boundary, sharing cross-cutting concerns.** The more of these are true, the clearer the case:
+
+- You have **several services** (not one), so routing and a unified surface are genuinely needed.
+- They're **publicly exposed**, so authentication, rate limiting, and TLS are real, repeated obligations.
+- **Clients are varied or distant** (mobile apps, third parties), so aggregation and a shaped, stable contract pay off.
+- You want **one place** to enforce policy and observe traffic across the whole surface.
+
+When these hold, the gateway's costs are easily repaid: the duplication it removes and the consistency it enforces are worth far more than the latency hop and the operational care it demands.
+
+### When It's Overhead You Shouldn't Pay
+
+The same logic in reverse says when *not* to:
+
+- **A single service, or a very small system.** If there's one service (or two), there's almost no cross-cutting duplication to eliminate and nothing to route between. A gateway here adds a network hop, a component to operate, and a brand-new single point of failure — all to solve a problem you don't have. The service can handle its own concerns, or a plain reverse proxy can front it, until the fleet actually grows.
+- **Purely internal systems with no public boundary.** If nothing is exposed to the outside and services only call each other, the public-boundary concerns (auth of external callers, public rate limits, TLS termination for the internet) largely don't apply. Service-to-service concerns at scale are usually better served by a different tool (a service mesh, a later topic) than by a public-facing gateway.
+
+The failure to avoid is adopting a gateway because it's the "proper" architecture rather than because you have the problem it solves — paying its full cost, including a new critical dependency, to centralize concerns that were never actually scattered.
+
+### It Is Not a Load Balancer
+
+One distinction prevents a common confusion. A gateway and a **load balancer** both sit in front of servers and both spread traffic, so they get conflated — but they answer different questions. A load balancer spreads requests across *many identical instances of the same service* to share load; its question is "which of these interchangeable copies should handle this?" A gateway routes across *different services* and applies API-level policy; its question is "what should happen to this API call, and which service does it belong to?" One is about capacity among equals, the other about direction and policy among differents. In practice they coexist — a gateway is fronted by load balancing for its own redundancy (§7), and load balancing sits between the gateway and each pool of service instances — but they are not the same component and don't do the same job.
+
+> 💡 **Key Insight**
+>
+> A gateway earns its place exactly when you have the problem it solves: **many services behind a public boundary sharing cross-cutting concerns** — the more services, the more public exposure, and the more varied the clients, the clearer the case. It's the wrong choice for a **single service or tiny system** (a gateway is overhead and a new single point of failure for cross-cutting work that isn't actually scattered) and for **purely internal** service-to-service traffic (a service mesh fits better than a public-facing gateway). And it is **not a load balancer**: a balancer spreads load across *identical* instances of one service, a gateway routes and polices across *different* services — they coexist but aren't the same job.
+
+### Quick Recap — When You Need One
+
+- A gateway earns its place when you have its problem: **many services, a public boundary, and shared cross-cutting concerns** — and the more of each, the stronger the case.
+- **Don't** add one for a **single service or tiny system** — it's a network hop, an operational burden, and a new single point of failure for duplication you don't have; a plain reverse proxy or the service itself suffices.
+- **Don't** reach for a public-facing gateway for **purely internal** service-to-service traffic — a service mesh (a later topic) fits that better.
+- A gateway is **not a load balancer**: a balancer spreads load across *identical* instances; a gateway routes and polices across *different* services — they coexist but do different jobs.
+
+---
