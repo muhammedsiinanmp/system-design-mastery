@@ -40,3 +40,53 @@ Here's the trap it disarms. A gateway gets filed as "a reverse proxy with a fanc
 11. [Final Recap](#11-final-recap)
 
 ---
+
+## 1. The Problem — Concerns With No Home
+
+Before a gateway is a solution, there's a problem that makes it inevitable, and it appears the moment a system grows from one program into several. The problem isn't the services themselves — it's the pile of *shared work* that surrounds every one of them and belongs to none.
+
+### Every Service Repeats the Same Preamble
+
+Picture a system split into services — a playback service, a recommendations service, an account service, a billing service — each exposed so the outside world can reach it. Now look at what each one must do *before* it gets to its actual job. On every incoming request, every service has to:
+
+- Establish who the caller is and whether they're allowed in.
+- Check that this caller hasn't exceeded how much they're permitted to use.
+- Handle the encryption the public internet requires.
+- Record the request for metrics, tracing, and debugging.
+- Deal with the browser rules (like cross-origin permissions) that any public endpoint faces.
+
+Only *after* all of that does the service do the thing it actually exists to do. That preamble is identical across every service, and it has a nasty property: it isn't really *about* any of them. Playback doesn't want to be in the identity business; recommendations doesn't want to own encryption. These are **cross-cutting concerns** — work that applies uniformly to every request across the whole system, orthogonal to what any single service does.
+
+### Putting the Preamble in Each Service Goes Wrong Two Ways
+
+The naive answer is to have every service handle its own preamble. It fails on two fronts at once.
+
+- **Duplication that drifts.** The same identity-checking and limit-enforcing logic is now copied into a dozen services, in however many languages and frameworks they happen to use. That's a maintenance burden, but the real danger is *drift*: fix an authentication flaw in one service and the other eleven still have it; tighten a limit in one and the rest disagree. Cross-cutting logic that lives in many places is cross-cutting logic that's inconsistent by default, and inconsistency at the security boundary is exactly where you can least afford it.
+- **A dozen doors to defend.** If every service is directly reachable from the internet, every service is an attack surface, each must be hardened, each needs its own public exposure. There is no single place to enforce a rule, observe traffic, or shut off abuse — the boundary is smeared across the whole fleet, so there's nowhere to *stand* and control it.
+
+```mermaid
+flowchart TD
+    subgraph BAD["🔴 Preamble in every service"]
+        C["🌐 Clients"] --> S1["Playback<br/>(auth+limits+TLS+logs)"]
+        C --> S2["Recommendations<br/>(auth+limits+TLS+logs)"]
+        C --> S3["Account<br/>(auth+limits+TLS+logs)"]
+        C --> S4["Billing<br/>(auth+limits+TLS+logs)"]
+    end
+```
+
+### The Shape of the Answer
+
+State the problem precisely and its solution is already implied: there is a body of work that (a) must happen on *every* request, (b) should be *identical* everywhere, and (c) needs a single place to be enforced and observed. Scattering it across services violates all three. So it wants to be **lifted out** of the services entirely and done in *one place that every request passes through first* — a place where the rule is written once, applied uniformly, and where there's a single point to watch and control. That one place is the API gateway, and the next section is what it is.
+
+> 💡 **Key Insight**
+>
+> A fleet of services behind a public boundary shares a large preamble — establishing identity, checking limits, handling encryption, logging, browser rules — that runs on **every** request but belongs to **no** service. These **cross-cutting concerns** go wrong in two ways when each service handles its own: the logic is **duplicated and drifts** out of consistency (a fix in one leaves the others vulnerable), and every service becomes a **separately-exposed door** with no single place to enforce or observe anything. Work that must run everywhere, stay identical, and have one control point wants to be **lifted into one place every request passes through first** — which is precisely the gateway.
+
+### Quick Recap — Concerns With No Home
+
+- Behind a public boundary, every service repeats the same **preamble** — identity, limits, encryption, logging, browser rules — before doing its real work.
+- These are **cross-cutting concerns**: work that runs on every request uniformly and is orthogonal to what any single service actually does.
+- Handling them per-service fails twice: the logic **duplicates and drifts** (a fix in one service leaves the rest exposed), and every service becomes its **own public door** with no single control point.
+- Work that must run everywhere, stay identical, and be enforced in one place wants to be **lifted into a single entry point** every request passes through first — the gateway.
+
+---
