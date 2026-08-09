@@ -239,3 +239,47 @@ Notice what each service behind the gateway no longer has to do: no credential-c
 - Centralizing solves §1 on all three counts — the work runs **everywhere** (one path), stays **identical** (one copy), and has **one control point** (one change updates the whole system).
 
 ---
+
+## 5. Translation — Decoupling the Public Contract from the Inside
+
+Routing (§3) decoupled the public *URLs* from the internal topology. Translation goes further: the gateway can also decouple the public *protocol and shape* from whatever the internal services actually speak. This turns the gateway into a membrane between two worlds that no longer have to match.
+
+### The Two Worlds Want Different Things
+
+The world outside your system and the world inside it have opposite priorities, and a good architecture lets each optimize for its own.
+
+- The **outside** wants a stable, universal, readable interface: ordinary web protocols any client can speak, a contract that doesn't break when internal code changes, formats that are easy to consume from a browser or a partner's backend.
+- The **inside** wants speed and its own conventions: services may talk to each other over a compact binary protocol built for fast internal calls, use internal field names and shapes tuned for their own logic, and change freely as teams iterate.
+
+If clients talked to services directly, these priorities would collide — the internal protocol would leak to the public, and every internal change would risk breaking external callers. The gateway resolves the collision by **translating** between the two.
+
+### What the Gateway Translates
+
+- **Protocol.** A gateway commonly accepts public requests over ordinary web protocols (the readable, universal ones any client can speak) and forwards them to internal services over whatever those services use — often a compact binary protocol chosen for internal speed (a pattern named where gRPC was discussed). The client gets universality; the internal call gets efficiency; neither compromises for the other.
+- **Version.** The gateway can present a stable public version even as the internals move on. A request to an older public version of the API is mapped, at the gateway, onto the current internal services — so old clients keep working while the inside advances. (How a contract is versioned over time is its own topic; the gateway is one place that mapping can live.)
+- **Shape.** Internal responses often carry more, or differently-named, fields than a public client should see. The gateway can reshape the response — drop internal-only fields, rename, restructure — so the public contract stays clean and intentional rather than being a leak of internal data structures.
+
+```mermaid
+flowchart LR
+    C["🌐 Client<br/>readable public protocol"] -->|"public request"| G["🚪 Gateway<br/>translates"]
+    G -->|"fast internal protocol"| S["⚙️ Internal services<br/>binary · internal shapes"]
+    S -->|"internal response"| G
+    G -->|"clean public response"| C
+```
+
+### The Insulation This Buys
+
+The deep value is **insulation**: the public contract and the internal implementation are held apart, free to change on their own schedules. Internal teams can switch protocols, rename fields, restructure services, or re-tune for performance without breaking a single external caller, because the gateway absorbs the difference. And the public API can present a deliberate, curated face — stable, clean, versioned — rather than exposing whatever the services happen to look like internally today. The gateway becomes the boundary where "how we present ourselves to the world" is defined independently of "how we're built inside." That independence is one of the strongest reasons to have a gateway at all — but note that every translation is also *logic living in the gateway*, a thread we pick up when the costs arrive (§8).
+
+> 💡 **Key Insight**
+>
+> The outside world and the inside want opposite things — the outside wants a stable, universal, readable contract; the inside wants speed and freedom to change — and the gateway resolves the clash by **translating** between them: protocol (readable public ↔ fast internal binary), version (a stable public version mapped onto current internals), and shape (reshaping responses so internal structures don't leak). The payoff is **insulation** — the public contract and the internal implementation evolve on separate schedules, each optimized for its own world, neither breaking the other. It's one of the strongest reasons to run a gateway; it's also logic accumulating in the gateway, which the cost sections revisit.
+
+### Quick Recap — Translation
+
+- The **outside** wants stable, universal, readable interfaces; the **inside** wants speed and freedom to change — opposite priorities the gateway reconciles by **translating** between them.
+- It translates **protocol** (public web protocols ↔ fast internal binary), **version** (a stable public version onto current internals), and **shape** (reshaping responses so internal structures don't leak).
+- The payoff is **insulation**: public contract and internal implementation evolve on **separate schedules**, each optimized for its own world, neither breaking the other.
+- Translation is a major reason to run a gateway — and also **logic that lives in the gateway**, a thread the cost sections (§8) pick back up.
+
+---
