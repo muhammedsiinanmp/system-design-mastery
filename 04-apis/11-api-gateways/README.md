@@ -140,3 +140,55 @@ Everything the rest of this document covers — routing, the cross-cutting jobs,
 - **"Single" and "application-aware"** are the two load-bearing properties: every later capability *and* every later cost descends from them.
 
 ---
+
+## 3. Routing — Getting a Request to the Right Service
+
+Start with the gateway's most basic job, the one it can't skip: since clients only ever talk to the gateway, the gateway has to figure out *which* internal service should actually handle each request. That's **routing**, and while it sounds mundane, it quietly buys one of the gateway's most valuable properties.
+
+### Matching a Request to a Service
+
+Every request arrives with attributes the gateway can read — its path, its host, its method, its headers. Routing is the rule that maps those attributes to an upstream service:
+
+```
+GET  /watch/12345        → playback service
+GET  /recommendations    → recommendations service
+GET  /account/profile    → account service
+POST /billing/charge     → billing service
+```
+
+The gateway holds a **route table** (a service map) — the set of these rules — and consults it on every request to pick the destination, then forwards the request there and relays the response back. Most routing is by path prefix, as above, but a gateway can route on anything it can read: the host (for multiple public domains sharing one gateway), a header, an API version, even the identity it just established. Because it's application-aware (§2), the routing rule can be as expressive as the request is.
+
+```mermaid
+flowchart LR
+    R["📥 GET /watch/12345"] --> G["🚪 Gateway<br/>consults route table"]
+    G -->|"/watch/* →"| PB["▶️ Playback"]
+    G -.->|"/recommendations/* →"| RC["✨ Recommendations"]
+    G -.->|"/account/* →"| AC["👤 Account"]
+```
+
+### The Payoff: The Public Shape Is Decoupled from the Inside
+
+Here's what routing quietly earns, and it's bigger than "requests reach the right place." Because clients address the *gateway's* URL structure and the gateway translates that to internal destinations, **the public API's shape is decoupled from the internal service topology.** The two can now change independently:
+
+- **Split a service in two** — carve the account service into `profile` and `preferences` — and clients notice nothing; you just update the route table so the old paths now point at the new services.
+- **Merge or rename services** internally without touching a single client.
+- **Move a service** to a new address, a new language, a new team — the route entry changes, the public URL doesn't.
+
+The public URL becomes a *stable contract* while the internal arrangement stays free to evolve. Without a gateway, clients would hold addresses of specific services, and every internal reorganization would be a breaking change forced on everyone who calls you. The route table is the seam that absorbs internal change so the outside never feels it.
+
+### Finding the Upstreams
+
+One practical note, named not taught: in a real system the services behind the gateway move around — instances come and go, scale up and down, change addresses. So the gateway usually doesn't hold hard-coded addresses; it works with a **service discovery** mechanism that tells it where the live instances of each service currently are. How discovery works is a subject of its own in a later phase; here it's enough to know the route table maps to *services*, and something keeps the service-to-address lookup current underneath.
+
+> 💡 **Key Insight**
+>
+> Routing is the gateway's floor: since clients only reach the gateway, it consults a **route table** that maps each request's attributes (path, host, version, even identity) to the right internal service, then forwards and relays. The quiet payoff is bigger than delivery — because clients address the gateway's URLs and it translates to internal destinations, the **public API shape is decoupled from the internal topology**, so you can split, merge, rename, or relocate services with only a route-table change and clients notice nothing. The stable public URL becomes a contract while the inside stays free to evolve; service discovery keeps the service-to-address lookup current underneath.
+
+### Quick Recap — Routing
+
+- **Routing** maps each request's attributes (path, host, method, version, identity) to the correct internal service via a **route table** the gateway consults on every request.
+- Because the gateway is application-aware, routing rules can be as expressive as the request — path prefixes are common, but host, header, version, or caller all work.
+- The payoff is **decoupling**: clients address the gateway's stable URLs, so services can be split, merged, renamed, or moved with only a route-table change and **no client impact**.
+- The gateway typically finds live instances via **service discovery** (a later topic), so the route table maps to *services* while addresses stay current underneath.
+
+---
