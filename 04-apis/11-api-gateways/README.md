@@ -192,3 +192,50 @@ One practical note, named not taught: in a real system the services behind the g
 - The gateway typically finds live instances via **service discovery** (a later topic), so the route table maps to *services* while addresses stay current underneath.
 
 ---
+
+## 4. The Cross-Cutting Jobs — Done Once, at the Door
+
+Routing gets a request to the right place; this section is what the gateway does *to* every request on the way. These are the cross-cutting concerns from §1 — the shared preamble — now given their home. Each is done once, at the door, so no service behind it repeats the work and none can drift out of step. This is the gateway's central reason to exist.
+
+### Guarding the Door: Identity and Limits
+
+Two jobs run before a request is allowed to touch anything internal:
+
+- **Authentication** — establishing *who* the caller is. The gateway inspects the request's credentials (a token, a key) and confirms the caller's identity before forwarding anything inward. A request that fails is rejected at the door — it never reaches a service at all. Because this happens once, centrally, the internal services can often trust that anything reaching them has already been authenticated, and receive the verified identity from the gateway rather than re-checking credentials themselves. (How identity is actually proven — tokens, signatures, the protocols involved — is a security subject of its own; the gateway is *where* it's enforced.)
+- **Rate limiting** — enforcing *how much* a caller may use. The gateway counts each caller's requests and rejects those that exceed their allowance, protecting the whole fleet behind it from a single runaway or malicious client consuming capacity meant for everyone. Doing this at the door means one buggy client is stopped before it can touch a single service. (The algorithms that actually count and decide are the very next topic; here the point is *where* the limit is applied — at the one place all traffic converges.)
+
+Both share a logic: they are decisions about *whether a request should proceed at all*, and the cheapest, safest place to make that decision is before the request enters the system — at the single door.
+
+### Handling the Boundary: Encryption, Logging, Browser Rules
+
+Three more jobs are about the mechanics of being a public boundary:
+
+- **TLS termination** — the public internet requires encrypted connections, and the cryptographic work of setting them up and decrypting traffic is real cost. The gateway **terminates** that encryption at the edge: it handles the encrypted connection with the outside world, then forwards plain requests to services inside the trusted private network. Every service is spared the crypto machinery, and certificates live in one place instead of being managed on every service.
+- **Logging, metrics, and tracing** — because every request flows through the gateway, it's the natural place to record traffic: what was called, by whom, how long it took, what came back. One consistent stream of observability for the entire surface, rather than each service logging in its own format. It's also where a **correlation id** can be stamped on each request so it can be followed as it fans out across services.
+- **Browser rules (CORS and friends)** — the permission rules browsers enforce for cross-origin calls are the same for every endpoint, so they're handled once at the gateway rather than configured identically in each service.
+
+```mermaid
+flowchart LR
+    C["🌐 Request"] --> G["🚪 Gateway"]
+    subgraph G2["done once, at the door"]
+        A["🔑 authenticate"] --> L["🚦 rate-limit"] --> T["🔒 terminate TLS"] --> O["📊 log + trace"]
+    end
+    G --> G2 --> S["✅ forward inward<br/>(clean, trusted, authenticated)"]
+```
+
+### Why Centralizing These Is the Win
+
+Notice what each service behind the gateway no longer has to do: no credential-checking, no limit-counting, no TLS, no bespoke logging, no CORS configuration. A service receives a request that has already been authenticated, permitted, decrypted, and logged, and can get straight to its actual job. That's the §1 problem solved on all three counts at once — the shared work runs on *every* request (it's in the one path all requests take), stays *identical* everywhere (there's only one copy), and has a *single control point* (change the rule at the gateway and it's changed for the whole system instantly). A new security rule is one gateway change, not a dozen coordinated service releases.
+
+> 💡 **Key Insight**
+>
+> The cross-cutting jobs are the gateway's reason to exist: **authentication** and **rate limiting** decide *whether a request proceeds at all* and so belong before it enters the system; **TLS termination**, **logging/metrics/tracing**, and **browser rules** are boundary mechanics every endpoint would otherwise repeat. Doing all of them **once, at the door** means services behind it receive already-authenticated, permitted, decrypted, logged requests and get straight to their real work — and it solves §1 completely: the shared work runs everywhere (one path), stays identical (one copy), and has one control point (one change updates the whole system). The gateway performs these jobs; their deep mechanisms — how identity is proven, how limits are counted — are their own topics.
+
+### Quick Recap — The Cross-Cutting Jobs
+
+- **Authentication** and **rate limiting** run before a request reaches any service — deciding *whether it proceeds* — so a failed or abusive caller is stopped at the door, never touching the fleet.
+- **TLS termination**, **logging/metrics/tracing**, and **browser rules (CORS)** are boundary mechanics the gateway handles once, sparing every service the crypto, bespoke logging, and repeated config.
+- Services behind the gateway receive **already-authenticated, permitted, decrypted, logged** requests and get straight to their real job.
+- Centralizing solves §1 on all three counts — the work runs **everywhere** (one path), stays **identical** (one copy), and has **one control point** (one change updates the whole system).
+
+---
