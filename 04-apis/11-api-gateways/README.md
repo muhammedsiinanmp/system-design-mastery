@@ -377,3 +377,46 @@ Look at the three costs and notice they are the three benefits turned over. The 
 - The costs are the **benefits inverted** — one control point is one failure point; on every path is latency on every path; all traffic in one place is all traffic at risk — so a gateway must be redundant, fast, and released carefully.
 
 ---
+
+## 8. When the Gateway Becomes a Monolith
+
+The chokepoint costs of §7 are the *obvious* dangers — you can see a single point of failure coming and plan for it. This section is the *subtle* one, the failure that creeps in over months rather than crashing in a moment, and it's the most important thing to internalize about gateways. It comes not from the gateway doing its job, but from it doing too much.
+
+### The Slow Slide From Thin to Thick
+
+A gateway starts thin: routing, auth, limits, logging — pure cross-cutting concerns. But it *can* do more, and that capability is a constant temptation. It's already calling several services (§6), so why not add a rule about how to merge their data? It's already reshaping responses (§5), so why not compute a derived field here? It's the one place that sees every request, so why not put this one business check here where it's convenient?
+
+Each addition is individually reasonable and locally convenient. But their sum is a drift: **business logic — the rules that are really about what the product *does* — migrates out of the services and into the gateway.** The thin edge slowly thickens into a place where a large amount of the system's actual behavior lives. What began as plumbing becomes, quietly, an application.
+
+### Why This Recreates the Problem Microservices Solved
+
+Splitting a system into services is meant to buy **independence**: each team owns a service, deploys it on its own schedule, and doesn't have to coordinate with everyone else to ship. That independence is the whole point of the arrangement. A fat gateway destroys it in one specific way.
+
+If business logic for many features lives in the shared gateway, then shipping many features means *changing the gateway* — and now every team is editing, testing, and deploying the same shared component. They queue behind each other, their changes risk colliding, and a release requires coordination across teams that were supposed to be independent. The gateway has become a **shared bottleneck that every team must pass through to ship** — which is precisely the coupling that splitting into services was meant to eliminate. You've paid for microservices and rebuilt a monolith at the edge: a "distributed monolith," with all the coordination pain of a monolith and none of its simplicity, sitting in your most critical component.
+
+```mermaid
+flowchart TD
+    subgraph THIN["🟢 Thin gateway"]
+        T["routing · auth · limits · logging"] --> TI["teams ship independently"]
+    end
+    subgraph THICK["🔴 Fat gateway (distributed monolith)"]
+        F["+ merge rules + derived fields<br/>+ business checks + per-feature logic"] --> FI["every team must edit the gateway<br/>→ coordinate, queue, collide"]
+    end
+```
+
+### The Discipline: Keep the Edge Thin
+
+The rule that prevents this is simple to state and requires real discipline to hold: **the gateway owns generic, cross-cutting concerns; business logic belongs in the services.** The test for whether something belongs in the gateway is whether it's true of *every* request regardless of what the product does — authentication, limits, routing, logging, encryption, protocol translation are all like that. The moment a proposed gateway change encodes a rule about what the *product* means — how *these particular* things combine, what *this feature* should do — it belongs in a service, not the edge.
+
+When aggregation genuinely does need client-specific shaping, the **Backend-for-Frontend** pattern (§6) is the pressure valve: give each client team its *own* BFF that it owns and deploys independently, so client-shaping logic has a home that doesn't force everyone through one shared component. That keeps the "shaping per client" benefit without the "one gateway everyone edits" cost. The through-line: a gateway is infrastructure, and infrastructure should be boring, thin, and stable — the exciting, changing, product-specific logic belongs in the services behind it.
+
+> ⚠️ **The subtle gateway failure is scope creep: because it *can* route, transform, and aggregate, business logic slowly migrates into it until the thin edge becomes a fat shared component every team must edit to ship.** That rebuilds exactly the coupling microservices were meant to remove — a "distributed monolith" at your most critical tier, with a monolith's coordination pain and none of its simplicity. The discipline is a clean line: the gateway owns what's true of **every** request regardless of the product (auth, limits, routing, logging, translation); anything encoding what the **product means** belongs in a service. When per-client shaping is genuinely needed, a **per-team BFF** is the pressure valve. Keep the edge boring, thin, and stable.
+
+### Quick Recap — When the Gateway Becomes a Monolith
+
+- A gateway starts thin but is constantly tempted to do more — merge rules, derived fields, "just one" business check — until **business logic migrates from the services into the edge**.
+- A fat gateway destroys the **independence** microservices exist to provide: every team must edit the shared gateway to ship, so they coordinate, queue, and collide — a **distributed monolith** in the most critical tier.
+- The discipline is a clean line: the gateway owns what's true of **every request regardless of the product** (auth, limits, routing, logging, translation); logic about what the **product means** belongs in a service.
+- When per-client shaping is genuinely needed, a **per-team Backend-for-Frontend** relieves the pressure — keep the edge boring, thin, and stable.
+
+---
