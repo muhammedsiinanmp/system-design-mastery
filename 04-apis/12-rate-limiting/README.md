@@ -190,3 +190,47 @@ The fixed window fails because it measures time in *abrupt, aligned chunks* and 
 - The lesson driving the rest of the topic: a hard, aligned reset doesn't truly hold a rate — later algorithms **soften the edge** by remembering across it or refilling smoothly.
 
 ---
+
+## 4. Sliding Window — Smoothing the Boundary
+
+The fixed window's flaw (§3) was the hard reset: it measures a *clock-aligned* minute and forgets everything at the boundary. The **sliding-window** family fixes this by measuring the minute *relative to now* — always looking back over the last 60 seconds from the current instant, so there's no boundary to exploit. There are two ways to do it, trading accuracy against cost.
+
+### Sliding-Window Log — Exact, but Heavy
+
+The precise version keeps, for each key, a **log of the timestamp of every request**. To decide a new request, you count how many timestamps fall within the last window (say, the last 60 seconds), discard any older than that, and allow the request only if the count is under the limit.
+
+This is exactly correct: the window truly slides with each request, so there's no boundary to game — 100 in any rolling 60-second span is 100, full stop. The cost is the log: you store a timestamp for *every* request from *every* caller within the window, and busy callers mean large logs and real memory and processing per request. It's accurate but it scales poorly, which is why it's often not what runs in production at high volume.
+
+### Sliding-Window Counter — A Cheap, Good-Enough Approximation
+
+The practical version keeps the fixed window's cheapness but borrows just enough from the previous window to smooth the seam. You keep two counters — the **current** window's and the **previous** window's — and estimate the rolling count by *weighting* the previous window by how much of it still overlaps the rolling window.
+
+Concretely: if you're 25% of the way into the current minute, then the last 60 seconds is 25% of the current window plus the last 75% of the previous one. So the estimate is `current_count + previous_count × 75%`. As the current window fills, the previous window's weight fades smoothly toward zero. That single weighted number approximates the true rolling count closely, kills the boundary burst (the previous window's requests still count, weighted, just after the reset), and costs only *two* integers per key instead of a full log.
+
+```mermaid
+flowchart LR
+    subgraph SW["Sliding-window counter (25% into current minute)"]
+        P["previous window<br/>count × 75%"] --> E["estimate ="]
+        C["current window<br/>count × 100%"] --> E
+        E --> D["compare to limit"]
+    end
+```
+
+The approximation assumes traffic within a window is spread evenly, so it can be slightly off under very lumpy traffic — but in practice it's close enough that the sliding-window counter is one of the most widely used real-world algorithms: nearly as cheap as a fixed window, without the boundary hole.
+
+### The Tradeoff It Illustrates
+
+The two variants bracket a tradeoff you'll see throughout: **accuracy costs state.** The log is exact and expensive; the counter is approximate and cheap. Most systems choose the cheap approximation because "very close, for two integers" beats "exact, for an unbounded log" at scale — a recurring theme in rate limiting, where good-enough-and-cheap usually wins over perfect-and-heavy.
+
+> 💡 **Key Insight**
+>
+> The sliding window fixes the fixed window's boundary burst by measuring the last N seconds **relative to now** rather than in clock-aligned chunks, so there's no seam to exploit. The **log** variant stores every request's timestamp — exactly correct but memory-heavy, scaling with traffic. The **counter** variant keeps just the current and previous window counts and **weights the previous one by its remaining overlap** (`current + previous × overlap%`) — killing the boundary burst for the cost of two integers, at the price of a mild even-traffic assumption. It illustrates the recurring rate-limiting tradeoff: **accuracy costs state**, and the cheap approximation usually wins.
+
+### Quick Recap — Sliding Window
+
+- The sliding window measures the last N seconds **relative to now**, not in clock-aligned blocks, so the §3 boundary burst has no seam to exploit.
+- The **log** variant stores every request's timestamp — **exactly correct but memory-heavy**, scaling with traffic per caller.
+- The **counter** variant weights the previous window by its remaining overlap (`current + previous × overlap%`) — **cheap (two integers) and close enough**, and one of the most widely used real algorithms.
+- It illustrates the recurring tradeoff — **accuracy costs state** — and most systems pick the cheap approximation over the exact, heavy log.
+
+---
