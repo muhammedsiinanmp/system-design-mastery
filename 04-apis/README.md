@@ -45,7 +45,7 @@ fail — so the two phases are read together.
 | 9 | [Webhooks](09-webhooks/README.md) | When an event happens in a system you don't control, how does it tell you — and why is receiving that call correctly so much harder than sending it? *(standalone — assumes no prior reading)* |
 | 10 | [gRPC](10-grpc/README.md) | How do you make a call to another machine feel — and cost — as little as calling a local function, and what do you give up to get there? *(builds on Topics 02 & 03)* |
 | 11 | [API Gateways](11-api-gateways/README.md) | Where should the shared work of a whole fleet live, who should the outside world talk to — and why does one front door solve the problem and create a new one at once? *(standalone — assumes no prior reading)* |
-| 12 | Rate Limiting *(coming)* | Protecting a shared resource from abuse and runaway clients |
+| 12 | [Rate Limiting](12-rate-limiting/README.md) | How do you decide, for each request in the instant it arrives, whether a caller has had more than its share — and why is that subtler than "count and block"? *(standalone — assumes no prior reading)* |
 | 13 | Idempotency *(coming)* | Making a retried request safe to run more than once |
 | 14 | API Versioning *(coming)* | Evolving a contract without breaking the callers you can't control |
 | 15 | WebRTC *(idea)* | Peer-to-peer real-time media, and why it barely resembles the rest |
