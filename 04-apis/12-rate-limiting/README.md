@@ -425,3 +425,47 @@ The honest summary: perfectly accurate distributed rate limiting is expensive, a
 - Most systems land in the **middle** — periodic sync or consistent per-caller routing — accepting **approximate** enforcement, because within-a-margin-and-cheap beats exact-and-slow on every request's critical path.
 
 ---
+
+## 9. Designing a Real Policy — and What It Isn't
+
+You now have the algorithms (§3–§6), the rejection contract (§7), and the distributed reality (§8). This section is the judgment that turns those parts into a policy that actually fits a system — and the discipline of not mistaking rate limiting for the other tools it's often confused with.
+
+### Setting Limits That Fit
+
+A rate-limiting policy is a set of choices, and a few principles keep them sane:
+
+- **Derive limits from real capacity, not a round number.** A limit exists to protect a resource, so it should be grounded in what that resource can actually handle — measured, not guessed. "1000/minute" picked because it sounds generous can be far above what the database survives or far below what a legitimate power user needs. Measure the ceiling, then set the limit with headroom beneath it.
+- **Layer limits.** One limit is rarely enough. Combine a **per-caller** limit (fairness — no one caller starves others) with a **global** limit (total protection — the whole service can't be overwhelmed even by many callers within their individual limits), and often **per-endpoint** limits (an expensive operation deserves a tighter limit than a cheap one — the cost-based idea, which matters most where one call can do the work of many). A request must pass *all* the limits that apply to it.
+- **Tier by identity.** Different callers deserve different shares — a free user, a paying customer, and an internal service shouldn't share one limit. Keying the limit to identity (§2) lets the policy reflect who the caller is and what they've paid for.
+
+### Deciding How to Fail
+
+One choice deserves its own attention: what happens when the *limiter itself* can't decide — the shared counter (§8) is unreachable, say. Two stances:
+
+- **Fail open** — if the limiter is down, *allow* the request. This favors availability: a limiter outage doesn't take down your API, but it temporarily removes your protection.
+- **Fail closed** — if the limiter is down, *reject* the request. This favors protection: the resource stays guarded, but a limiter outage becomes an API outage.
+
+Neither is universally right; it depends on whether an unprotected minute or a rejected minute is worse for *this* system. The point is to decide deliberately, because a limiter that hasn't chosen will do whichever its implementation happens to fall into — usually the wrong one, discovered during an incident.
+
+### What Rate Limiting Is *Not*
+
+Finally, keep rate limiting distinct from three neighbours it's constantly confused with, because reaching for the wrong one is a common design error:
+
+- **It's not load shedding.** Rate limiting enforces *per-caller* fairness continuously; **load shedding** drops work — usually the least important — to save an *overloaded system as a whole*, regardless of who caused the load. You can be within every caller's limit and still need to shed if aggregate demand exceeds capacity. (Load shedding is its own topic in a later phase.)
+- **It's not autoscaling.** Rate limiting *caps demand*; **autoscaling** *adds capacity* to meet it. They're complements — you scale to serve legitimate growth and limit to reject abuse — and confusing them leads to scaling up to absorb an attack (expensive and futile) or limiting away real customers you should have served.
+- **It's not backpressure.** **Backpressure** is a signal within an asynchronous pipeline telling an upstream producer to slow down because a downstream consumer is falling behind — flow control between cooperating components, not a public boundary defense against callers. (Its own subject in the async material.)
+
+The through-line: rate limiting is specifically the tool for *bounding what any individual caller may consume of a shared resource.* When the actual problem is a system-wide overload, insufficient capacity, or an async pipeline outrunning itself, a different tool fits — and reaching for a rate limit there is solving the wrong problem.
+
+> 💡 **Key Insight**
+>
+> A real policy is deliberate choices: **derive limits from measured capacity** (not round numbers), **layer** them (per-caller for fairness, global for total protection, per-endpoint for expensive calls), **tier by identity**, and consciously pick **fail-open** (availability — allow if the limiter breaks) versus **fail-closed** (protection — reject if it breaks). And keep rate limiting distinct from its neighbours: it is **not load shedding** (system-wide survival, not per-caller fairness), **not autoscaling** (add capacity vs cap demand), and **not backpressure** (async flow control, not a boundary defense). Rate limiting bounds what *one caller* may take of a *shared resource* — reach for the other tools when that's not the actual problem.
+
+### Quick Recap — Designing a Real Policy
+
+- **Derive limits from measured capacity** (not round numbers), **layer** them (per-caller + global + per-endpoint by cost), and **tier by identity** so a free user and a paying customer don't share one share.
+- Consciously choose **fail-open** (allow if the limiter breaks — favors availability) vs **fail-closed** (reject if it breaks — favors protection); an undecided limiter falls into the wrong one during an incident.
+- Rate limiting is **not load shedding** (system-wide survival), **not autoscaling** (add capacity vs cap demand), and **not backpressure** (async flow control) — each a distinct tool for a distinct problem.
+- The through-line: rate limiting bounds what **one caller** takes of a **shared resource** — when the real problem is system overload, capacity, or a pipeline outrunning itself, a different tool fits.
+
+---
