@@ -401,7 +401,7 @@ flowchart TD
 
 There are two basic approaches, and they sit at opposite ends of an accuracy-versus-cost spectrum:
 
-- **A shared central counter.** All limiter instances read and update one shared store (a fast in-memory data store the whole fleet talks to) that holds each caller's count. This is **accurate** — everyone consults the same global number — but it has costs: every request now makes a network call to the shared store (added latency), the store becomes a **dependency** the limiter can't work without, and a very active caller's counter becomes a **hot key** that concentrates load on one spot in the store. The mechanics of running such a shared store belong to later material; the point here is the tradeoff it buys: correctness, paid for in latency and a dependency.
+- **A shared central counter.** All limiter instances read and update one shared store (a fast in-memory data store the whole fleet talks to) that holds each caller's count. This is **accurate** — everyone consults the same global number — but it has costs: every request now makes a network call to the shared store (adding perhaps a millisecond or two to *every* request, on a path where a few milliseconds is a lot), the store becomes a **dependency** the limiter can't work without, and a very active caller's counter becomes a **hot key** that concentrates load on one spot in the store. The mechanics of running such a shared store belong to later material; the point here is the tradeoff it buys: correctness, paid for in latency and a dependency.
 - **Local approximate limits.** Each instance limits independently against a *share* of the global limit (e.g. each of 10 servers enforces 10/minute locally for a 100/minute global cap), or enforces the full limit locally and tolerates the overage. This is **fast** — no coordination, no shared dependency, every check is local — but **loose**: uneven traffic across servers means the real global limit is only approximated, sometimes under-, sometimes over-enforced.
 
 ### Living in the Middle
@@ -476,7 +476,7 @@ A company sells access to a public API — a data service that other developers 
 
 ### Keying and Tiering
 
-Each caller authenticates with an **API key**, so that key is the natural rate-limit **key** (§2) — and it also carries the caller's tier. The policy tiers by identity (§9): free keys get a small allowance, pro keys a larger one, enterprise keys larger still. Because the key *is* the identity and the tier, one lookup at the front door tells the limiter both who's calling and what they're entitled to.
+Each caller authenticates with an **API key**, so that key is the natural rate-limit **key** (§2) — and it also carries the caller's tier. The policy tiers by identity (§9): free keys get a small allowance — say 60 requests per minute — pro keys a larger one (perhaps 6,000/minute), and enterprise keys larger still, negotiated per contract. Because the key *is* the identity and the tier, one lookup at the front door tells the limiter both who's calling and what they're entitled to.
 
 ### Token Buckets, Because Traffic Is Bursty
 
