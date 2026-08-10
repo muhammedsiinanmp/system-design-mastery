@@ -234,3 +234,51 @@ The two variants bracket a tradeoff you'll see throughout: **accuracy costs stat
 - It illustrates the recurring tradeoff — **accuracy costs state** — and most systems pick the cheap approximation over the exact, heavy log.
 
 ---
+
+## 5. Token Bucket — Rate and Burst, Separated
+
+The window algorithms all measure time by counting requests *within a span*. The **token bucket** takes a different, more elegant angle: instead of counting what's happened, it tracks how much *allowance* a caller has accumulated. This reframing is why it's the most widely used rate-limiting algorithm — it maps directly onto the rate-and-burst distinction from §2.
+
+### How It Works
+
+Picture a bucket that holds **tokens**. Two numbers define it:
+
+- The bucket has a maximum **capacity** — say, 100 tokens.
+- Tokens are added at a steady **refill rate** — say, 10 per second — until the bucket is full (extra refill past capacity is simply discarded).
+
+Each incoming request must **take one token** to proceed. If a token is available, the request is allowed and the bucket drops by one. If the bucket is **empty**, there's no token to take, and the request is rejected. That's the whole mechanism: refill steadily, spend one per request, reject when empty.
+
+```mermaid
+flowchart TD
+    R["⏳ refill: +10 tokens/sec<br/>(up to capacity 100)"] --> B["🪣 bucket<br/>(0–100 tokens)"]
+    REQ["📥 request"] --> T{"token available?"}
+    B --> T
+    T -->|"yes"| OK["✅ allow, take 1 token"]
+    T -->|"no (empty)"| NO["🚫 reject"]
+```
+
+### Why the Two Knobs Are the Whole Point
+
+The elegance is that the bucket's two numbers *are* the two things a limit must control (§2), cleanly separated:
+
+- **The refill rate is the sustained rate.** Over the long run, a caller can't spend faster than tokens are added — 10/sec refill means a sustained ceiling of 10 requests per second, no matter what. The average is enforced by the refill.
+- **The bucket capacity is the burst allowance.** A caller who's been quiet lets tokens accumulate up to the full 100; then it can fire 100 requests *at once*, draining the bucket in an instant. That's a burst of 100 — but immediately afterward the bucket is empty and the caller is throttled back to the 10/sec refill until it recovers. So the capacity sets exactly how big a one-time burst is tolerated, independently of the sustained rate.
+
+This is exactly the shape of real traffic from §2: a client that's idle and then spikes is *allowed* to spike (up to the bucket size), while a client trying to sustain an abusive rate is held to the refill. You tune "how bursty may they be" and "how fast may they go long-term" as two separate dials — which no single-window algorithm lets you do. That direct match to the rate-and-burst reality is why the token bucket is the default choice.
+
+### Why It Has No Boundary Flaw
+
+Notice the token bucket has no windows and no resets, so the §3 boundary burst simply can't occur. Allowance isn't handed out in aligned chunks that reset; it accrues *continuously* and is spent continuously. There's no seam in time to straddle, because time is never divided — the bucket just fills smoothly and drains as requests come. The "reset" that plagued the fixed window is replaced by a gradual, ever-present refill, which is a fundamentally smoother way to measure a rate.
+
+> 💡 **Key Insight**
+>
+> The **token bucket** tracks accumulated *allowance* rather than counting requests in a span: tokens refill at a steady rate up to a capacity, each request spends one, and an empty bucket rejects. Its power is that its two numbers *are* §2's two knobs, cleanly separated — the **refill rate is the sustained ceiling** (you can't spend faster than tokens arrive long-term) and the **capacity is the burst** (an idle caller banks tokens and can spike that many at once, then falls back to the refill). That's exactly the shape of real traffic — idle then bursty — so it's the default algorithm. And because allowance accrues continuously with no window to reset, it has **no boundary burst** at all.
+
+### Quick Recap — Token Bucket
+
+- A **token bucket** refills tokens at a steady **rate** up to a **capacity**; each request spends one token, and an **empty bucket rejects** — it tracks *allowance*, not a count in a span.
+- Its two numbers are §2's two knobs, cleanly separated: **refill rate = sustained ceiling**, **capacity = burst size** — tunable independently.
+- This matches real traffic (idle, then a spike): an idle caller banks tokens and may **burst up to capacity**, then is throttled to the refill — which is why it's the **default** algorithm.
+- Because allowance accrues **continuously** with no window reset, it has **no boundary burst** — the smooth refill replaces the fixed window's hard edge.
+
+---
