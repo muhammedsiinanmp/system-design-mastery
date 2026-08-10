@@ -375,3 +375,53 @@ A limit only works if the caller cooperates, so the client has a duty that mirro
 - It's a **two-sided contract**: the client must respect `Retry-After` and **back off with jitter**, or a correct limit degrades into a costly loop of rejected requests.
 
 ---
+
+## 8. Limiting Across Many Machines
+
+Everything so far quietly assumed one limiter with one view of a caller's traffic. Real systems don't have that. To handle load and stay available, the tier that enforces limits — the fleet of front-door servers all traffic flows through — is itself *many* machines, and a caller's requests are spread across them. This turns a solved single-machine problem back into a hard one, and it's where rate limiting gets genuinely deep.
+
+### Why One Limit Across Many Limiters Is Hard
+
+Suppose the limit is 100 requests per minute for a caller, and there are 10 front-door servers behind a load balancer. A caller's 300 requests get spread roughly evenly — about 30 to each server. Now ask each server, using its *own* local counter: "has this caller exceeded 100?" Every server sees only ~30 and answers "no, well under." So all 300 are allowed — **triple the limit** — even though not one server did anything wrong. Each was correct about what it saw; none saw the whole picture.
+
+The general failure: with purely local counters, a caller can exceed the true limit by up to a **factor of the fleet size**. Ten servers can let through 10× the limit; a hundred, 100×. The more you scale the limiter for availability, the *weaker* a local limit becomes. So the enforcement tier needs some way for its members to share a single, global view of each caller's usage — and sharing state across machines, cheaply and fast enough to check on every request, is the crux.
+
+```mermaid
+flowchart TD
+    C["caller: 300 req/min<br/>(limit 100)"] --> LB["load balancer spreads evenly"]
+    LB --> S1["server 1: sees 30<br/>local counter: 'fine'"]
+    LB --> S2["server 2: sees 30<br/>'fine'"]
+    LB --> S3["...10 servers, each ~30..."]
+    S1 --> BAD["🔴 all 300 allowed — 3× the limit"]
+    S2 --> BAD
+    S3 --> BAD
+```
+
+### The Two Ends of the Tradeoff
+
+There are two basic approaches, and they sit at opposite ends of an accuracy-versus-cost spectrum:
+
+- **A shared central counter.** All limiter instances read and update one shared store (a fast in-memory data store the whole fleet talks to) that holds each caller's count. This is **accurate** — everyone consults the same global number — but it has costs: every request now makes a network call to the shared store (added latency), the store becomes a **dependency** the limiter can't work without, and a very active caller's counter becomes a **hot key** that concentrates load on one spot in the store. The mechanics of running such a shared store belong to later material; the point here is the tradeoff it buys: correctness, paid for in latency and a dependency.
+- **Local approximate limits.** Each instance limits independently against a *share* of the global limit (e.g. each of 10 servers enforces 10/minute locally for a 100/minute global cap), or enforces the full limit locally and tolerates the overage. This is **fast** — no coordination, no shared dependency, every check is local — but **loose**: uneven traffic across servers means the real global limit is only approximated, sometimes under-, sometimes over-enforced.
+
+### Living in the Middle
+
+Most real systems land between the extremes, trading a little accuracy for a lot less coordination:
+
+- **Sync periodically.** Instances keep fast local counters and reconcile with a shared store every so often (every few seconds) rather than on every request — bounding the error without paying the shared-store cost per call.
+- **Route a caller to a consistent instance.** If all of one caller's traffic reliably lands on the *same* limiter instance, that instance sees the caller's whole picture and a local counter becomes accurate again — pushing the coordination problem into how traffic is routed instead.
+
+The honest summary: perfectly accurate distributed rate limiting is expensive, and most systems accept **approximate** enforcement because "within a small margin of the limit, cheaply" beats "exactly the limit, slowly" — the same accuracy-costs-state tradeoff from §4, now at fleet scale. A limit that's occasionally 10% loose but adds no latency is usually the better engineering choice than one that's exact but puts a network round trip and a shared dependency on the critical path of every request.
+
+> 💡 **Key Insight**
+>
+> A real limiter is **many machines**, and a caller's traffic spreads across them — so purely **local** counters let a caller exceed the true limit by up to the **fleet-size factor** (10 servers → 10× the limit), and scaling the limiter for availability makes a local limit *weaker*. The fix needs a shared view, and the choice is a spectrum: a **shared central counter** is accurate but adds latency, a dependency, and hot keys; **local approximate** limits are fast but loose. Most systems live in the middle — periodic sync, or routing a caller consistently to one instance — accepting **approximate** enforcement because within-a-margin-and-cheap beats exact-and-slow when the check is on every request's critical path.
+
+### Quick Recap — Limiting Across Many Machines
+
+- A real limiter is a **fleet**, and a caller's traffic spreads across it, so **local counters** let a caller exceed the limit by up to the **fleet-size factor** — scaling the limiter weakens a local limit.
+- A **shared central counter** gives accuracy but costs **latency, a dependency, and hot keys** on very active callers; the shared-store mechanics are a later subject.
+- **Local approximate** limits (a per-instance share, or tolerated overage) are fast and coordination-free but **loose** under uneven traffic.
+- Most systems land in the **middle** — periodic sync or consistent per-caller routing — accepting **approximate** enforcement, because within-a-margin-and-cheap beats exact-and-slow on every request's critical path.
+
+---
