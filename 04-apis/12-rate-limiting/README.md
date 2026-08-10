@@ -145,3 +145,48 @@ The key is half the policy, because it decides *what gets its own share*. A limi
 - **Every algorithm is a different answer to "how do we measure the time"** in a rate — which is why choosing one is choosing how you treat bursts and boundaries.
 
 ---
+
+## 3. Fixed Window — The Simple Counter and Its Flaw
+
+The most obvious way to measure "per minute" is to chop time into fixed minute-long blocks by the clock and count within each. This is the **fixed-window** algorithm, and it's worth studying precisely because it's the one people invent by default — and because its one flaw teaches what all the later algorithms are fixing.
+
+### How It Works
+
+Divide time into fixed windows aligned to the clock — say, each calendar minute (12:00:00–12:00:59, then 12:01:00–12:01:59, and so on). For each key, keep one **counter** for the current window. Every request increments it; if the counter is at or below the limit, allow the request; if it's over, reject. When the clock ticks into the next window, the counter **resets to zero.**
+
+That's the entire algorithm, and its appeal is obvious: it's almost nothing to build. One integer per caller, an increment, a compare, and a reset on the minute. It's cheap in memory (a single number per key) and trivially fast. For many low-stakes limits it's perfectly adequate, and its simplicity is a real virtue.
+
+### The Boundary Burst
+
+The flaw is subtle and shows up exactly at the seam between windows. Because the counter resets abruptly at the window boundary, a caller can spend its *entire* allowance at the very end of one window and its *entire* allowance again at the very start of the next — and those two bursts are only a moment apart.
+
+Concretely, with a limit of 100 per minute: a caller sends 100 requests at 12:00:59.5, then 100 more at 12:01:00.5. Each window's counter saw only 100, so nothing was rejected — but the service just took **200 requests in one second**, twice the limit, in the span that straddles the boundary. Over any *aligned* minute the rule held; over the *real* 60-second window around the boundary, the caller did double.
+
+```mermaid
+flowchart LR
+    subgraph W1["window 12:00 (limit 100)"]
+        A["...quiet... then 100 @ :59.5"]
+    end
+    subgraph W2["window 12:01 (limit 100)"]
+        B["100 @ :00.5 ...then quiet"]
+    end
+    A -->|"~1 second apart"| B
+    B --> C["💥 200 requests in 1s<br/>— 2× the limit slipped through"]
+```
+
+This isn't a rare corner case an attacker has to work for — it's a predictable doubling available at every boundary, and a caller aiming to maximize throughput will simply align to it. The root cause is that the fixed window has **no memory across the reset**: the moment the clock ticks, it forgets everything that just happened, so the burst on one side is invisible to the other.
+
+### What It Teaches
+
+The fixed window fails because it measures time in *abrupt, aligned chunks* and resets with a hard edge. Everything that follows is a way of softening that edge — remembering across the boundary (the sliding window, §4) or replacing the "reset" with a smooth, continuous refill (the token bucket, §5). Hold onto the flaw: it's the concrete problem the next two sections exist to solve.
+
+> ⚠️ **The fixed window is the cheapest algorithm and the one with the trap everyone hits: because its counter resets abruptly at each clock boundary, it has no memory across the reset — so a caller can spend a full allowance just before the boundary and a full allowance just after, pushing 2× the limit through in a moment while every aligned window still reads "within limit."** It's fine for loose, low-stakes limits where a transient double doesn't matter, but it does not truly hold a rate. The later algorithms are, at heart, ways of removing that hard edge.
+
+### Quick Recap — Fixed Window
+
+- **Fixed window** chops time into clock-aligned blocks (e.g. each minute), keeps **one counter per key**, allows up to the limit, and **resets to zero** at each boundary.
+- It's the **cheapest** algorithm — one integer per caller, an increment and a compare — and adequate for loose, low-stakes limits.
+- Its flaw is the **boundary burst**: with no memory across the reset, a caller can spend a full allowance just before *and* just after a boundary, pushing **up to 2× the limit** through in an instant.
+- The lesson driving the rest of the topic: a hard, aligned reset doesn't truly hold a rate — later algorithms **soften the edge** by remembering across it or refilling smoothly.
+
+---
