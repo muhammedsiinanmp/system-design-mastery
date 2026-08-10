@@ -40,3 +40,55 @@ Here's the trap it disarms. Rate limiting looks like the simplest thing in this 
 11. [Final Recap](#11-final-recap)
 
 ---
+
+## 1. Why Limit — Protecting a Shared Resource
+
+Before any algorithm, understand the problem rate limiting exists to solve, because the whole design follows from it. The problem is a consequence of one fact: a service has finite capacity, and that capacity is *shared*.
+
+### One Caller Can Consume Everyone's Share
+
+A running service can only do so much at once — so many requests per second, so much CPU, so many database connections, so much of a paid downstream it's billed for. That capacity is a common pool drawn from by every caller. And a common pool has a failure mode: **nothing stops a single caller from taking all of it.** When one client sends far more than its share, the pool empties, and *every other caller* is starved — slow responses, timeouts, errors — not because they did anything wrong, but because someone else drank the well dry. This is the "noisy neighbour," and it doesn't require malice to happen.
+
+The excess traffic comes from several directions, and a system has to survive all of them:
+
+- **A bug.** A client stuck in a loop, or a retry with no backoff, hammers the service thousands of times a second by accident. (Ironically, naive retries turn one struggling service into a self-inflicted flood.)
+- **A scraper or greedy integrator.** A caller pulling far more data, far faster, than intended — not attacking, just inconsiderate.
+- **An attack.** A deliberate flood meant to exhaust capacity and deny service to everyone else, or a credential-stuffing script trying millions of logins.
+- **Runaway cost.** Even if capacity holds, each call may cost real money (a metered downstream, compute, bandwidth); unbounded calls mean an unbounded bill.
+
+### The Limit Is a Fairness and Safety Boundary
+
+Rate limiting is the mechanism that says: **no single caller may consume more than its allotted share of the pool.** That one rule buys three things at once:
+
+- **Fairness** — capacity is divided among callers so one can't starve the rest.
+- **Protection** — the service is shielded from being overwhelmed, whether by accident or attack, so it stays up for everyone.
+- **Cost control** — usage has a ceiling, so a bug or an abuser can't run up an unbounded bill.
+
+```mermaid
+flowchart TD
+    subgraph NO["🔴 No limit"]
+        A1["🐛 buggy client<br/>(floods)"] --> P1["finite capacity"]
+        B1["🙂 normal clients"] -.->|"starved"| P1
+    end
+    subgraph YES["🟢 Rate limited"]
+        A2["🐛 buggy client<br/>(capped)"] --> P2["finite capacity"]
+        B2["🙂 normal clients<br/>(get their share)"] --> P2
+    end
+```
+
+### It's Not the Same as Load Shedding
+
+One distinction to draw at the outset, because the two get conflated. Rate limiting is about **per-caller fairness**: each *individual* caller is held to its own share, all the time, whether or not the system is under stress. A related but different technique, **load shedding**, is about **system-wide survival**: when the whole system is overloaded regardless of who's responsible, it starts dropping *some* work — often the least important — to stay alive. Rate limiting asks "has *this caller* had its share?"; load shedding asks "is *the system as a whole* drowning?" They complement each other and often run together, but they answer different questions, and load shedding is its own subject in a later phase. This document is about the per-caller question.
+
+> 💡 **Key Insight**
+>
+> A service's capacity is **finite and shared**, and a shared pool has one fatal flaw: nothing inherently stops a single caller from draining it and starving everyone else — by bug, by greed, or by attack. Rate limiting is the rule that no caller may take more than its share, and it buys **fairness** (one client can't starve the rest), **protection** (the service survives floods, accidental or hostile), and **cost control** (usage has a ceiling). It is distinct from **load shedding**, which drops work to save an overloaded *system* regardless of who caused it — rate limiting asks whether *this caller* has had its share, not whether the whole system is drowning.
+
+### Quick Recap — Why Limit
+
+- A service's capacity is **finite and shared**, so without a limit a single caller — buggy, greedy, or hostile — can consume it all and **starve everyone else** (the noisy neighbour).
+- Excess traffic comes from **bugs, scrapers, attacks, and runaway cost**, and a system must survive all of them, not just the malicious ones.
+- Rate limiting caps each caller's share, buying **fairness, protection, and cost control** in a single rule.
+- It is **not load shedding**: rate limiting enforces *per-caller* fairness always, while load shedding drops work to save an *overloaded system* — different questions, often used together.
+
+---
