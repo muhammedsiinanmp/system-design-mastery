@@ -92,3 +92,56 @@ One distinction to draw at the outset, because the two get conflated. Rate limit
 - It is **not load shedding**: rate limiting enforces *per-caller* fairness always, while load shedding drops work to save an *overloaded system* — different questions, often used together.
 
 ---
+
+## 2. A Rate Is a Statement About Time
+
+Everyone writes limits like "100 requests per minute" and imagines the meaning is obvious. It isn't — and seeing exactly *why* it's ambiguous is the key that unlocks every algorithm in this document. The ambiguity is about time, and resolving it is the whole game.
+
+### "100 Per Minute" Doesn't Say What You Think
+
+Take "100 requests per minute" literally and ask: *which* minute? Two very different behaviours both satisfy the phrase:
+
+- A caller sends 100 requests spread evenly — a bit under two per second, all minute long. Clearly fine.
+- A caller sends all 100 in the first half-second and nothing for the rest of the minute. Also "100 per minute" — but it just hit the service with a spike 100× denser than the first caller.
+
+Both obey the same words and stress the system completely differently. The phrase "100 per minute" fixes a *count* but leaves the *shape over time* undefined — and the shape is what actually determines whether the service can cope. A limit isn't real until you decide how you measure the passage of that minute, and that decision is precisely what separates one algorithm from another. **Every rate-limiting algorithm is a different answer to "how do we measure the time in 'per minute'?"**
+
+### Two Things a Limit Really Encodes: Rate and Burst
+
+The example reveals that a good limit has to control *two* separate quantities, not one:
+
+- **The sustained rate** — how fast a caller may go *on average, over the long run*. This protects the steady-state capacity: 100/minute means that, held up over many minutes, a caller averages no more than that.
+- **The burst** — how much a caller may do *in a short spike* before the average catches up. Real traffic is bursty: a user opens an app and it fires ten requests at once, then goes quiet. A limit that forbids all bursts would reject normal behaviour; a limit that allows unlimited bursts protects nothing.
+
+The art is allowing a *reasonable* burst while holding the *sustained* rate — and the algorithms differ mainly in how cleanly they let you express those two knobs. The ones that conflate them (a single window) are cruder; the one that separates them explicitly (the token bucket) is why it's the default.
+
+```mermaid
+flowchart LR
+    L["'100 per minute'"] --> R["📏 sustained rate<br/>avg over the long run"]
+    L --> B["💥 burst<br/>how much at once"]
+    R --> A["algorithms differ in how<br/>they measure time to enforce both"]
+    B --> A
+```
+
+### A Limit Is Always Per-Something
+
+One more thing every limit needs before it means anything: a **key** — the *per-what*. You never limit "requests" in the abstract; you limit requests *per caller*, and you must choose what "caller" means:
+
+- **Per user or per account** — fair across people, and the usual choice for a logged-in product.
+- **Per API key** — the standard for a public API, where a key identifies the integrator (and often their paid tier).
+- **Per IP address** — the fallback when there's no identity yet (an anonymous or login endpoint), though imperfect: many users can share one IP (behind a corporate network), and one attacker can spread across many IPs.
+
+The key is half the policy, because it decides *what gets its own share*. A limit keyed on IP protects differently from one keyed on account, and choosing the wrong key can either punish innocents (many users behind one IP) or fail to contain an abuser (one account, many IPs). Identifying the caller reliably is an authentication concern of its own; here the point is that a rate limit is always *rate per key per unit of time* — three parts, and the sections that follow are about the third.
+
+> 💡 **Key Insight**
+>
+> "100 per minute" is ambiguous because it fixes a **count** but not the **shape over time** — 100 spread evenly and 100 in a half-second both satisfy it while stressing the service utterly differently. So a real limit must control **two** things: a **sustained rate** (the long-run average) and a **burst** (how much at once), because real traffic is bursty and both "no bursts" and "unlimited bursts" are wrong. And a limit is always **per a key** — per user, per API key, per IP — which decides *what gets its own share* and is half the policy. Every algorithm ahead is a different way of measuring time to enforce rate-and-burst, per key.
+
+### Quick Recap — A Rate Is About Time
+
+- "100 per minute" fixes a **count** but not the **shape over time**; 100 evenly and 100 in a half-second both satisfy it yet stress the service completely differently.
+- A real limit controls **two** things: a **sustained rate** (long-run average) and a **burst** (how much at once) — since real traffic is bursty, both forbidding and unbounding bursts are wrong.
+- A limit is always **per a key** (user, API key, or IP) — the *per-what* decides what gets its own share and is half the policy; IP is the imperfect fallback when there's no identity.
+- **Every algorithm is a different answer to "how do we measure the time"** in a rate — which is why choosing one is choosing how you treat bursts and boundaries.
+
+---
