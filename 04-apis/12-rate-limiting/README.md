@@ -282,3 +282,50 @@ Notice the token bucket has no windows and no resets, so the §3 boundary burst 
 - Because allowance accrues **continuously** with no window reset, it has **no boundary burst** — the smooth refill replaces the fixed window's hard edge.
 
 ---
+
+## 6. Leaky Bucket — Smoothing the Output
+
+The token bucket's sibling is the **leaky bucket**, and the two are so often confused it's worth pinning down precisely how they differ. Both use a bucket; both bound a rate. But they answer different questions: the token bucket asks "may this request *go through now*?" while the leaky bucket asks "at what steady pace do requests *leave*?" The difference is whether you're controlling the *input* or shaping the *output*.
+
+### How It Works
+
+Picture a bucket with a hole in the bottom that **leaks at a fixed rate.** Incoming requests are water poured in from the top: they enter a queue (the bucket) and drain out the bottom at a constant pace — say, exactly 10 per second, no matter how they arrived. If requests pour in faster than the leak for long enough, the bucket **fills to capacity and overflows**, and overflowing requests are rejected.
+
+The defining property is the *output*: whatever the arrival pattern — a smooth trickle or a violent spike — requests leave the bucket at a perfectly steady rate. The bucket absorbs burstiness on the way in and emits a smooth stream on the way out.
+
+```mermaid
+flowchart TD
+    IN["📥 bursty arrivals<br/>(uneven)"] --> Q["🪣 queue (capacity N)"]
+    Q -->|"overflow if full"| REJ["🚫 reject"]
+    Q --> OUT["💧 leak at fixed rate<br/>(smooth, even output)"]
+```
+
+### Token Bucket vs Leaky Bucket
+
+The contrast is the whole point, and it's about what happens to a burst:
+
+| | Token bucket | Leaky bucket |
+|---|---|---|
+| Controls | Whether a request is **admitted** now | The **rate requests leave** |
+| A burst is… | **Let through** (up to bucket capacity), then throttled | **Smoothed** — queued and released at the steady rate |
+| Output shape | Bursty (mirrors admitted input) | Always steady |
+| Good when | The backend *tolerates* bursts and you want responsiveness | The backend needs a *smooth, capped* input rate |
+
+A token bucket *permits* a burst to reach the backend — good when the backend can absorb a spike and you'd rather serve the caller's burst immediately. A leaky bucket *refuses to pass a burst through* — it holds requests and releases them evenly, good when whatever's downstream must never receive more than a fixed rate (a fragile legacy system, a strictly metered third party). One optimizes for letting legitimate bursts through; the other for protecting a downstream that can't handle bursts at all.
+
+### A Note on the Confusion
+
+The two get muddled because you can describe similar behaviour from either framing, and some systems label a queue-based limiter a "leaky bucket" and an allowance-based one a "token bucket" while achieving overlapping goals. The reliable way to keep them straight is by the *question each answers*: token bucket controls **admission** (is there allowance to go now?), leaky bucket controls **emission** (requests leave at a fixed drip). If your goal is "let callers burst up to a point," reach for the token bucket; if it's "guarantee the thing downstream never sees more than X per second," reach for the leaky bucket.
+
+> 💡 **Key Insight**
+>
+> The **leaky bucket** queues requests and drains them at a **fixed output rate**, overflowing (rejecting) when full — so no matter how bursty the arrivals, the *output* is always smooth. That's the exact inverse of the token bucket's behaviour on a burst: the token bucket **lets a burst through** (up to capacity) then throttles, while the leaky bucket **absorbs the burst** and releases it evenly. Keep them straight by the question each answers — token bucket controls **admission** ("is there allowance now?"), leaky bucket controls **emission** ("requests leave at a steady drip"). Choose token bucket to allow legitimate bursts to a burst-tolerant backend; choose leaky bucket to guarantee a fragile downstream never sees more than a fixed rate.
+
+### Quick Recap — Leaky Bucket
+
+- A **leaky bucket** queues arrivals and drains them at a **fixed rate**, overflowing (rejecting) when full — so the **output is always smooth** regardless of how bursty the input.
+- It's the inverse of the token bucket on a burst: token bucket **lets bursts through** then throttles; leaky bucket **smooths bursts** into a steady stream.
+- Keep them straight by the question: token bucket controls **admission** ("allowance to go now?"), leaky bucket controls **emission** ("steady drip out").
+- Choose **token bucket** to allow legitimate bursts to a burst-tolerant backend; choose **leaky bucket** to protect a downstream that must never exceed a fixed input rate.
+
+---
