@@ -329,3 +329,49 @@ The two get muddled because you can describe similar behaviour from either frami
 - Choose **token bucket** to allow legitimate bursts to a burst-tolerant backend; choose **leaky bucket** to protect a downstream that must never exceed a fixed input rate.
 
 ---
+
+## 7. What Happens When You Say No
+
+Every algorithm so far decides *whether* to allow a request. This section is about the other half, which teams routinely neglect: what you actually *do* with a request you've decided to reject. A rejection is part of your API's contract too, and doing it badly turns a protective limit into a source of chaos.
+
+### Reject, Throttle, or Degrade
+
+"Over the limit" doesn't have to mean a hard rejection. There are three responses, suited to different situations:
+
+- **Reject** — refuse the request immediately and cheaply, telling the caller to try later. This is the default for a public API: fail fast, use almost no resources on the rejected call, and let the caller decide when to retry. The whole point of a limit is protection, and the cheapest protection is a fast "no."
+- **Throttle (delay/queue)** — instead of refusing, *hold* the request and release it when capacity is available (this is the leaky-bucket shape from §6). This smooths traffic without errors, but it isn't free: queued requests consume memory and add latency, and an unbounded queue is its own way to fall over. Use it when a short delay is preferable to an error and the backlog is bounded.
+- **Degrade** — serve a cheaper substitute instead of the full response: a cached or stale result, a partial answer, a lower-fidelity version. The caller gets *something* useful while the expensive path is protected. This is often the best user experience when a real answer is too costly right now.
+
+### Say No Clearly: `429` and `Retry-After`
+
+However you reject, *how you communicate it* matters enormously, because the caller has to react. The convention is precise and worth following exactly:
+
+- Respond with **`429 Too Many Requests`** — the standard status that unambiguously says "you were rate-limited," distinct from other errors so clients and monitoring can treat it specifically.
+- Include a **`Retry-After`** header telling the caller *when* it's worth trying again (a number of seconds, or a timestamp). This turns a blind "no" into an actionable "no, wait this long."
+- Optionally expose the policy via headers — the limit, how many requests remain, and when the window resets — so a well-behaved caller can *pace itself* and never hit the wall in the first place.
+
+A rejection that says only "error" invites the worst outcome: the caller retries immediately and repeatedly, turning your protective limit into a tight loop of rejected requests that still costs you to process. A clear `429` with `Retry-After` is what lets the caller behave.
+
+```mermaid
+flowchart TD
+    OVER["🚫 over the limit"] --> R429["429 Too Many Requests"]
+    R429 --> RA["Retry-After: 30<br/>+ limit / remaining / reset headers"]
+    RA --> C{"client behaves?"}
+    C -->|"respects Retry-After<br/>+ backs off"| GOOD["🟢 recovers cleanly"]
+    C -->|"ignores it, hammers"| BAD["🔴 loop of rejected calls"]
+```
+
+### The Rejection Is a Two-Sided Contract
+
+A limit only works if the caller cooperates, so the client has a duty that mirrors the server's. A well-behaved client **respects `Retry-After`**, and when it must retry on its own, it uses **exponential backoff with jitter** — waiting progressively longer and staggering its attempts — rather than retrying instantly and in lockstep, which would just reproduce the flood the limit exists to stop. (This retry discipline is the same one any robust client uses against transient failures; here it's the specific, cooperative response to a `429`.) The server's job is to reject cheaply and inform clearly; the client's job is to slow down when told. When both hold, a rate limit is a smooth negotiation; when the client ignores the signal, even a correct limit degrades into wasted work on both sides.
+
+> ⚠️ **A limit is only half-built until you've designed the rejection — and a bad rejection can cost as much as no limit.** Choose the response to fit the case: **reject** (fail fast and cheap, the public-API default), **throttle** (queue and release, smoothing without errors but adding latency and a bounded backlog), or **degrade** (serve a cheaper/stale substitute). Communicate it precisely — **`429 Too Many Requests`** with **`Retry-After`**, ideally plus limit/remaining/reset headers so callers self-pace. And it's a two-sided contract: the client must **respect `Retry-After` and back off with jitter**, or a correct limit collapses into a loop of rejected calls that still burns resources on both ends.
+
+### Quick Recap — When You Say No
+
+- "Over the limit" has three responses: **reject** (fast, cheap — the public default), **throttle** (queue and release, smoothing at the cost of latency and a bounded backlog), or **degrade** (a cheaper/stale substitute).
+- Communicate rejection with **`429 Too Many Requests`** and **`Retry-After`**, so a blind "no" becomes an actionable "no, wait this long."
+- Optionally expose **limit / remaining / reset** headers so well-behaved callers **pace themselves** and never hit the wall.
+- It's a **two-sided contract**: the client must respect `Retry-After` and **back off with jitter**, or a correct limit degrades into a costly loop of rejected requests.
+
+---
