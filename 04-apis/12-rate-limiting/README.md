@@ -469,3 +469,77 @@ The through-line: rate limiting is specifically the tool for *bounding what any 
 - The through-line: rate limiting bounds what **one caller** takes of a **shared resource** — when the real problem is system overload, capacity, or a pipeline outrunning itself, a different tool fits.
 
 ---
+
+## 10. Putting It All Together — A Public API Platform
+
+A company sells access to a public API — a data service that other developers build on. Access comes in tiers: a **free** tier to try it, a **pro** tier for small products, and an **enterprise** tier for heavy users. Every concept in this document appears in getting the rate limiting right, because for an API *product*, the limit isn't just protection — it's the shape of what customers are paying for.
+
+### Keying and Tiering
+
+Each caller authenticates with an **API key**, so that key is the natural rate-limit **key** (§2) — and it also carries the caller's tier. The policy tiers by identity (§9): free keys get a small allowance, pro keys a larger one, enterprise keys larger still. Because the key *is* the identity and the tier, one lookup at the front door tells the limiter both who's calling and what they're entitled to.
+
+### Token Buckets, Because Traffic Is Bursty
+
+Developer traffic is spiky — an app does nothing for a while, then a user action fires a cluster of calls. So each key gets a **token bucket** (§5), whose two knobs map straight onto the tier:
+
+- **Refill rate** = the tier's sustained rate (free: modest; enterprise: high).
+- **Bucket capacity** = the tier's burst allowance — how big a spike a caller can make before being throttled to the refill.
+
+This choice matters concretely. A **fixed window** (§3) would have wrongly rejected a pro customer's legitimate nightly batch job — a burst that's fine on average but dense in the moment — either failing it at the window edge or forcing an awkwardly high limit. The token bucket absorbs that burst up to the bucket size and then throttles to the refill, which is exactly the behaviour the customer expects: "let me spike occasionally, hold me to my rate over time."
+
+### Enforced Across the Fleet
+
+The API runs behind many front-door instances for availability, so the limiter is distributed (§8). Purely local counters would let an enterprise customer spread across instances and vastly exceed their limit, so the platform uses a **shared counter** with periodic reconciliation — accurate enough to bill and enforce fairly, without a shared-store round trip on the critical path of every single call. The limit each customer experiences is the global one, not a per-instance fraction.
+
+```mermaid
+flowchart TD
+    K["🔑 request w/ API key"] --> ID["identify caller + tier"]
+    ID --> TB["🪣 token bucket for this key<br/>(tier sets rate + burst)"]
+    TB --> D{"token available?"}
+    D -->|"yes"| OK["✅ allow"]
+    D -->|"no"| R["🚫 429 + Retry-After (§7)"]
+    TB -.->|"count shared across<br/>front-door fleet (§8)"| STORE["shared counter"]
+```
+
+### Two Incidents
+
+Then reality tests the design, twice in one week:
+
+- **A scraper on a free key** starts pulling data as fast as it can. Its bucket drains in seconds and stays empty; every further call gets a **`429` with `Retry-After`** (§7). The scraper is contained to its free-tier rate — it can't touch the capacity paying customers rely on (§1) — and because the rejection is cheap, absorbing the abuse costs the platform almost nothing.
+- **A pro customer's legitimate launch** sends a genuine spike far above their sustained rate. Their bucket lets the burst through up to capacity, then throttles smoothly — the customer sees a brief slowdown, not a wall of errors, and their client (respecting `Retry-After` and backing off, §7) rides it out. No human is paged; the policy did its job silently.
+
+### Why It All Fits Together
+
+Notice that no single piece would have sufficed. Without **tiering**, the product couldn't sell differentiated access. Without the **token bucket**, legitimate bursts would be rejected and abusive sustained load allowed. Without the **distributed** enforcement, the limit would be a fiction across the fleet. Without the **`429`/`Retry-After`** contract, even well-meaning clients would hammer the wall. The rate limit is simultaneously the platform's protection *and* its business model — the same mechanism that stops the scraper defines what "pro" means — which is why, for an API product, rate limiting is not a defensive afterthought but a core part of the design.
+
+> **For us the rate limit is the product. The token bucket is why a customer can burst on launch day without getting errors, and why a scraper on a free key can't degrade the service our paying customers rely on — the same mechanism does both. We tier it by API key because the limit *is* what 'pro' and 'enterprise' mean. We enforce it across the whole fleet with a shared count because a limit that's real on one server and fiction across ten isn't a limit. And we say no with a clear 429 and a Retry-After, because a customer who knows exactly when to come back is a customer who never becomes an incident. We didn't bolt rate limiting on for safety; we designed the business on top of it.**
+
+---
+
+## 11. Final Recap
+
+| Algorithm | How it measures time | Burst behavior | Cost |
+|---|---|---|---|
+| **Fixed window** (§3) | Clock-aligned blocks, hard reset | ⚠️ up to 2× at the boundary | Cheapest — one counter |
+| **Sliding window log** (§4) | Exact rolling window (timestamps) | Accurate, no boundary hole | Heavy — a log per caller |
+| **Sliding window counter** (§4) | Weighted current + previous window | Smooth, mild approximation | Cheap — two counters |
+| **Token bucket** (§5) | Continuous refill of allowance | ✅ bursts up to capacity, then throttles | Cheap — count + timestamp |
+| **Leaky bucket** (§6) | Fixed-rate drain of a queue | Smooths bursts into steady output | Cheap — a queue |
+
+Cutting across all of them: a limit is always **per a key** (§2), rejection needs a clear **`429` + `Retry-After`** contract (§7), and at scale enforcement is **distributed and approximate** (§8).
+
+### The One Thing to Remember
+
+> **A rate limit is a statement about time, and every hard part of rate limiting is a consequence of that. "100 per minute" fixes a count but not the shape over time, so a real limit has to control two separate things — a sustained rate and a burst — and the algorithms are just different ways of measuring time to enforce them: the fixed window chops time into aligned blocks and leaks a double-burst at every seam; the sliding window measures the last N seconds relative to now to close that seam; the token bucket abandons windows entirely and refills allowance continuously, which is why it's the default — its two knobs, refill rate and bucket size, are exactly the sustained rate and the burst; and the leaky bucket inverts the goal to smooth the output instead of admitting the input. But choosing the algorithm is only half the job. You must decide what to do when you say no — reject cheaply, throttle, or degrade, always with a clear 429 and Retry-After so clients can behave — and you must reckon with the fact that a real limiter is many machines, so a single global limit becomes an accuracy-versus-coordination tradeoff you usually resolve by accepting approximate enforcement. Above all, keep rate limiting in its lane: it bounds what one caller may take of a shared resource — it is not load shedding, not autoscaling, not backpressure. Get the time model right, design the rejection, enforce it across the fleet, and you have turned a shared resource from something one caller can drain into something everyone gets a fair share of.**
+
+---
+
+## What's Next
+
+> **Topic 13 — Idempotency**
+
+This document leaned on one client behavior without ever justifying it: when a request is rejected with a `429`, the client is supposed to **retry** — and retries are also how clients cope with the timeouts and network failures that any API suffers. But a retry raises a dangerous question this topic quietly stepped around: if you send a request, get no answer, and send it again, did the *first* one secretly succeed? Retrying a "charge this card" or "place this order" could do it twice.
+
+That problem is the next topic. **Idempotency**: how an API is designed so that sending the same request more than once — because of a retry, a `429` backoff, a network hiccup, or a nervous user double-clicking — has the same effect as sending it once. You've seen why clients must retry; next you'll see how the server makes retrying *safe*, so that "just try again" never means "charged again."
+
+---
